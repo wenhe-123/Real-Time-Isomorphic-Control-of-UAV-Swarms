@@ -12,7 +12,7 @@ Built on top of the Crazyflow simulation framework, we extend it with:
 
 * ✋ Hand tracking using MediaPipe
 * 📡 RGB-D input from Orbbec camera
-* 🧠 3D topology analysis (PCA-based)
+* 🧠 3D topology analysis 
 * 🔄 Continuous gesture representation (plane ↔ sphere)
 * 🚁 Swarm control mapping
 
@@ -49,8 +49,8 @@ This enables **smooth, real-time, and intuitive swarm control**.
 ### 1. Clone repository
 
 ```bash
-git clone --recurse-submodules https://github.com/wenhe-123/Iso-Swarm-Real-Time-Isomorphic-Control-of-UAV-Swarms-via-Hand--Geometry-Mapping.git
-cd Iso-Swarm-Real-Time-Isomorphic-Control-of-UAV-Swarms-via-Hand--Geometry-Mapping
+git clone --recurse-submodules https://github.com/wenhe-123/Real-Time-Isomorphic-Control-of-UAV-Swarms.git
+cd iso-swarm
 ```
 
 ---
@@ -68,7 +68,9 @@ pixi shell
 
 ```bash
 pip install pyk4a mediapipe opencv-python matplotlib
+python -m pip install mediapipe
 ```
+
 
 ---
 
@@ -76,12 +78,14 @@ pip install pyk4a mediapipe opencv-python matplotlib
 
 Download Orbbec SDK (K4A Wrapper):
 
-👉 https://www.orbbec.com/develop/
+👉 https://github.com/orbbec/OrbbecSDK-K4A-Wrapper/releases/
+
+Release v1.10.4 was used in this project 
 
 After downloading:
 
 ```bash
-cd OrbbecSDK_K4A_Wrapper_xxx/bin
+cd OrbbecSDK_K4A_Wrapper_v1.10.4_linux_202504141102/bin
 ./k4aviewer
 ```
 
@@ -92,19 +96,6 @@ cd OrbbecSDK_K4A_Wrapper_xxx/bin
 ```bash
 python hand_swarm/hand_swarm_control_orbbec.py
 ```
-
----
-
-## 📂 Project Structure
-
-```text
-crazyflow/              # Drone simulation core
-hand_swarm/             # Hand tracking & control (your contribution)
-examples/               # (optional examples)
-submodules/             # drone models & controllers
-```
-
----
 
 ## 🧪 Method Overview
 
