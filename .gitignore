@@ -1,0 +1,35 @@
+**.egg-info/
+**/__pycache__/
+logs
+secrets
+**/*.secret
+saves
+.pytest_cache
+*.json
+**/*.csv
+.vscode
+build
+.venv
+!/.devcontainer/devcontainer.json
+!/.devcontainer/devcontainer.linux.json
+!/.devcontainer/devcontainer.wsl2.json
+**/*.pt
+tutorials/ppo/wandb
+dist
+benchmark/data
+# pixi environments
+.pixi
+*.egg-info
+
+# MkDocs build output
+site/
+# Temporary files
+.DS_Store
+Thumbs.db
+
+rgbd_output/
+Log/
+*.pyc
+*.log
+*.png
+*.npy
