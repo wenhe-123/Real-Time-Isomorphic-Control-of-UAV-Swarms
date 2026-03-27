@@ -24,11 +24,67 @@ FINGERTIP_IDS = [4, 8, 12, 16, 20]
 WRIST_ID = 0
 MCP_IDS = [5, 9, 13, 17]
 
+# Nonlinear gain for morph sensitivity:
+# open in [0,1] (0=sphere/fist, 1=plane/open). open**GAMMA makes fist side "more spherical".
+OPEN_GAMMA = 1.8
+
+# Keep morph axis scale fixed (only the morph surface changes size).
+MORPH_AXIS_LIM_MM = 200.0
+
+# Performance / real-time controls
+PLOT_EVERY_N_FRAMES = 5  # update matplotlib every N frames
+THETA_N = 28             # morph surface mesh resolution (lower = faster)
+RHO_N = 14
+ENABLE_3D_PLOT = True    # press 'p' to toggle at runtime
+
+# Snap-to-canonical plane/sphere (helps reach exact endpoints)
+# hysteresis threshold to avoid jittering
+PLANE_SNAP_ON = 0.88
+PLANE_SNAP_OFF = 0.82
+SPHERE_SNAP_ON = 0.12
+SPHERE_SNAP_OFF = 0.18
+
+# 2D HUD anti-flicker
+HUD_UPDATE_EVERY_N_FRAMES = 10
+HUD_OPEN_STEP = 0.03
+HUD_METRIC_STEP = 0.05
+
+# SNAP display debounce (avoid visible blinking)
+SNAP_SHOW_AFTER_FRAMES = 6
+SNAP_HOLD_AFTER_RELEASE_FRAMES = 10
+
+
+def draw_hud(frame, lines, origin=(16, 16), line_h=26, pad=8, alpha=0.55):
+    """
+    Draw readable HUD with a stable translucent background.
+    """
+    x, y = origin
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.7
+    thickness = 2
+    sizes = [cv2.getTextSize(t, font, font_scale, thickness)[0] for t in lines]
+    w = max([s[0] for s in sizes] + [1])
+    h = line_h * len(lines)
+    x0, y0 = x - pad, y - pad
+    x1, y1 = x + w + pad, y + h + pad
+    x0 = max(0, x0)
+    y0 = max(0, y0)
+    x1 = min(frame.shape[1] - 1, x1)
+    y1 = min(frame.shape[0] - 1, y1)
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+    for i, t in enumerate(lines):
+        yy = y + i * line_h + 18
+        cv2.putText(frame, t, (x, yy), font, font_scale, (0, 255, 255), thickness, cv2.LINE_AA)
+
 
 # ===== draw keypoints =====
 def draw_hand(frame, result, depth_map=None, print_depth=False):
     keypoints_3d = []
-    if result.hand_landmarks:
+    if result.hand_landmarks:   #detect hand landmarks
         h, w, _ = frame.shape
 
         for idx, hand_landmarks in enumerate(result.hand_landmarks):
@@ -49,7 +105,7 @@ def draw_hand(frame, result, depth_map=None, print_depth=False):
 
                 depth_mm = None
                 if depth_map is not None and y < depth_map.shape[0] and x < depth_map.shape[1]:
-                    depth_mm = int(depth_map[y, x])
+                    depth_mm = int(depth_map[y, x])   #get depth value from depth map in pixel coordinates
 
                 # Use MediaPipe world landmarks for stable hand-shape 3D visualization.
                 # Fallback to NaN if world landmarks are unavailable.
@@ -112,74 +168,131 @@ def _clamp01(x):
     return float(max(0.0, min(1.0, x)))
 
 
-def _orthonormal_basis_from_dir(direction):
-    d = _safe_normalize(direction)
-    if np.linalg.norm(d) < 1e-8:
-        d = np.array([0.0, 0.0, 1.0], dtype=float)
-    ref = np.array([1.0, 0.0, 0.0], dtype=float) if abs(d[0]) < 0.9 else np.array([0.0, 1.0, 0.0], dtype=float)
-    u = _safe_normalize(np.cross(d, ref))
-    v = _safe_normalize(np.cross(d, u))
-    return d, u, v
-
-
-def draw_bone_cylinder(ax, p0, p1, radius, color="tab:cyan", alpha=0.35):
-    vec = p1 - p0
-    length = np.linalg.norm(vec)
-    if length < 1e-6:
-        return
-    d, u, v = _orthonormal_basis_from_dir(vec)
-    t = np.linspace(0.0, length, 8)
-    ang = np.linspace(0.0, 2.0 * np.pi, 16)
-    tt, aa = np.meshgrid(t, ang)
-    center = p0[None, None, :] + tt[..., None] * d[None, None, :]
-    ring = np.cos(aa)[..., None] * u[None, None, :] + np.sin(aa)[..., None] * v[None, None, :]
-    surf = center + radius * ring
-    ax.plot_surface(surf[..., 0], surf[..., 1], surf[..., 2], color=color, alpha=alpha, linewidth=0)
-
-
-def draw_joint_sphere(ax, c, radius, color="tab:orange", alpha=0.45):
-    u = np.linspace(0.0, 2.0 * np.pi, 16)
-    v = np.linspace(0.0, np.pi, 12)
-    uu, vv = np.meshgrid(u, v)
-    xs = c[0] + radius * np.cos(uu) * np.sin(vv)
-    ys = c[1] + radius * np.sin(uu) * np.sin(vv)
-    zs = c[2] + radius * np.cos(vv)
-    ax.plot_surface(xs, ys, zs, color=color, alpha=alpha, linewidth=0)
-
-
-def draw_morph_surface(ax, centroid, eigvecs, radius, alpha):
-    """
-    Draw continuous isomorphic morph surface:
-    alpha=0 -> plane-like disk
-    alpha=1 -> sphere
-    """
-    alpha = _clamp01(alpha)
-    u_vec = _safe_normalize(eigvecs[:, 0])
-    v_vec = _safe_normalize(eigvecs[:, 1])
-    w_vec = _safe_normalize(eigvecs[:, 2])
-
-    theta = np.linspace(0.0, 2.0 * np.pi, 40)
-    rho = np.linspace(0.0, 1.0, 24)
+def _blanket_param(radius, sphere_alpha, theta_n=THETA_N, rho_n=RHO_N):
+    theta = np.linspace(0.0, 2.0 * np.pi, theta_n)
+    rho = np.linspace(0.0, 1.0, rho_n)
     th, rr = np.meshgrid(theta, rho)
-
-    # radial profile: from flat disk to hemisphere-like bulge, then full sphere by mirroring.
-    # thickness increases smoothly with alpha.
-    x_local = radius * rr * np.cos(th)
-    y_local = radius * rr * np.sin(th)
+    x = radius * rr * np.cos(th)
+    y = radius * rr * np.sin(th)
     z_cap = radius * np.sqrt(np.clip(1.0 - rr**2, 0.0, 1.0))
-    z_local_top = alpha * z_cap
-    z_local_bottom = -alpha * z_cap
+    z = sphere_alpha * z_cap
+    return x, y, z
 
-    px_t = centroid[0] + x_local * u_vec[0] + y_local * v_vec[0] + z_local_top * w_vec[0]
-    py_t = centroid[1] + x_local * u_vec[1] + y_local * v_vec[1] + z_local_top * w_vec[1]
-    pz_t = centroid[2] + x_local * u_vec[2] + y_local * v_vec[2] + z_local_top * w_vec[2]
-    ax.plot_surface(px_t, py_t, pz_t, color="tab:cyan", alpha=0.40, linewidth=0)
 
-    # For alpha close to 0, top and bottom collapse to same plane naturally.
-    px_b = centroid[0] + x_local * u_vec[0] + y_local * v_vec[0] + z_local_bottom * w_vec[0]
-    py_b = centroid[1] + x_local * u_vec[1] + y_local * v_vec[1] + z_local_bottom * w_vec[1]
-    pz_b = centroid[2] + x_local * u_vec[2] + y_local * v_vec[2] + z_local_bottom * w_vec[2]
-    ax.plot_surface(px_b, py_b, pz_b, color="tab:cyan", alpha=0.40, linewidth=0)
+def draw_blanket_morph_canonical(ax, radius, open_alpha, show_refs=True):
+    """
+    Canonical, easy-to-read morph surface (fixed axes).
+
+    We render:
+    - reference plane (open=1) as a gray wireframe disk
+    - reference sphere (open=0) as a faint wireframe sphere (disk parameterization mirrored)
+    - current morph surface as a solid + wireframe (cyan/blue)
+    Plus a cross-section curve to make the interpolation obvious.
+    """
+    open_alpha = _clamp01(open_alpha)
+    sphere_alpha = 1.0 - open_alpha
+
+    # Make the plane state easier to read: enlarge radius when open.
+    # This does not change the underlying control signal, only visualization.
+    radius_vis = float(radius) * (0.90 + 0.95 * open_alpha)
+
+    # references
+    x_ref, y_ref, z_plane = _blanket_param(radius_vis, sphere_alpha=0.0)
+    x_s, y_s, z_s = _blanket_param(radius_vis, sphere_alpha=1.0)
+
+    if show_refs:
+        # plane refs (both sides overlap at z=0)
+        ax.plot_wireframe(x_ref, y_ref, z_plane, color="0.7", linewidth=0.35, alpha=0.55)
+        # full sphere refs (top+bottom)
+        ax.plot_wireframe(x_s, y_s, z_s, color="0.85", linewidth=0.25, alpha=0.35)
+        ax.plot_wireframe(x_s, y_s, -z_s, color="0.85", linewidth=0.25, alpha=0.35)
+
+    # current surface
+    x, y, z = _blanket_param(radius_vis, sphere_alpha=sphere_alpha)
+    ax.plot_surface(x, y, z, color="tab:cyan", alpha=0.35, linewidth=0)
+    ax.plot_surface(x, y, -z, color="tab:cyan", alpha=0.35, linewidth=0)
+    ax.plot_wireframe(x, y, z, color="tab:blue", linewidth=0.35, alpha=0.55)
+    ax.plot_wireframe(x, y, -z, color="tab:blue", linewidth=0.35, alpha=0.55)
+
+    # cross-section at theta=0 (y=0), show how z lifts as alpha changes
+    rr = np.linspace(0.0, 1.0, 80)
+    xs = radius_vis * rr
+    ys = np.zeros_like(xs)
+    zcap = radius_vis * np.sqrt(np.clip(1.0 - rr**2, 0.0, 1.0))
+    ax.plot(xs, ys, sphere_alpha * zcap, color="tab:purple", linewidth=2.0, alpha=0.9)
+    ax.plot(xs, ys, -sphere_alpha * zcap, color="tab:purple", linewidth=2.0, alpha=0.9)
+
+    # Concentric-ring samples: center + rings on plane; morph lifts each ring toward latitudes
+    # (apple-peel: each ring becomes a latitude circle as the blanket wraps the sphere).
+    R = float(radius_vis)
+    num_rings = 4
+    pts_per_ring = 6
+
+    def build_ring_points():
+        top_list = []
+        bot_list = []
+        ring_polys_top = []
+        ring_polys_bot = []
+        # North pole / disk center: maps to top of cap when sphere_alpha>0
+        z0 = sphere_alpha * R
+        top_list.append((0.0, 0.0, z0))
+        # South reference: slight XY offset when near-plane so top/bottom don't collide at open=1;
+        # offset -> 0 when fully spherical (sphere_alpha -> 1).
+        off_scale = float((1.0 - sphere_alpha) ** 2)
+        off_r = 0.06 * R * off_scale
+        bot_list.append((off_r * np.cos(np.pi / 4.0), off_r * np.sin(np.pi / 4.0), -z0))
+        # Complementary angles between hemispheres ("mosquito coil"): bottom ring is rotated
+        # by half a slot + small per-ring twist so samples interleave instead of mirroring.
+        half_slot = np.pi / float(pts_per_ring)
+        twist_per_ring = np.pi / float(2 * num_rings * pts_per_ring)
+        for ri in range(1, num_rings + 1):
+            r = R * (ri / num_rings)
+            z_ring = sphere_alpha * float(np.sqrt(max(0.0, R * R - r * r)))
+            ring_top = []
+            ring_bot = []
+            ring_twist = ri * twist_per_ring
+            for j in range(pts_per_ring):
+                th_top = 2.0 * np.pi * j / pts_per_ring + ring_twist
+                th_bot = th_top + half_slot + 0.5 * ring_twist
+                px_t = r * np.cos(th_top)
+                py_t = r * np.sin(th_top)
+                px_b = r * np.cos(th_bot)
+                py_b = r * np.sin(th_bot)
+                ring_top.append((px_t, py_t, z_ring))
+                ring_bot.append((px_b, py_b, -z_ring))
+            top_list.extend(ring_top)
+            bot_list.extend(ring_bot)
+            arr_t = np.array(ring_top + [ring_top[0]], dtype=float)
+            arr_b = np.array(ring_bot + [ring_bot[0]], dtype=float)
+            ring_polys_top.append(arr_t)
+            ring_polys_bot.append(arr_b)
+        return (
+            np.array(top_list, dtype=float),
+            np.array(bot_list, dtype=float),
+            ring_polys_top,
+            ring_polys_bot,
+        )
+
+    pts_top, pts_bottom, ring_polys_top, ring_polys_bot = build_ring_points()
+
+    # Draw ring polylines (peel / latitude circles)
+    for arr in ring_polys_top:
+        ax.plot(arr[:, 0], arr[:, 1], arr[:, 2], color="tab:green", linewidth=1.0, alpha=0.55)
+    for arr in ring_polys_bot:
+        ax.plot(arr[:, 0], arr[:, 1], arr[:, 2], color="darkgreen", linewidth=1.0, alpha=0.45)
+
+    if sphere_alpha < 0.28:
+        # Near plane: top/bottom surfaces collapse; separate points in BOTH XY and Z
+        eps = max(3.5, 0.020 * radius_vis)
+        top = pts_top.copy()
+        bot = pts_bottom.copy()
+        top[:, :2] *= 0.88
+        bot[:, :2] *= 1.12
+        ax.scatter(top[:, 0], top[:, 1], top[:, 2] + eps, c="k", s=22, alpha=0.65)
+        ax.scatter(bot[:, 0], bot[:, 1], bot[:, 2] - eps, c="k", s=22, alpha=0.65)
+    else:
+        ax.scatter(pts_top[:, 0], pts_top[:, 1], pts_top[:, 2], c="k", s=22, alpha=0.65)
+        ax.scatter(pts_bottom[:, 0], pts_bottom[:, 1], pts_bottom[:, 2], c="k", s=22, alpha=0.65)
 
 
 def analyze_hand_topology(hand_points):
@@ -236,10 +349,15 @@ def analyze_hand_topology(hand_points):
         finger_spread = 0.0
 
     # Continuous morph score for fist->open interpolation (isomorphic simulation)
-    # alpha=0 => sphere-like fist, alpha=1 => plane-like open hand.
+    # morph_alpha=0 => sphere-like fist, morph_alpha=1 => plane-like open hand.
     spread_score = _clamp01((finger_spread - 1.00) / (1.65 - 1.00))
     planarity_score = _clamp01((planarity - 0.12) / (0.55 - 0.12))
-    alpha = _clamp01(0.60 * spread_score + 0.40 * planarity_score)
+    # isotropy_score: 0(plane-like) -> 1(sphere-like)
+    isotropy_score = _clamp01((isotropy - 0.06) / (0.22 - 0.06))
+    alpha = _clamp01(0.50 * spread_score + 0.35 * planarity_score + 0.15 * (1.0 - isotropy_score))
+    # Boost curvature/control sensitivity near fist:
+    # alpha is "open". When alpha<1, alpha**GAMMA becomes smaller -> more spherical.
+    alpha = _clamp01(alpha ** OPEN_GAMMA)
 
     # Keep a coarse label for debugging/overlay only.
     if alpha > 0.67:
@@ -273,7 +391,7 @@ def update_3d_plot(ax_hand, ax_topo, hands_3d, morph_alpha_smoothed=None):
     ax_hand.set_ylabel("Y (mm)")
     ax_hand.set_zlabel("Z (mm)")
 
-    ax_topo.set_title("Plane-to-Sphere Morph Output")
+    ax_topo.set_title("Blanket Morph: plane(open=1) ↔ sphere(open=0)")
     ax_topo.set_xlabel("X (mm)")
     ax_topo.set_ylabel("Y (mm)")
     ax_topo.set_zlabel("Z (mm)")
@@ -319,33 +437,28 @@ def update_3d_plot(ax_hand, ax_topo, hands_3d, morph_alpha_smoothed=None):
         if morph_alpha_smoothed is not None:
             morph_alpha = morph_alpha_smoothed
 
-        # Shared points in surface panel
-        ax_topo.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c="gray", s=10, alpha=0.4)
-        ax_topo.scatter([c[0]], [c[1]], [c[2]], c="k", s=40)
-
-        # Draw normal vector from centroid
-        ax_topo.quiver(c[0], c[1], c[2], n[0], n[1], n[2], length=1.2 * r, color="m")
-
-        draw_morph_surface(
-            ax_topo,
-            centroid=c,
-            eigvecs=analysis["eigvecs"],
-            radius=r,
-            alpha=morph_alpha,
-        )
-
+        # Canonical morph with references + cross-section + sample points.
+        draw_blanket_morph_canonical(ax_topo, radius=max(140.0, 2.2 * r), open_alpha=morph_alpha, show_refs=True)
         ax_topo.text(
-            c[0],
-            c[1],
-            c[2],
-            f"{topo} a={morph_alpha:.2f}",
+            -max(140.0, 2.2 * r),
+            -max(140.0, 2.2 * r),
+            max(140.0, 2.2 * r) * 0.92,
+            "Refs: gray=plane, light=full sphere\n"
+            f"Current: blue/cyan  open={morph_alpha:.2f}\n"
+            f"planarity={analysis['planarity']:.2f}  isotropy={analysis['isotropy']:.2f}",
             color="tab:purple",
         )
 
     ax_hand.view_init(elev=20, azim=-70)
-    ax_topo.view_init(elev=20, azim=-70)
+    ax_topo.view_init(elev=22, azim=-58)
     ax_hand.set_box_aspect((1.0, 1.0, 1.0))
     ax_topo.set_box_aspect((1.0, 1.0, 1.0))
+
+    # Fix axis scale for readability (no auto-zoom).
+    lim = MORPH_AXIS_LIM_MM
+    ax_topo.set_xlim(-lim, lim)
+    ax_topo.set_ylim(-lim, lim)
+    ax_topo.set_zlim(-lim, lim)
     return analyses
 
 
@@ -354,8 +467,11 @@ def main():
 
     options = HandLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=model_path),
-        running_mode=VisionRunningMode.IMAGE,
-        num_hands=2,
+        running_mode=VisionRunningMode.VIDEO,
+        num_hands=1,
+        min_hand_detection_confidence=0.6,
+        min_hand_presence_confidence=0.6,
+        min_tracking_confidence=0.6,
     )
 
     # same camera opening style as test_orbbec.py
@@ -379,8 +495,14 @@ def main():
 
         try:
             frame_idx = 0
-            morph_alpha_ema = None
+            open_free_ema = None
             alpha_smooth = 0.18
+            snap_state = None  # None / "plane" / "sphere"
+            hud_cache = {"open": None, "free": None, "plan": None, "iso": None, "spread": None, "text": None}
+            snap_vis_state = None
+            snap_stable_frames = 0
+            snap_hold_frames = 0
+            enable_3d = ENABLE_3D_PLOT
             while True:
                 try:
                     capture = k4a.get_capture()
@@ -415,10 +537,11 @@ def main():
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
+                t_ms = int(frame_idx * (1000 / 30))
                 try:
-                    result = landmarker.detect(mp_image)
+                    result = landmarker.detect_for_video(mp_image, t_ms)
                 except Exception as exc:
-                    print(f"[WARN] mediapipe detect failed: {exc}")
+                    print(f"[WARN] mediapipe detect_for_video failed: {exc}")
                     continue
                 frame, hands_3d = draw_hand(
                     frame,
@@ -430,39 +553,109 @@ def main():
                 if hands_3d:
                     tmp = analyze_hand_topology(hands_3d[0])
                     if tmp is not None:
-                        if morph_alpha_ema is None:
-                            morph_alpha_ema = tmp["morph_alpha"]
+                        if open_free_ema is None:
+                            open_free_ema = float(tmp["morph_alpha"])
                         else:
-                            morph_alpha_ema = (
-                                alpha_smooth * tmp["morph_alpha"] + (1.0 - alpha_smooth) * morph_alpha_ema
+                            open_free_ema = (
+                                alpha_smooth * float(tmp["morph_alpha"]) + (1.0 - alpha_smooth) * open_free_ema
                             )
 
-                analyses = update_3d_plot(
-                    ax_hand,
-                    ax_topo,
-                    hands_3d,
-                    morph_alpha_smoothed=morph_alpha_ema,
-                )
-                plt.pause(0.001)
+                        # Snap-to-canonical with hysteresis (easier to hit exact plane/sphere)
+                        # IMPORTANT:
+                        # Use the "free" continuous value to manage snap state,
+                        # otherwise snap would never release (because we clamp to 0/1).
+                        open_free = float(open_free_ema)
+                        if snap_state == "plane":
+                            if open_free < PLANE_SNAP_OFF:
+                                snap_state = None
+                        elif snap_state == "sphere":
+                            if open_free > SPHERE_SNAP_OFF:
+                                snap_state = None
+                        else:
+                            if open_free > PLANE_SNAP_ON:
+                                snap_state = "plane"
+                            elif open_free < SPHERE_SNAP_ON:
+                                snap_state = "sphere"
+
+                        open_out = open_free
+                        if snap_state == "plane":
+                            open_out = 1.0
+                        elif snap_state == "sphere":
+                            open_out = 0.0
+                    else:
+                        open_out = None
+                else:
+                    open_out = None
+
+                # Debounce SNAP display to avoid flicker.
+                if snap_state is None:
+                    snap_stable_frames = 0
+                    if snap_vis_state is not None:
+                        snap_hold_frames += 1
+                        if snap_hold_frames >= SNAP_HOLD_AFTER_RELEASE_FRAMES:
+                            snap_vis_state = None
+                            snap_hold_frames = 0
+                else:
+                    snap_hold_frames = 0
+                    if snap_vis_state == snap_state:
+                        snap_stable_frames = min(SNAP_SHOW_AFTER_FRAMES, snap_stable_frames + 1)
+                    else:
+                        snap_stable_frames += 1
+                        if snap_stable_frames >= SNAP_SHOW_AFTER_FRAMES:
+                            snap_vis_state = snap_state
+                            snap_stable_frames = 0
+
+                analyses = None
+                if enable_3d and (frame_idx % PLOT_EVERY_N_FRAMES) == 0:
+                    analyses = update_3d_plot(
+                        ax_hand,
+                        ax_topo,
+                        hands_3d,
+                        morph_alpha_smoothed=open_out,
+                    )
+                    plt.pause(0.0001)
 
                 if analyses:
                     # show first hand summary on 2D window
                     a0 = analyses[0]
-                    cv2.putText(
-                        frame,
-                        f"Topo:{a0['topology']} A:{(morph_alpha_ema if morph_alpha_ema is not None else a0['morph_alpha']):.2f} "
-                        f"Spread:{a0['finger_spread']:.2f} Planarity:{a0['planarity']:.2f}",
-                        (20, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 255, 255),
-                        2,
-                    )
+                    open_disp = open_out if open_out is not None else a0["morph_alpha"]
+                    free_disp = open_free_ema if open_free_ema is not None else a0["morph_alpha"]
+
+                    need_refresh = (frame_idx % HUD_UPDATE_EVERY_N_FRAMES) == 0 or hud_cache["open"] is None
+                    if not need_refresh:
+                        if abs(float(open_disp) - float(hud_cache["open"])) > HUD_OPEN_STEP:
+                            need_refresh = True
+                        if abs(float(free_disp) - float(hud_cache["free"])) > HUD_OPEN_STEP:
+                            need_refresh = True
+                        if abs(float(a0["planarity"]) - float(hud_cache["plan"])) > HUD_METRIC_STEP:
+                            need_refresh = True
+                        if abs(float(a0["isotropy"]) - float(hud_cache["iso"])) > HUD_METRIC_STEP:
+                            need_refresh = True
+                        if abs(float(a0["finger_spread"]) - float(hud_cache["spread"])) > HUD_METRIC_STEP:
+                            need_refresh = True
+
+                    if need_refresh:
+                        hud_cache["open"] = float(open_disp)
+                        hud_cache["free"] = float(free_disp)
+                        hud_cache["plan"] = float(a0["planarity"])
+                        hud_cache["iso"] = float(a0["isotropy"])
+                        hud_cache["spread"] = float(a0["finger_spread"])
+                        snap_txt = f"  SNAP:{snap_vis_state.upper()}" if snap_vis_state is not None else ""
+                        hud_cache["text"] = [
+                            f"Topo:{a0['topology']}{snap_txt}",
+                            f"open:{open_disp:.2f}  free:{free_disp:.2f}",
+                            f"spread:{a0['finger_spread']:.2f}  plan:{a0['planarity']:.2f}  iso:{a0['isotropy']:.2f}",
+                        ]
+
+                    if hud_cache["text"] is not None:
+                        pass
                     if frame_idx % 30 == 0:
+                        out_v = open_out if open_out is not None else a0["morph_alpha"]
+                        free_v = open_free_ema if open_free_ema is not None else a0["morph_alpha"]
                         print(
                             "topology="
                             f"{a0['topology']} "
-                            f"alpha={(morph_alpha_ema if morph_alpha_ema is not None else a0['morph_alpha']):.3f} "
+                            f"open_out={out_v:.3f} free={free_v:.3f} "
                             f"spread={a0['finger_spread']:.3f} "
                             f"planarity={a0['planarity']:.3f} "
                             f"isotropy={a0['isotropy']:.3f}"
@@ -475,9 +668,16 @@ def main():
                     out_name = f"hand_3d_frame_{frame_idx:06d}.png"
                     fig.savefig(out_name, dpi=150, bbox_inches="tight")
                     print(f"Saved 3D plot: {out_name}")
+                if key == ord("p"):
+                    enable_3d = not enable_3d
+                    print(f"3D plot enabled: {enable_3d}")
 
                 if key == ord("q"):
                     break
+
+                # Draw HUD EVERY frame using cached text (prevents flicker).
+                if hud_cache["text"] is not None:
+                    draw_hud(frame, hud_cache["text"], origin=(16, 16))
                 frame_idx += 1
         finally:
             k4a.stop()
