@@ -64,8 +64,32 @@ cd OrbbecSDK_K4A_Wrapper_xxx/bin
 ## ▶️ Run
 
 ```bash
-python hand_swarm/hand_swarm_control_orbbec.py
+pixi run python src/apps/webcam_modes_app.py
+pixi run python src/apps/orbbec_app.py
+pixi run python src/apps/dual_app.py
+pixi run python src/apps/orbbec_modes_app.py
+pixi run python src/apps/swarm_orbbec_app.py
 ```
+
+---
+
+## 🗂️ Code Layout
+
+```text
+src/
+  apps/        # runnable application entry files (main commands)
+  pipelines/   # pipeline wiring (device/cli/main flow)
+  shared/      # reusable logic shared by pipelines
+  tools/       # utility/testing scripts
+  legacy/      # archived old scripts kept as backup
+  backup/      # compatibility shims kept for rollback
+```
+
+Notes:
+
+* `apps/` is the only supported runtime entry layer.
+* `entrypoints/` compatibility layer has been removed.
+* `hand_landmarker.task` stays at project root and is still used by defaults.
 
 ---
 
