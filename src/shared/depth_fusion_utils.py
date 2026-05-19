@@ -9,14 +9,14 @@ import numpy as np
 from pyk4a.calibration import CalibrationType
 
 
-def mp_world_to_mm(wlm):
+def mp_world_to_mm(wlm): # convert MediaPipe world coordinates to mm
     return (
         float(wlm.x * 1000.0),
         float(-wlm.y * 1000.0),
         float(-wlm.z * 1000.0),
     )
 
-
+# map color pixel to depth pixel
 def map_color_pixel_to_depth_pixel(x_c: int, y_c: int, w_c: int, h_c: int, w_d: int, h_d: int):
     xd = int(np.clip(round(x_c * (w_d / max(w_c, 1))), 0, w_d - 1))
     yd = int(np.clip(round(y_c * (h_d / max(h_c, 1))), 0, h_d - 1))
@@ -69,7 +69,7 @@ def fuse_cam_and_mp(p_cam, p_mp, fusion_weight: float):
     if p_cam is None or np.any(np.isnan(p_cam)):
         return (float(p_mp[0]), float(p_mp[1]), float(p_mp[2]))
     p_cam = np.array(p_cam, dtype=float)
-    out = w * p_cam + (1.0 - w) * p_mp
+    out = w * p_cam + (1.0 - w) * p_mp # w is the fusion weight between depth camera and MP
     return (float(out[0]), float(out[1]), float(out[2]))
 
 
@@ -108,6 +108,24 @@ def read_depth_mm_at_landmark(x, y, h, w, depth_aligned, depth_raw, patch_r: int
         xd, yd = map_color_pixel_to_depth_pixel(x, y, w, h, depth_raw.shape[1], depth_raw.shape[0])
         return median_valid_depth_mm(depth_raw, xd, yd, patch_r)
     return None
+
+
+def project_depth_cam_mm_to_color_px(calibration, p_mm) -> tuple[float, float] | None:
+    """Project a 3D point in depth-camera mm onto the color image (u, v)."""
+    if calibration is None or p_mm is None:
+        return None
+    p = np.asarray(p_mm, dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(p)):
+        return None
+    try:
+        uv = calibration.convert_3d_to_2d(
+            (float(p[0]), float(p[1]), float(p[2])),
+            CalibrationType.DEPTH,
+            CalibrationType.COLOR,
+        )
+        return float(uv[0]), float(uv[1])
+    except (ValueError, Exception):
+        return None
 
 
 def unproject_to_depth_cam_mm(calibration, x, y, depth_mm, h, w, depth_aligned, depth_raw):

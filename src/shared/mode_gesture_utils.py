@@ -7,10 +7,11 @@ from typing import Sequence, Tuple
 import numpy as np
 
 # Tier 4 → 5: thumb must pass these (thumb is noisier than other tips; avoid false M5 with 4 fingers up).
-THUMB_PROMOTE_ABS_MIN = 0.74
-THUMB_PROMOTE_REL_MX4 = 0.78
+# Slightly relaxed vs 2025 defaults so “five fingers open” reaches M5 more reliably on real depth/MP noise.
+THUMB_PROMOTE_ABS_MIN = 0.60
+THUMB_PROMOTE_REL_MX4 = 0.66
 # Below this vs max of index..pinky, do not count as intentional thumb-up.
-THUMB_PROMOTE_MAX_BELOW_MX4 = 0.27
+THUMB_PROMOTE_MAX_BELOW_MX4 = 0.36
 
 
 def palm_center_and_scale(hand_points: Sequence[Tuple[float, float, float]], wrist_id: int, mcp_ids: Sequence[int]):
@@ -87,6 +88,14 @@ def classify_mode_from_fingers(
         mx4 - float(THUMB_PROMOTE_MAX_BELOW_MX4),
     )
     if tier == 4 and thumb_ok:
+        tier = 5
+    elif (
+        tier == 4
+        and have_thumb
+        and th >= float(mode_extend_min) * 0.98
+        and th >= 0.58 * mx4
+    ):
+        # Secondary: five-finger spread with thumb clearly extended but just below strict promote.
         tier = 5
 
     tier = max(1, min(n_tip, tier))

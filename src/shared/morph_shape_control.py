@@ -18,7 +18,7 @@ INDEX_MCP_ID = 5
 # Smaller → same finger motion moves p more (more sensitive). Tuned for palm-scale norm distance.
 LEFT_SHAPE_RANGE_HALF_NORM = 0.22
 
-LEFT_SHAPE_EMA_ALPHA = 0.24
+LEFT_SHAPE_EMA_ALPHA = 0.17
 
 MODE_P_DISPLAY_BASE_ALPHA = 0.22
 MODE_P_DISPLAY_SWITCH_ALPHA = 0.07

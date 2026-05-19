@@ -11,6 +11,8 @@ Entry function: `main()`.
 """
 
 import argparse
+import sys
+from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
@@ -18,6 +20,11 @@ import mediapipe as mp
 import numpy as np
 import matplotlib.pyplot as plt
 from pyk4a import Config, FPS, PyK4A
+
+_SRC = Path(__file__).resolve().parents[1]
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
 from shared.common_utils import draw_hud
 from shared.depth_fusion_utils import (
     ema_point_triplet as _shared_ema_point_triplet,
@@ -125,13 +132,13 @@ MORPH_AXIS_LIM_MM = 200.0
 # Wrist-centered + palm-scale normalization: 3D plot limits (unit hand size).
 NORM_AXIS_HALFLIM = 1.35
 
-# Performance / real-time controls
-PLOT_EVERY_N_FRAMES = 5  # update matplotlib every N frames
+# Performance / real-time controls (continuity-first)
+PLOT_EVERY_N_FRAMES = 2  # update matplotlib every N frames
 ENABLE_3D_PLOT = True    # press 'p' to toggle at runtime
 
 # Snap-to-canonical plane/sphere (EMA raw_free); hysteresis matches original standalone script.
-PLANE_SNAP_ON = 0.88
-PLANE_SNAP_OFF = 0.82
+PLANE_SNAP_ON = 0.82
+PLANE_SNAP_OFF = 0.78
 SPHERE_SNAP_ON = 0.12
 SPHERE_SNAP_OFF = 0.18
 
@@ -441,11 +448,13 @@ def update_3d_plot(
     mode_shape_t: Optional[float] = None,
     epsilon_pair_display: Optional[Tuple[float, float]] = None,
     lp_show_refs: bool = True,
+    show_sample_ids: bool = False,
     mesh_n_eta: int = MORPH_LP_MESH_ETA,
     mesh_n_omega: int = MORPH_LP_MESH_OMEGA,
     shape_normalized: bool = False,
     hand_frame: str = HAND_FRAME_SCALED,
     hand_3d_source: str = HAND_3D_SOURCE_MP,
+    topo_radius_override_mm: Optional[float] = None,
 ):
     return update_3d_plot_lp(
         ax_hand,
@@ -466,8 +475,10 @@ def update_3d_plot(
         mode_shape_t=mode_shape_t,
         epsilon_pair_display=epsilon_pair_display,
         lp_show_refs=lp_show_refs,
+        show_sample_ids=show_sample_ids,
         mesh_n_eta=mesh_n_eta,
         mesh_n_omega=mesh_n_omega,
+        topo_radius_override_mm=topo_radius_override_mm,
     )
 
 
@@ -594,6 +605,11 @@ def _build_orbbec_arg_parser() -> argparse.ArgumentParser:
             "before fusion. Use offline calibration (depth camera → frame comparable to MediaPipe). "
             "Ignored for pure 3D when --hand-3d mp and depth-fusion=0."
         ),
+    )
+    ap.add_argument(
+        "--show-sample-ids",
+        action="store_true",
+        help="Draw sample point ID text in 3D (slower; off by default).",
     )
     return ap
 
@@ -805,6 +821,7 @@ def _run_frame_step(
                 shape_normalized=shape_norm,
                 hand_frame=hand_frame,
                 hand_3d_source=args.hand_3d,
+                show_sample_ids=bool(args.show_sample_ids),
             )
         else:
             analyses = update_3d_plot(
@@ -815,6 +832,7 @@ def _run_frame_step(
                 shape_normalized=shape_norm,
                 hand_frame=hand_frame,
                 hand_3d_source=args.hand_3d,
+                show_sample_ids=bool(args.show_sample_ids),
             )
         plt.pause(0.0001)
 

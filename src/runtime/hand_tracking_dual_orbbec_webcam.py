@@ -23,12 +23,18 @@ timestamps, then fuse the two world-space results.
 3D plot: ``shared.morph_lp_plot.update_3d_plot_lp`` (same superellipsoid morph as webcam / Orbbec modes).  Controls: q / p / s.
 """
 import argparse
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import mediapipe as mp
 import numpy as np
 import matplotlib.pyplot as plt
 from pyk4a import Config, FPS, PyK4A
+
+_SRC = Path(__file__).resolve().parents[1]
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 from . import hand_tracking_orbbec as ob
 from . import hand_tracking_webcam_modes as hm
@@ -54,9 +60,11 @@ from shared.mp_hand_utils import (
 from shared.dual_state_utils import init_dual_runtime_state
 from shared.modes_runtime import (
     ModeState,
+    RightHandState,
     build_modes_hud_lines,
     overlay_mode_open_wrist_labels,
     update_mode_state,
+    update_open_state as shared_update_open_state,
 )
 from shared.stream_runtime_utils import (
     capture_orbbec_frame,
@@ -73,7 +81,7 @@ HandLandmarker = mp.tasks.vision.HandLandmarker
 HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 RunningMode = mp.tasks.vision.RunningMode
 
-PLOT_EVERY_N_FRAMES = 5
+PLOT_EVERY_N_FRAMES = 2
 ENABLE_3D_PLOT = True
 
 
@@ -218,6 +226,18 @@ def main():
         metavar="FRAMES",
         help="Print and overlay MediaPipe handedness (Left/Right) every FRAMES frames. 0=off.",
     )
+    ap.add_argument(
+        "--show-sample-ids",
+        action="store_true",
+        help="Draw sample point ID text in 3D (slower; off by default).",
+    )
+    ap.add_argument(
+        "--print-points-every",
+        type=int,
+        default=0,
+        metavar="FRAMES",
+        help="Print fused 3D point coordinates every FRAMES (0=off).",
+    )
     args = ap.parse_args()
     prompt_and_init_fixed_surface_points()
     model_path = resolve_model_path(args.model, __file__)
@@ -313,6 +333,7 @@ def main():
         snap_hold_frames = _st["snap_hold_frames"]
         enable_3d = _st["enable_3d"]
         mode_state = ModeState()
+        right_state = RightHandState()
         lp_shape = LpShapePipelineState()
 
         while True:
@@ -648,36 +669,21 @@ def main():
             open_out = None
             if hands_3d and hands_3d[0] is not None:
                 tmp = ob.analyze_hand_topology(hands_3d[0])
-                if tmp is not None:
-                    if open_free_ema is None:
-                        open_free_ema = float(tmp["morph_alpha"])
-                    else:
-                        open_free_ema = (
-                            alpha_smooth * float(tmp["morph_alpha"]) + (1.0 - alpha_smooth) * open_free_ema
-                        )
-
-                    open_free = float(open_free_ema)
-                    if snap_state == "plane":
-                        if open_free < ob.PLANE_SNAP_OFF:
-                            snap_state = None
-                    elif snap_state == "sphere":
-                        if open_free > ob.SPHERE_SNAP_OFF:
-                            snap_state = None
-                    else:
-                        if open_free > ob.PLANE_SNAP_ON:
-                            snap_state = "plane"
-                        elif open_free < ob.SPHERE_SNAP_ON:
-                            snap_state = "sphere"
-
-                    open_out = open_free
-                    if snap_state == "plane":
-                        open_out = 1.0
-                    elif snap_state == "sphere":
-                        open_out = 0.0
-                else:
-                    open_out = None
+                open_out = shared_update_open_state(
+                    hands_3d[0],
+                    right_state=right_state,
+                    analyze_topology_fn=ob.analyze_hand_topology,
+                    open_smooth=0.18,
+                    plane_snap_on=ob.PLANE_SNAP_ON,
+                    plane_snap_off=ob.PLANE_SNAP_OFF,
+                    sphere_snap_on=ob.SPHERE_SNAP_ON,
+                    sphere_snap_off=ob.SPHERE_SNAP_OFF,
+                    topology_analysis=tmp,
+                )
             else:
                 open_out = None
+            open_free_ema = right_state.open_free_ema
+            snap_state = right_state.snap_state
 
             if has_o and result_o.hand_landmarks:
                 overlay_mode_open_wrist_labels(
@@ -739,6 +745,7 @@ def main():
                     morph_axis_lim_mm=ob.MORPH_AXIS_LIM_MM,
                     mode_shape_t=lp_shape.left_shape_t_ema,
                     epsilon_pair_display=lp_shape.epsilon_pair_display,
+                    show_sample_ids=bool(args.show_sample_ids),
                 )
                 plt.pause(0.0001)
 
@@ -793,6 +800,14 @@ def main():
                         f"spread={a0['finger_spread']:.3f} "
                         f"planarity={a0['planarity']:.3f} isotropy={a0['isotropy']:.3f}"
                     )
+
+            points_every = int(getattr(args, "print_points_every", 0) or 0)
+            if points_every > 0 and hands_3d and (frame_idx % points_every) == 0:
+                pts = np.asarray(hands_3d[0], dtype=float)
+                pts_txt = " ".join(
+                    [f"{i}:({p[0]:.1f},{p[1]:.1f},{p[2]:.1f})" for i, p in enumerate(pts)]
+                )
+                print(f"fused_points n={pts.shape[0]} {pts_txt}")
 
             cv2.imshow("Hand Tracking Dual (Orbbec + Webcam)", frame_disp)
 

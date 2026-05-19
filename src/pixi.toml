@@ -8,6 +8,22 @@ platforms = ["linux-64"]
 
 [dependencies]
 python = ">=3.10,<3.12"
+numpy = ">=1.26,<3"
+matplotlib = ">=3.8,<4"
+opencv = ">=4.9,<5"
+
+[pypi-dependencies]
+mediapipe = ">=0.10.14,<0.11"
+pyk4a = ">=1.5.0,<2"
+jax = ">=0.4.30,<0.5"
+jaxlib = ">=0.4.30,<0.5"
+pynput = ">=1.7.6,<2"
+keyboard = ">=0.13.5,<0.14"
 
 [activation.env]
 PYTHONPATH = "src"
+
+[tasks]
+online-dual = "python online_control_dual.py"
+online = "python online_control.py"
+# Example: pixi run online-dual -- --record-trajectory ../data/online_run.npz

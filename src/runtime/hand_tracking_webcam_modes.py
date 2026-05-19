@@ -19,12 +19,20 @@ open/morph freezes at the last value until the right hand returns.
 from __future__ import annotations
 
 import argparse
+import time
+import sys
+from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 import cv2
 import mediapipe as mp
 import matplotlib.pyplot as plt
 import numpy as np
+
+_SRC = Path(__file__).resolve().parents[1]
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
 from shared.common_utils import draw_hud, resolve_model_path
 from shared.hand_constants import FINGERTIP_IDS, HAND_CONNECTIONS, MCP_IDS, WRIST_ID
 from shared.hand_draw_utils import draw_all_hands, draw_single_hand
@@ -41,12 +49,6 @@ from shared.morph_lp_plot import (
     update_3d_plot_lp,
 )
 from shared.morph_renderers import prompt_and_init_fixed_surface_points
-from shared.morph_renderers import get_fixed_surface_count, mapped_fixed_surface_points
-from shared.morph_shape_control import (
-    LpShapePipelineState,
-    advance_lp_shape_p,
-    index_mcp_tip_segment_norm,
-)
 from shared.modes_runtime import (
     ModeState,
     RightHandState,
@@ -73,34 +75,38 @@ RunningMode = mp.tasks.vision.RunningMode
 # Index / middle / ring / pinky / thumb — used for 1–5 mode gesture.
 MODE_COUNT_TIP_IDS = [8, 12, 16, 20, 4]
 
-OPEN_GAMMA = 1.8
-TOPO_ALPHA_PLANE = 0.67
-TOPO_ALPHA_SPHERE = 0.33
-MORPH_AXIS_LIM_MM = 200.0
+OPEN_GAMMA = 1.8  #value means the sensitivity of the open/close control 
+TOPO_ALPHA_PLANE = 0.67 
+TOPO_ALPHA_SPHERE = 0.33 
+MORPH_AXIS_LIM_MM = 200.0 # maximum distance of the morph axis in millimeters
 # Wrist-centered normalized plots (match hand_tracking_orbbec.py)
-NORM_AXIS_HALFLIM = 1.35
+NORM_AXIS_HALFLIM = 1.35 # 
 HAND_3D_SOURCE_MP = "mp"
 HAND_3D_SOURCE_FUSED = "fused"
 HAND_FRAME_SCALED = "scaled"
 HAND_FRAME_PALM_PLANE = "palm_plane"
 HAND_FRAME_METRIC_MM = "metric_mm"
 
-# 3D matplotlib is heavy; refresh less often for smoother camera window (override with --plot-every).
-PLOT_EVERY_N_FRAMES = 8
+# 3D continuity-first default: refresh frequently for smoother visual morph.
+PLOT_EVERY_N_FRAMES = 2
 ENABLE_3D_PLOT = True
 # Lp mesh resolution defaults: shared.morph_lp_plot (MORPH_LP_MESH_ETA / MORPH_LP_MESH_OMEGA).
 
-PLANE_SNAP_ON = 0.88
-PLANE_SNAP_OFF = 0.82
+PLANE_SNAP_ON = 0.82 # threshold for plane snap on
+PLANE_SNAP_OFF = 0.78 # threshold for plane snap off
 SPHERE_SNAP_ON = 0.12
 SPHERE_SNAP_OFF = 0.18
 
-HUD_UPDATE_EVERY_N_FRAMES = 10
+HUD_UPDATE_EVERY_N_FRAMES = 10 # update the HUD every 10 frames
 HUD_OPEN_STEP = 0.03
 HUD_METRIC_STEP = 0.05
 
 SNAP_SHOW_AFTER_FRAMES = 6
 SNAP_HOLD_AFTER_RELEASE_FRAMES = 10
+EPSILON_TRANSITION_K = 0.2
+PLOT_EVERY_N_MAX = 16
+PLOT_ADAPT_UP_FPS = 22.0
+PLOT_ADAPT_DOWN_FPS = 27.0
 
 # Mode classification: normalized tip distances vs. hand scale (index/middle/ring/pinky/thumb)
 MODE_EXTEND_MIN = 0.62  # below this max(dn): fist / no clear gesture → mode 1
@@ -110,14 +116,21 @@ MODE_TIER_GAP = 0.38
 # Require raw mode this many consecutive frames before accepting (reduces flicker)
 MODE_DEBOUNCE_FRAMES = 7
 
-# Left-hand in-mode Lp: ‖index_tip−index_MCP‖ / palm scale → shape_t (see shared.morph_shape_control).
-
 def _safe_normalize(v):
     return safe_normalize(v)
 
 
 def _clamp01(x):
     return clamp01(x)
+
+
+def _lerp_eps(prev: Optional[Tuple[float, float]], target: Tuple[float, float], k: float) -> Tuple[float, float]:
+    if prev is None:
+        return float(target[0]), float(target[1])
+    kk = float(np.clip(k, 0.01, 1.0))
+    e1 = float(prev[0] + kk * (float(target[0]) - float(prev[0])))
+    e2 = float(prev[1] + kk * (float(target[1]) - float(prev[1])))
+    return e1, e2
 
 
 def palm_center_and_scale(hand_points: Sequence[Tuple[float, float, float]]):
@@ -159,7 +172,9 @@ def update_3d_plot(
     hand_3d_source: str = HAND_3D_SOURCE_MP,
     mode_shape_t: Optional[float] = None,
     epsilon_pair_display: Optional[Tuple[float, float]] = None,
+    analyze_hand_topology_fn_override=None,
     lp_show_refs: bool = True,
+    show_sample_ids: bool = False,
     mesh_n_eta: int = MORPH_LP_MESH_ETA,
     mesh_n_omega: int = MORPH_LP_MESH_OMEGA,
 ):
@@ -170,7 +185,9 @@ def update_3d_plot(
         morph_mode=morph_mode,
         morph_alpha_smoothed=morph_alpha_smoothed,
         control_label=control_label,
-        analyze_hand_topology_fn=analyze_hand_topology,
+        analyze_hand_topology_fn=(
+            analyze_hand_topology if analyze_hand_topology_fn_override is None else analyze_hand_topology_fn_override
+        ),
         clamp01_fn=_clamp01,
         shape_normalized=shape_normalized,
         hand_frame=hand_frame,
@@ -182,6 +199,7 @@ def update_3d_plot(
         mode_shape_t=mode_shape_t,
         epsilon_pair_display=epsilon_pair_display,
         lp_show_refs=lp_show_refs,
+        show_sample_ids=show_sample_ids,
         mesh_n_eta=mesh_n_eta,
         mesh_n_omega=mesh_n_omega,
     )
@@ -198,13 +216,23 @@ def main():
         type=int,
         default=None,
         metavar="N",
-        help="Refresh matplotlib 3D every N camera frames (default: %s). Larger = smoother video, choppier 3D."
+        help="Refresh matplotlib 3D every N camera frames (default: %s). Smaller = smoother 3D, higher CPU."
         % (PLOT_EVERY_N_FRAMES,),
+    )
+    ap.add_argument(
+        "--adaptive-plot-every",
+        action="store_true",
+        help="Auto-adjust 3D refresh interval based on FPS (may introduce visual discretization).",
     )
     ap.add_argument(
         "--no-3d-refs",
         action="store_true",
         help="Skip faint Lp reference wireframes (faster 3D draw).",
+    )
+    ap.add_argument(
+        "--show-sample-ids",
+        action="store_true",
+        help="Draw sample point ID text in 3D (slower; off by default).",
     )
     ap.add_argument(
         "--camera-buffer",
@@ -235,6 +263,8 @@ def main():
 
     plot_every_n = int(args.plot_every) if args.plot_every is not None else int(PLOT_EVERY_N_FRAMES)
     plot_every_n = max(1, plot_every_n)
+    adaptive_plot_every_n = int(plot_every_n)
+    use_adaptive_plot_every = bool(args.adaptive_plot_every)
     lp_show_refs = not bool(args.no_3d_refs)
 
     with HandLandmarker.create_from_options(options) as landmarker:
@@ -253,10 +283,11 @@ def main():
             right_state = RightHandState()
             snap_visual = SnapVisualState()
             hud_cache = {"open": None, "free": None, "plan": None, "iso": None, "spread": None, "text": None}
+            eps_display: Optional[Tuple[float, float]] = None
             enable_3d = ENABLE_3D_PLOT
-            lp_shape = LpShapePipelineState()
-
+            perf_ema_dt: Optional[float] = None
             while True:
+                frame_t0 = time.perf_counter()
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     continue
@@ -279,12 +310,6 @@ def main():
                 pts_L = (
                     extract_world_points_mm_result(result, idx_L) if idx_L is not None else None
                 )
-                dist_norm = (
-                    index_mcp_tip_segment_norm(pts_L, wrist_id=WRIST_ID, mcp_ids=MCP_IDS)
-                    if pts_L is not None
-                    else None
-                )
-
                 # --- Mode: LEFT hand only (right hand ignored for mode) ---
                 mode_raw, tier_count = shared_update_mode_state(
                     pts_L,
@@ -294,14 +319,15 @@ def main():
                     mode_smooth=0.22,
                 )
                 active_mode = int(mode_state.morph_mode)
-                advance_lp_shape_p(dist_norm, active_mode, lp_shape)
 
                 # --- Open / morph: RIGHT hand only (left hand ignored for open) ---
                 hands_3d: List = []
                 pts_R = None
+                topo_right = None
                 if idx_R is not None:
                     pts_R = extract_world_points_mm_result(result, idx_R)
                     if pts_R is not None:
+                        topo_right = analyze_hand_topology(pts_R)
                         right_state.last_right_pts = list(pts_R)
                         hands_3d = [pts_R]
                 else:
@@ -317,6 +343,7 @@ def main():
                     plane_snap_off=PLANE_SNAP_OFF,
                     sphere_snap_on=SPHERE_SNAP_ON,
                     sphere_snap_off=SPHERE_SNAP_OFF,
+                    topology_analysis=topo_right,
                 )
 
                 frame, _kp_map = draw_all_hands(
@@ -336,15 +363,11 @@ def main():
                 if idx_R is None:
                     hint_parts.append("no RIGHT (open frozen)")
                 hint = "  |  ".join(hint_parts) if hint_parts else "L=mode  R=open"
-                lshape_txt = f"{lp_shape.left_shape_t_ema:.2f}" if lp_shape.left_shape_t_ema is not None else "-"
-                ref_v = lp_shape.left_ref_dist_by_mode.get(active_mode)
-                ref_txt = f"{ref_v:.3f}" if ref_v is not None else "-"
                 otxt = f"{open_out:.2f}" if open_out is not None else "-"
                 cv2.putText(
                     frame,
                     f"M{mode_state.morph_mode} raw:{mode_raw}  open:{otxt}  "
                     f"tier:{tier_count if tier_count >= 0 else '-'}  "
-                    f"Lshape:{lshape_txt}  ref:{ref_txt}  "
                     f"{hint}"[:95],
                     (16, frame.shape[0] - 22),
                     cv2.FONT_HERSHEY_SIMPLEX,
@@ -362,7 +385,9 @@ def main():
                 )
 
                 analyses = None
-                if enable_3d and (frame_idx % plot_every_n) == 0 and hands_3d:
+                if enable_3d and (frame_idx % adaptive_plot_every_n) == 0 and hands_3d:
+                    eps_target = mode_epsilon_pair(int(mode_state.morph_mode), None)
+                    eps_display = _lerp_eps(eps_display, eps_target, EPSILON_TRANSITION_K)
                     analyses = update_3d_plot(
                         ax_hand,
                         ax_topo,
@@ -370,9 +395,13 @@ def main():
                         morph_mode=mode_state.morph_mode,
                         morph_alpha_smoothed=open_out,
                         control_label="open+p",
-                        mode_shape_t=lp_shape.left_shape_t_ema,
-                        epsilon_pair_display=lp_shape.epsilon_pair_display,
+                        mode_shape_t=None,
+                        epsilon_pair_display=eps_display,
+                        analyze_hand_topology_fn_override=(
+                            (lambda _pts, _topo=topo_right: _topo) if topo_right is not None else None
+                        ),
                         lp_show_refs=lp_show_refs,
+                        show_sample_ids=bool(args.show_sample_ids),
                     )
                     # Let Qt/Tk process events without long sleep (3D draw is already the heavy part).
                     try:
@@ -422,20 +451,12 @@ def main():
 
                     if frame_idx % 5 == 0:
                         open_v = float(open_out if open_out is not None else a0["morph_alpha"])
-                        e1, e2 = mode_epsilon_pair(int(mode_state.morph_mode), lp_shape.left_shape_t_ema)
-                        pts = mapped_fixed_surface_points(
-                            radius=float(a0["radius"]),
-                            open_alpha=open_v,
-                            epsilon1=e1,
-                            epsilon2=e2,
-                            plane_radius_a=MORPH_PLANE_RADIUS_A,
-                            plane_radius_b=MORPH_PLANE_RADIUS_B,
-                            morph_mode=int(mode_state.morph_mode),
+                        e1d, e2d = eps_display if eps_display is not None else mode_epsilon_pair(int(mode_state.morph_mode), None)
+                        print(
+                            f"mode={int(mode_state.morph_mode)} open={open_v:.3f} "
+                            f"eps=({float(e1d):.3f},{float(e2d):.3f}) radius={float(a0['radius']):.1f} "
+                            f"plan={float(a0['planarity']):.3f} iso={float(a0['isotropy']):.3f}"
                         )
-                        pts_txt = " ".join(
-                            [f"{i}:({p[0]:.1f},{p[1]:.1f},{p[2]:.1f})" for i, p in enumerate(pts)]
-                        )
-                        print(f"mode={int(mode_state.morph_mode)} n={get_fixed_surface_count()} points={pts_txt}")
 
                 if hud_cache["text"] is not None:
                     draw_hud(frame, hud_cache["text"], origin=(16, 16))
@@ -452,6 +473,15 @@ def main():
                     print(f"3D plot: {enable_3d}")
                 if key == ord("q"):
                     break
+
+                dt = max(1e-5, float(time.perf_counter() - frame_t0))
+                perf_ema_dt = dt if perf_ema_dt is None else (0.12 * dt + 0.88 * perf_ema_dt)
+                if use_adaptive_plot_every and (frame_idx % 15) == 0:
+                    fps_est = 1.0 / max(1e-5, float(perf_ema_dt))
+                    if fps_est < PLOT_ADAPT_UP_FPS and adaptive_plot_every_n < PLOT_EVERY_N_MAX:
+                        adaptive_plot_every_n += 1
+                    elif fps_est > PLOT_ADAPT_DOWN_FPS and adaptive_plot_every_n > plot_every_n:
+                        adaptive_plot_every_n -= 1
 
                 frame_idx += 1
         finally:

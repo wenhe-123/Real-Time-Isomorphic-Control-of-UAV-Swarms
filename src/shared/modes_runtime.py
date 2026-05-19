@@ -89,11 +89,24 @@ def update_mode_state(
     classify_mode_fn: Callable,
     debounce_frames: int,
     mode_smooth: float,
+    mode_vis_min: float = 0.0,
+    hand_visibility_min: float | None = None,
 ) -> Tuple[int, int]:
+    """Update left-hand morph mode from finger geometry.
+
+    When ``mode_vis_min > 0`` and ``hand_visibility_min`` is below it, **hold** the current
+    ``morph_mode`` (no classify, no debounce advance) — avoids occlusion jitter.
+    """
     tier_count = -1
     if pts_left is None:
         mode_state.mode_raw = mode_state.last_mode_raw
         return mode_state.mode_raw, tier_count
+
+    vmin = float(mode_vis_min)
+    if vmin > 0.0 and hand_visibility_min is not None:
+        if float(hand_visibility_min) < vmin:
+            mode_state.mode_raw = int(mode_state.last_mode_raw)
+            return mode_state.mode_raw, tier_count
 
     mode_raw, tier_count, _dbg = classify_mode_fn(pts_left)
     mode_state.last_mode_raw = mode_raw
@@ -129,11 +142,16 @@ def update_open_state(
     plane_snap_off: float,
     sphere_snap_on: float,
     sphere_snap_off: float,
+    topology_analysis: Optional[Dict[str, Any]] = None,
+    snap_soft_k: float = 0.34,
+    snap_soft_max_step: float = 0.16,
+    follow_k: float = 0.45,
+    follow_max_step: float = 0.20,
 ) -> Optional[float]:
     if pts_right is None:
         return right_state.last_open_out
 
-    tmp = analyze_topology_fn(pts_right)
+    tmp = topology_analysis if topology_analysis is not None else analyze_topology_fn(pts_right)
     if tmp is None:
         return None
 
@@ -157,11 +175,30 @@ def update_open_state(
         elif open_free < sphere_snap_on:
             right_state.snap_state = "sphere"
 
-    open_out = open_free
+    prev_open = right_state.last_open_out
+    open_out = open_free if prev_open is None else float(prev_open)
     if right_state.snap_state == "plane":
-        open_out = 1.0
+        target = 1.0
+        delta = float(target - open_out)
+        step = float(snap_soft_k) * delta
+        max_step = max(1e-4, float(snap_soft_max_step))
+        step = float(np.clip(step, -max_step, max_step))
+        open_out = float(np.clip(open_out + step, 0.0, 1.0))
     elif right_state.snap_state == "sphere":
-        open_out = 0.0
+        target = 0.0
+        delta = float(target - open_out)
+        step = float(snap_soft_k) * delta
+        max_step = max(1e-4, float(snap_soft_max_step))
+        step = float(np.clip(step, -max_step, max_step))
+        open_out = float(np.clip(open_out + step, 0.0, 1.0))
+    else:
+        # Keep continuity when leaving snap hysteresis region: quickly follow
+        # open_free, but never jump in one frame.
+        delta = float(open_free - open_out)
+        step = float(follow_k) * delta
+        max_step = max(1e-4, float(follow_max_step))
+        step = float(np.clip(step, -max_step, max_step))
+        open_out = float(np.clip(open_out + step, 0.0, 1.0))
     right_state.last_open_out = float(open_out)
     return open_out
 
@@ -215,6 +252,7 @@ def update_3d_plot_modes(
     draw_mode2_fn: Callable,
     draw_mode3_fn: Callable,
     clamp01_fn: Callable,
+    topo_radius_override_mm: float | None = None,
 ):
     src = "MediaPipe" if hand_3d_source == "mp" else "depth+MP fused"
     title = f"Hand 3D ({src}) joints 0..20"
@@ -260,7 +298,10 @@ def update_3d_plot_modes(
         if analysis is None:
             morph_fb = 0.55 if morph_alpha_smoothed is None else float(morph_alpha_smoothed)
             morph_fb = clamp01_fn(morph_fb)
-            r_draw = 200.0
+            if topo_radius_override_mm is not None and float(topo_radius_override_mm) > 0.0:
+                r_draw = float(topo_radius_override_mm)
+            else:
+                r_draw = 200.0
             if morph_mode == 1:
                 draw_mode1_fn(ax_topo, radius=r_draw, open_alpha=morph_fb, show_refs=True)
             elif morph_mode == 2:
@@ -277,9 +318,12 @@ def update_3d_plot_modes(
             continue
         analyses.append(analysis)
 
-        r = max(analysis["radius"], 1.0)
         morph_alpha = analysis["morph_alpha"] if morph_alpha_smoothed is None else morph_alpha_smoothed
-        r_vis = max(140.0, 2.2 * r)
+        if topo_radius_override_mm is not None and float(topo_radius_override_mm) > 0.0:
+            r_vis = float(topo_radius_override_mm)
+        else:
+            r = max(analysis["radius"], 1.0)
+            r_vis = max(140.0, 2.2 * r)
         if morph_mode == 1:
             draw_mode1_fn(ax_topo, radius=r_vis, open_alpha=morph_alpha, show_refs=True)
         elif morph_mode == 2:
@@ -324,19 +368,29 @@ def process_left_mode(
     keypoints_3d: List,
     idx_left: Optional[int],
     mode_state: ModeState,
+    *,
+    mp_result=None,
+    mode_vis_min: float = 0.0,
 ) -> Tuple[int, int]:
     """Update left-hand mode state and return (mode_raw, tier_count)."""
     import runtime.hand_tracking_webcam_modes as hm
 
+    from shared.left_hand_swarm_pose import mp_hand_visibility_scores
+
     pts_left = None
     if idx_left is not None and idx_left < len(keypoints_3d):
         pts_left = keypoints_3d[idx_left]
+    vis_min = None
+    if mp_result is not None and idx_left is not None and float(mode_vis_min) > 0.0:
+        _, vis_min = mp_hand_visibility_scores(mp_result, int(idx_left))
     return update_mode_state(
         pts_left,
         mode_state=mode_state,
         classify_mode_fn=hm.classify_mode_from_fingers,
         debounce_frames=hm.MODE_DEBOUNCE_FRAMES,
         mode_smooth=MODE_SMOOTH,
+        mode_vis_min=float(mode_vis_min),
+        hand_visibility_min=vis_min,
     )
 
 

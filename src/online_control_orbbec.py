@@ -76,10 +76,16 @@ def _parse_combined_args() -> argparse.Namespace:
     parser.add_argument("--xy-radius", type=float, default=1.20, help="Crazyflow XY workspace radius in meters.")
     parser.add_argument("--z-center", type=float, default=1.40, help="Crazyflow target z center in meters.")
     parser.add_argument("--z-amplitude", type=float, default=0.35, help="Crazyflow target z amplitude in meters.")
-    parser.add_argument("--z-min", type=float, default=1.10, help="Minimum Crazyflow target altitude.")
-    parser.add_argument("--z-max", type=float, default=2.10, help="Maximum Crazyflow target altitude.")
+    parser.add_argument("--z-min", type=float, default=1.05, help="Minimum Crazyflow target altitude.")
+    parser.add_argument("--z-max", type=float, default=2.25, help="Maximum Crazyflow target altitude.")
     parser.add_argument("--reference-xy-extent-mm", type=float, default=100.0)
     parser.add_argument("--reference-z-extent-mm", type=float, default=50.0)
+    parser.add_argument(
+        "--z-mm-scale",
+        type=float,
+        default=1.0,
+        help="Z uses XY mm scale × this (1.0 ≈ round sphere in workspace).",
+    )
     parser.add_argument("--plot-every", type=int, default=ob.PLOT_EVERY_N_FRAMES)
     parser.add_argument("--print-only", action="store_true", help="Only print the initial target and exit.")
     return parser.parse_args()
@@ -395,6 +401,7 @@ def main() -> None:
         z_max=float(args.z_max),
         reference_xy_extent_mm=float(args.reference_xy_extent_mm),
         reference_z_extent_mm=float(args.reference_z_extent_mm),
+        z_mm_scale=float(args.z_mm_scale),
     )
     live_target = make_initial_live_target(
         point_count=int(args.point_count),

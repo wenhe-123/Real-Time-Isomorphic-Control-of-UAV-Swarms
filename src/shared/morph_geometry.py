@@ -1,6 +1,11 @@
-"""Morph plane extent helper for Lp visualization (horizontal radius vs openness)."""
+"""Compatibility shim for sampling backend morph geometry."""
 
+from __future__ import annotations
 
-def morph_plane_extent_radius(radius: float, open_alpha: float, a: float, b: float) -> float:
-    """Horizontal extent R for morph geometry and plane samples."""
-    return float(radius) * (float(a) + float(b) * float(open_alpha))
+from shared.sampling_backend import load_sampling_backend_module
+
+_impl = load_sampling_backend_module("morph_geometry.py", module_key="sampling_backend_morph_geometry")
+
+for _name, _value in vars(_impl).items():
+    if not _name.startswith("__"):
+        globals()[_name] = _value

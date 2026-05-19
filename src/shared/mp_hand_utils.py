@@ -125,3 +125,15 @@ def hand_indices_sorted_by_image_x(result) -> List[int]:
     xs.sort(key=lambda t: t[0])
     return [i for _, i in xs]
 
+
+def orbbec_resolve_swap_mp_hands(*, hand_swap: str, flip_horizontal: bool, use_orbbec: bool) -> bool:
+    """Whether to swap MediaPipe left/right indices for mode vs open (Orbbec path only)."""
+    if not use_orbbec:
+        return False
+    hs = str(hand_swap).strip().lower()
+    if hs not in ("auto", "on", "off"):
+        hs = "auto"
+    if hs == "auto":
+        return bool(flip_horizontal)
+    return hs == "on"
+
