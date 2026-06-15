@@ -133,7 +133,6 @@ python src/online_control_dual.py --no-left-dual-webcam-rot # Orbbec only, no US
 |-----|--------|
 | `Space` | Enable / disable gesture control |
 | `0` | Arm / disarm left-hand whole-formation pose |
-| `1`–`3` | Morph mode M1 / M2 / M3 |
 | `q` or `Enter` | Quit |
 
 Legacy scripts and unit tests are on the **`backup-archive`** git branch.
