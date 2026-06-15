@@ -29,6 +29,8 @@ Thumbs.db
 
 rgbd_output/
 Log/
+MUJOCO_LOG.TXT
+data/*.npz
 *.pyc
 *.log
 *.png
