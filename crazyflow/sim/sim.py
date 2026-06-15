@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import time
+from dataclasses import dataclass, field
 from functools import partial, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
@@ -9,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import mujoco
 import mujoco.mjx as mjx
+import numpy as np
 from drone_controllers.mellinger import (
     attitude2force_torque,
     force_torque2rotor_vel,
@@ -45,6 +49,94 @@ if TYPE_CHECKING:
 Params = ParamSpec("Params")  # Represents arbitrary parameters
 Return = TypeVar("Return")  # Represents the return type
 
+_PROFILE_SIM_RENDER = os.environ.get("ISO_SWARM_PROFILE_SIM_RENDER", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+_PROFILE_SIM_RENDER_EVERY = max(1, int(os.environ.get("ISO_SWARM_PROFILE_SIM_RENDER_EVERY", "200")))
+_RENDER_SYNC_COLLISION = os.environ.get("ISO_SWARM_RENDER_SYNC_COLLISION", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+
+@dataclass
+class SimRenderProfiler:
+    """Per-call wall time inside Sim.render (perf_counter). Off unless ISO_SWARM_PROFILE_SIM_RENDER=1."""
+
+    enabled: bool = False
+    report_every: int = 200
+    _depth: int = 0
+    _active: bool = False
+    _call_t0: float = 0.0
+    _last: float = 0.0
+    _totals: dict[str, float] = field(default_factory=dict)
+    _counts: dict[str, int] = field(default_factory=dict)
+    _calls: int = 0
+
+    def call_start(self) -> None:
+        if not self.enabled:
+            return
+        self._depth += 1
+        if self._depth > 1:
+            return
+        self._active = True
+        self._call_t0 = self._last = time.perf_counter()
+
+    def section(self, name: str) -> None:
+        if not self.enabled or not self._active or self._depth != 1:
+            return
+        now = time.perf_counter()
+        dt = now - self._last
+        self._last = now
+        self._totals[name] = self._totals.get(name, 0.0) + dt
+        self._counts[name] = self._counts.get(name, 0) + 1
+
+    def call_end(self) -> None:
+        if not self.enabled:
+            return
+        if self._depth > 0:
+            self._depth -= 1
+        if not self._active or self._depth > 0:
+            return
+        total = time.perf_counter() - self._call_t0
+        self._totals["call_total"] = self._totals.get("call_total", 0.0) + total
+        self._counts["call_total"] = self._counts.get("call_total", 0) + 1
+        self._active = False
+        self._calls += 1
+        every = max(1, int(self.report_every))
+        if (self._calls % every) != 0:
+            return
+        n = max(1, self._calls)
+        parts: list[tuple[str, float]] = []
+        for key, sec in self._totals.items():
+            if key == "call_total":
+                continue
+            cnt = max(1, self._counts.get(key, 0))
+            parts.append((key, (sec / cnt) * 1000.0))
+        parts.sort(key=lambda x: x[1], reverse=True)
+        avg_call_ms = (self._totals.get("call_total", 0.0) / n) * 1000.0
+        detail = " ".join(f"{k}={v:.2f}ms" for k, v in parts[:14])
+        print(
+            f"[sim-render-profile Sim.render calls={n}] "
+            f"avg_call≈{avg_call_ms:.2f}ms | {detail}"
+        )
+        self._totals.clear()
+        self._counts.clear()
+        self._calls = 0
+
+
+_render_prof = SimRenderProfiler(enabled=_PROFILE_SIM_RENDER, report_every=_PROFILE_SIM_RENDER_EVERY)
+if _render_prof.enabled:
+    print(
+        f"Sim.render profiling ON (perf_counter); report every {_render_prof.report_every} "
+        "Sim.render calls."
+    )
+
 
 def requires_mujoco_sync(fn: Callable[Params, Return]) -> Callable[Params, Return]:
     """Decorator to ensure that the simulation data is synchronized with the MuJoCo mjx data."""
@@ -63,7 +155,7 @@ class Sim:
         self,
         n_worlds: int = 1,
         n_drones: int = 1,
-        drone_model: str = "cf2x_L250",
+        drone_model: str = "cf21B_500",
         physics: Physics = Physics.default,
         control: Control = Control.default,
         integrator: Integrator = Integrator.default,
@@ -145,7 +237,43 @@ class Sim:
         """Set the desired force and torque for all drones in all worlds."""
         self.data = F.force_torque_control(self.data, controls)
 
-    @requires_mujoco_sync
+    def _ensure_viewer(
+        self,
+        *,
+        mode: str | None,
+        camera: int | str,
+        cam_config: dict | None,
+        width: int,
+        height: int,
+    ) -> None:
+        if self.viewer is not None:
+            return
+        if isinstance(camera, str):
+            cam_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+            assert cam_id > -1, f"Camera name '{camera}' not found in the model."
+        elif isinstance(camera, int):
+            cam_id = camera
+            assert cam_id >= -1, f"camera id must be >=-1, was {cam_id}"
+        else:
+            raise TypeError("camera argument must be integer or string")
+        self.mj_model.vis.global_.offwidth = width
+        self.mj_model.vis.global_.offheight = height
+        self.viewer = MujocoRenderer(
+            self.mj_model,
+            self.mj_data,
+            max_geom=self.max_visual_geom,
+            default_cam_config=cam_config,
+            height=height,
+            width=width,
+            camera_id=cam_id,
+        )
+        # In human mode, cam_id is set to -1, so we force it to the desired value.
+        if mode == "human" and cam_id > -1:
+            # Render one frame to force mj to create the viewer.
+            self.viewer.render(mode)
+            self.viewer.viewer.cam.fixedcamid = cam_id
+            self.viewer.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+
     def render(
         self,
         mode: str | None = "human",
@@ -155,38 +283,88 @@ class Sim:
         width: int = 1920,
         height: int = 1080,
     ) -> NDArray | None:
-        if self.viewer is None:
-            if isinstance(camera, str):
-                cam_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
-                assert cam_id > -1, f"Camera name '{camera}' not found in the model."
-            elif isinstance(camera, int):
-                cam_id = camera
-                assert cam_id >= -1, f"camera id must be >=-1, was {cam_id}"
-            else:
-                raise TypeError("camera argument must be integer or string")
-            self.mj_model.vis.global_.offwidth = width
-            self.mj_model.vis.global_.offheight = height
-            self.viewer = MujocoRenderer(
-                self.mj_model,
-                self.mj_data,
-                max_geom=self.max_visual_geom,
-                default_cam_config=cam_config,
-                height=height,
-                width=width,
-                camera_id=cam_id,
-            )
-            # In human mode, cam_id is set to -1, so we force it to the desired value
-            if mode == "human" and cam_id > -1:
-                # Render one frame to force mj to create the viewer
-                self.viewer.render(mode)
-                self.viewer.viewer.cam.fixedcamid = cam_id
-                self.viewer.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+        """Render the simulation (human window or offscreen array).
 
-        self.mj_data.qpos[:] = self.mjx_data.qpos[world, :]
-        self.mj_data.mocap_pos[:] = self.mjx_data.mocap_pos[world, :]
-        self.mj_data.mocap_quat[:] = self.mjx_data.mocap_quat[world, :]
-        mujoco.mj_forward(self.mj_model, self.mj_data)
-        return self.viewer.render(mode)
+        Sub-step timing: ``ISO_SWARM_PROFILE_SIM_RENDER=1`` (optional
+        ``ISO_SWARM_PROFILE_SIM_RENDER_EVERY=N``, default 200).
+        """
+        _render_prof.call_start()
+        try:
+            if not self.data.core.mjx_synced:
+                self.data, self.mjx_data = sync_sim2mjx(
+                    self.data,
+                    self.mjx_data,
+                    self.mjx_model,
+                    include_collision=_RENDER_SYNC_COLLISION,
+                    mark_synced=_RENDER_SYNC_COLLISION,
+                )
+            _render_prof.section("mjx_sync_full" if _RENDER_SYNC_COLLISION else "mjx_sync_light")
+
+            self._ensure_viewer(
+                mode=mode,
+                camera=camera,
+                cam_config=cam_config,
+                width=width,
+                height=height,
+            )
+            _render_prof.section("viewer_init")
+
+            self.mj_data.qpos[:] = self.mjx_data.qpos[world, :]
+            self.mj_data.mocap_pos[:] = self.mjx_data.mocap_pos[world, :]
+            self.mj_data.mocap_quat[:] = self.mjx_data.mocap_quat[world, :]
+            _render_prof.section("mjx_copy")
+
+            mujoco.mj_forward(self.mj_model, self.mj_data)
+            _render_prof.section("mj_forward")
+
+            out = self.viewer.render(mode)
+            _render_prof.section("viewer_render")
+            return out
+        finally:
+            _render_prof.call_end()
+
+    def render_targets(
+        self,
+        targets: Array,
+        mode: str | None = "human",
+        camera: int | str = -1,
+        cam_config: dict | None = None,
+        width: int = 1920,
+        height: int = 1080,
+    ) -> NDArray | None:
+        """Render drones directly at supplied target positions, bypassing MJX sync.
+
+        This is a visualization-only fast path: safety filtering and physics still run in the
+        caller, but the MuJoCo window shows the filtered targets rather than MJX-synced states.
+        """
+        _render_prof.call_start()
+        try:
+            self._ensure_viewer(
+                mode=mode,
+                camera=camera,
+                cam_config=cam_config,
+                width=width,
+                height=height,
+            )
+            _render_prof.section("viewer_init")
+
+            pts = np.asarray(targets, dtype=np.float64)
+            if pts.shape != (self.n_drones, 3):
+                raise ValueError(f"targets must have shape ({self.n_drones}, 3), got {pts.shape}")
+            qpos = np.zeros((self.n_drones, 7), dtype=np.float64)
+            qpos[:, :3] = pts
+            qpos[:, 3] = 1.0  # MuJoCo freejoint quaternion is [w, x, y, z].
+            self.mj_data.qpos[:] = qpos.reshape(-1)
+            _render_prof.section("target_qpos")
+
+            mujoco.mj_forward(self.mj_model, self.mj_data)
+            _render_prof.section("mj_forward")
+
+            out = self.viewer.render(mode)
+            _render_prof.section("viewer_render")
+            return out
+        finally:
+            _render_prof.call_end()
 
     def seed(self, seed: int):
         """Set the JAX rng key for the simulation.
@@ -489,8 +667,15 @@ def contacts(geom_start: int, geom_count: int, data: Data) -> Array:
     return (data.contact.dist < 0) & (geom1_valid | geom2_valid)
 
 
-@jax.jit
-def sync_sim2mjx(data: SimData, mjx_data: Data, mjx_model: Model) -> tuple[SimData, Data]:
+@partial(jax.jit, static_argnames=("include_collision", "mark_synced"))
+def sync_sim2mjx(
+    data: SimData,
+    mjx_data: Data,
+    mjx_model: Model,
+    *,
+    include_collision: bool = True,
+    mark_synced: bool = True,
+) -> tuple[SimData, Data]:
     """Synchronize the simulation data with the MuJoCo model."""
     states = data.states
     pos, quat, vel, ang_vel = states.pos, states.quat, states.vel, states.ang_vel
@@ -501,8 +686,9 @@ def sync_sim2mjx(data: SimData, mjx_data: Data, mjx_model: Model) -> tuple[SimDa
     mjx_data = jax.vmap(mjx.kinematics, in_axes=(None, 0))(mjx_model, mjx_data)
     # Required for rendering w. ray casting
     mjx_data = jax.vmap(mjx.camlight, in_axes=(None, 0))(mjx_model, mjx_data)
-    mjx_data = jax.vmap(mjx.collision, in_axes=(None, 0))(mjx_model, mjx_data)
-    data = data.replace(core=data.core.replace(mjx_synced=True))
+    if include_collision:
+        mjx_data = jax.vmap(mjx.collision, in_axes=(None, 0))(mjx_model, mjx_data)
+    data = data.replace(core=data.core.replace(mjx_synced=bool(mark_synced)))
     return data, mjx_data
 
 

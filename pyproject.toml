@@ -94,6 +94,7 @@ split-on-trailing-comma = false
 [tool.ruff.lint.per-file-ignores]
 "benchmark/*" = ["D100", "D103"]
 "tests/*" = ["D100", "D103", "D104"]
+"src/backup/tests/*" = ["D100", "D103", "D104"]
 "examples/*" = ["D100", "D103"]
 "tutorials/*" = ["D", "ANN"]
 # TODO: Remove once everything is stable and document
@@ -117,6 +118,9 @@ docstring-code-line-length = "dynamic"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64"]
 
+[tool.pixi.activation]
+env = { PYTHONPATH = "src" }
+
 [tool.pixi.dependencies]
 pip = "*"
 ruff = "*"
@@ -126,6 +130,7 @@ matplotlib = ">=3.10.8,<4"
 crazyflow = { path = "./", editable = true }
 drone-models = { path = "./submodules/drone-models", editable = true }
 drone-controllers = { path = "./submodules/drone-controllers", editable = true }
+axswarm = { path = "../axswarm-amswarm/axswarm-amswarm", editable = true }
 mediapipe = "*"
 opencv-python = "*"
 
@@ -155,7 +160,7 @@ array-api-strict = ">=2.4.1"
 matplotlib = "*"
 
 [tool.pixi.feature.tests.tasks]
-tests = { cmd = "pytest -v tests", description = "Run tests" }
+tests = { cmd = "pytest -v src/backup/tests", description = "Run tests" }
 
 [tool.pixi.feature.docs.dependencies]
 python = ">=3.10"

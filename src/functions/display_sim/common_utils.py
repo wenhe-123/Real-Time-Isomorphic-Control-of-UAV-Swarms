@@ -22,7 +22,7 @@ def resolve_model_path(explicit: Optional[str], current_file: str) -> str:
 def draw_hud(frame, lines, origin=(16, 16), line_h=26, pad=8, alpha=0.55):
     """Draw readable HUD with a stable translucent background."""
     x, y = origin
-    font = cv2.FONT_HERSHEY_SIMPLEX 
+    font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.7
     thickness = 2
     sizes = [cv2.getTextSize(t, font, font_scale, thickness)[0] for t in lines]

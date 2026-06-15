@@ -40,7 +40,6 @@ def main():
     n_worlds = 1
     n_drones = 3
 
-    # 创建仿真器对象
     sim = Sim(
         n_worlds=n_worlds,
         n_drones=n_drones,
