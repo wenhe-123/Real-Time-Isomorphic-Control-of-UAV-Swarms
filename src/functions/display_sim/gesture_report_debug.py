@@ -20,9 +20,11 @@ from functions.swarm_motion.left_hand_swarm_pose import (
     palm_plane_fit_mm,
 )
 
-_PCA_DISPLAY_RADIUS_MM = 95.0
+_PCA_DISPLAY_RADIUS_MM = 52.0
 _LM_DISPLAY_LIM_MM = 160.0
-_PALM_AXIS_LEN_MM = 62.0
+_PALM_AXIS_LEN_FRAC = 0.42
+_PALM_LIMIT_PAD_FRAC = 0.22
+_PALM_LIMIT_MIN_PAD_MM = 8.0
 
 # (key, title, x, y)
 _WINDOW_SPECS: tuple[tuple[str, str, int, int], ...] = (
@@ -30,7 +32,7 @@ _WINDOW_SPECS: tuple[tuple[str, str, int, int], ...] = (
     ("hand", "Report: Hand landmarks", 580, 40),
     ("pca", "Report: Hand PCA", 1120, 40),
     ("landmarks", "Report: Open vs Close landmarks", 40, 520),
-    ("palm", "Report: Palm pose (cam mm)", 580, 520),
+    ("palm", "Report: Palm pose (rel mm)", 580, 520),
 )
 _FIG_SIZE = (5.4, 4.8)
 
@@ -226,6 +228,32 @@ def _center_scale_pts(pts: np.ndarray, *, display_radius: float) -> tuple[np.nda
     return c, rel * s
 
 
+def _fit_3d_axis_limits(
+    ax,
+    arrays: list[np.ndarray],
+    *,
+    pad_frac: float = 0.18,
+    min_pad_mm: float = 6.0,
+) -> None:
+    """Tight axis limits from actual geometry (avoids huge empty margins)."""
+    chunks = [np.asarray(a, dtype=np.float64).reshape(-1, 3) for a in arrays if a is not None]
+    chunks = [c for c in chunks if c.size > 0]
+    if not chunks:
+        return
+    pts = np.vstack(chunks)
+    finite = np.all(np.isfinite(pts), axis=1)
+    pts = pts[finite]
+    if pts.shape[0] == 0:
+        return
+    lo = pts.min(axis=0)
+    hi = pts.max(axis=0)
+    span = np.maximum(hi - lo, 1e-6)
+    pad = np.maximum(span * float(pad_frac), float(min_pad_mm))
+    ax.set_xlim(lo[0] - pad[0], hi[0] + pad[0])
+    ax.set_ylim(lo[1] - pad[1], hi[1] + pad[1])
+    ax.set_zlim(lo[2] - pad[2], hi[2] + pad[2])
+
+
 def _draw_thick_axis_line(ax, origin: np.ndarray, direction: np.ndarray, length: float, color: str, label: str) -> None:
     o = np.asarray(origin, dtype=np.float64).reshape(3)
     v = np.asarray(direction, dtype=np.float64).reshape(3)
@@ -330,11 +358,18 @@ def update_report_pca_figure(ax_pca, analysis: dict) -> None:
     axis_colors = ("tab:red", "tab:green", "tab:blue")
     axis_names = ("λ1 (spread)", "λ2", "λ3 (normal)")
     origin = np.zeros(3)
-    half_plane = _PCA_DISPLAY_RADIUS_MM * 0.92
-    _draw_pca_plane_patch(ax_pca, origin, eigvecs[:, 0], eigvecs[:, 1], half_plane)
+    data_extent = float(np.max(np.linalg.norm(pts, axis=1))) + 1e-6
+    u, v = eigvecs[:, 0], eigvecs[:, 1]
+    half_plane = max(
+        float(np.max(np.abs(pts @ u))),
+        float(np.max(np.abs(pts @ v))),
+        data_extent * 0.35,
+    ) * 1.06
+    _draw_pca_plane_patch(ax_pca, origin, u, v, half_plane)
 
+    axis_tips: list[np.ndarray] = []
     for i in range(3):
-        length = _PCA_DISPLAY_RADIUS_MM * (0.55 + 0.85 * float(lam_norm[i]))
+        length = data_extent * (0.28 + 0.62 * float(np.sqrt(lam_norm[i])))
         _draw_thick_axis_line(
             ax_pca,
             origin,
@@ -343,6 +378,7 @@ def update_report_pca_figure(ax_pca, analysis: dict) -> None:
             axis_colors[i],
             f"{axis_names[i]} ({lam[i]:.2g})",
         )
+        axis_tips.append(origin + eigvecs[:, i] * length)
 
     ax_pca.text2D(
         0.02,
@@ -354,10 +390,7 @@ def update_report_pca_figure(ax_pca, analysis: dict) -> None:
         va="top",
         color="tab:purple",
     )
-    lim = _PCA_DISPLAY_RADIUS_MM * 1.15
-    ax_pca.set_xlim(-lim, lim)
-    ax_pca.set_ylim(-lim, lim)
-    ax_pca.set_zlim(-lim, lim)
+    _fit_3d_axis_limits(ax_pca, [pts, *axis_tips], pad_frac=0.14, min_pad_mm=5.0)
     ax_pca.view_init(elev=24, azim=-58)
     ax_pca.set_box_aspect((1.0, 1.0, 1.0))
     ax_pca.legend(loc="lower right", fontsize=7)
@@ -444,9 +477,9 @@ def update_report_palm_pose_figure(
     *,
     left_pose_state: Any | None = None,
 ) -> None:
-    """Palm plane + orthonormal basis in depth-camera mm."""
+    """Palm plane + basis in mm relative to current palm origin (small readable coords)."""
     ax_palm.clear()
-    ax_palm.set_title("Palm pose (depth cam mm)")
+    ax_palm.set_title("Palm pose (mm, rel. palm origin)")
     ax_palm.set_xlabel("X (mm)")
     ax_palm.set_ylabel("Y (mm)")
     ax_palm.set_zlabel("Z (mm)")
@@ -459,44 +492,95 @@ def update_report_palm_pose_figure(
         ax_palm.text2D(0.25, 0.5, "invalid hand array", transform=ax_palm.transAxes)
         return
 
-    origin = palm_frame_origin_mm(h)
+    origin_cam = palm_frame_origin_mm(h)
     fit = palm_plane_fit_mm(h)
-    basis_out = palm_orthonormal_basis(h, palm_center_override=origin)
+    basis_out = palm_orthonormal_basis(h, palm_center_override=origin_cam)
     if basis_out is None:
         ax_palm.text2D(0.25, 0.5, "palm basis unavailable", transform=ax_palm.transAxes)
         return
     pc, basis = basis_out
-    origin = np.asarray(pc if origin is None else origin, dtype=np.float64).reshape(3)
+    origin_cam = np.asarray(pc if origin_cam is None else origin_cam, dtype=np.float64).reshape(3)
+
+    def _rel(pts: np.ndarray) -> np.ndarray:
+        return np.asarray(pts, dtype=np.float64).reshape(-1, 3) - origin_cam.reshape(1, 3)
 
     palm_ids = [WRIST_ID] + list(MCP_IDS)
     palm_pts = np.array([h[i] for i in palm_ids if i < len(h)], dtype=np.float64)
-    ax_palm.scatter(palm_pts[:, 0], palm_pts[:, 1], palm_pts[:, 2], c="tab:orange", s=42, alpha=0.9, depthshade=False, label="wrist+MCP")
-    ax_palm.scatter([origin[0]], [origin[1]], [origin[2]], c="k", s=80, marker="*", depthshade=False, label="palm origin")
+    palm_pts_d = _rel(palm_pts)
+    origin_d = np.zeros(3, dtype=np.float64)
+    palm_span = float(np.max(np.ptp(palm_pts_d, axis=0))) if palm_pts_d.shape[0] else 80.0
+    axis_len = max(28.0, palm_span * _PALM_AXIS_LEN_FRAC)
 
+    ax_palm.scatter(
+        palm_pts_d[:, 0],
+        palm_pts_d[:, 1],
+        palm_pts_d[:, 2],
+        c="tab:orange",
+        s=42,
+        alpha=0.9,
+        depthshade=False,
+        label="wrist+MCP",
+    )
+    ax_palm.scatter(
+        [origin_d[0]],
+        [origin_d[1]],
+        [origin_d[2]],
+        c="k",
+        s=80,
+        marker="*",
+        depthshade=False,
+        label="palm origin",
+    )
+
+    limit_pts: list[np.ndarray] = [palm_pts_d, origin_d.reshape(1, 3)]
     if fit is not None:
         _n, _hp, _inliers = fit
         u = basis[:, 0]
         v = basis[:, 1]
-        g = np.linspace(-0.55, 0.55, 5) * _PALM_AXIS_LEN_MM
-        X = origin[0] + g[:, None] * u[0] + g[None, :] * v[0]
-        Y = origin[1] + g[:, None] * u[1] + g[None, :] * v[1]
-        Z = origin[2] + g[:, None] * u[2] + g[None, :] * v[2]
+        g = np.linspace(-0.5, 0.5, 5) * axis_len
+        X = g[:, None] * u[0] + g[None, :] * v[0]
+        Y = g[:, None] * u[1] + g[None, :] * v[1]
+        Z = g[:, None] * u[2] + g[None, :] * v[2]
         ax_palm.plot_surface(X, Y, Z, color="wheat", alpha=0.35, linewidth=0)
+        limit_pts.append(np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=1))
 
-    _draw_basis_triad(ax_palm, origin, basis, scale=_PALM_AXIS_LEN_MM, dashed=False)
+    _draw_basis_triad(ax_palm, origin_d, basis, scale=axis_len, dashed=False)
+    limit_pts.append(origin_d + basis * axis_len)
 
     if left_pose_state is not None and bool(getattr(left_pose_state, "initialized", False)):
-        ref_o = np.asarray(left_pose_state.ref_palm_center, dtype=np.float64).reshape(3)
+        ref_o_cam = np.asarray(left_pose_state.ref_palm_center, dtype=np.float64).reshape(3)
         ref_b = np.asarray(left_pose_state.ref_basis, dtype=np.float64).reshape(3, 3)
-        _draw_basis_triad(ax_palm, ref_o, ref_b, scale=_PALM_AXIS_LEN_MM * 0.92, dashed=True)
-        ax_palm.scatter([ref_o[0]], [ref_o[1]], [ref_o[2]], c="0.45", s=55, marker="o", depthshade=False, label="ref origin")
+        ref_o_d = _rel(ref_o_cam).reshape(3)
+        ref_len = axis_len * 0.92
+        _draw_basis_triad(ax_palm, ref_o_d, ref_b, scale=ref_len, dashed=True)
+        ax_palm.scatter(
+            [ref_o_d[0]],
+            [ref_o_d[1]],
+            [ref_o_d[2]],
+            c="0.45",
+            s=55,
+            marker="o",
+            depthshade=False,
+            label="ref origin",
+        )
+        limit_pts.append(ref_o_d.reshape(1, 3))
+        limit_pts.append(ref_o_d + ref_b * ref_len)
 
-    ctr = origin
-    span = float(np.max(np.ptp(palm_pts, axis=0)))
-    half = max(75.0, 0.65 * span + 40.0)
-    ax_palm.set_xlim(ctr[0] - half, ctr[0] + half)
-    ax_palm.set_ylim(ctr[1] - half, ctr[1] + half)
-    ax_palm.set_zlim(ctr[2] - half, ctr[2] + half)
+    _fit_3d_axis_limits(
+        ax_palm,
+        limit_pts,
+        pad_frac=_PALM_LIMIT_PAD_FRAC,
+        min_pad_mm=_PALM_LIMIT_MIN_PAD_MM,
+    )
+    ax_palm.text2D(
+        0.02,
+        0.02,
+        f"cam origin ({origin_cam[0]:.0f},{origin_cam[1]:.0f},{origin_cam[2]:.0f}) mm",
+        transform=ax_palm.transAxes,
+        fontsize=7,
+        color="0.45",
+        va="bottom",
+    )
     ax_palm.view_init(elev=18, azim=-72)
     ax_palm.set_box_aspect((1.0, 1.0, 1.0))
     ax_palm.legend(loc="upper left", fontsize=7)

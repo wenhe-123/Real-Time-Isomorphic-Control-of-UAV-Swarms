@@ -1,6 +1,6 @@
 [project]
 name = "drone_controllers"
-version = "0.1.0b0"
+version = "0.2.0"
 description = "Controllers for quadrotor drones."
 authors = [{ name = "Marcel Rath" }, { name = "Martin Schuck" }]
 readme = "README.md"
@@ -89,7 +89,7 @@ docstring-code-line-length = "dynamic"
 [tool.pixi]
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+platforms = ["linux-64", "osx-arm64"]
 
 [tool.pixi.dependencies]
 pip = "*"
@@ -109,8 +109,14 @@ pytest = ">=8.4.1"
 array-api-strict = ">=2.4.1,<2.5"
 numpy = ">=1.22.0"
 
+[tool.pixi.feature.tests.pypi-dependencies]
+torch = ">=2.7.0"
+jax = ">=0.7.0"
+pytest-markdown-docs = "*"
+
 [tool.pixi.feature.tests.tasks]
 tests = { cmd = "pytest -v", description = "Run tests" }
+test-docs = { cmd = "pytest -v --markdown-docs --markdown-docs-syntax=superfences drone_controllers/ docs/ --ignore=docs/gen_ref_pages.py", env = { SCIPY_ARRAY_API = "1" }, description = "Run doctests for docstrings and documentation" }
 
 [tool.pixi.feature.docs.dependencies]
 mkdocs = ">=1.5.3"

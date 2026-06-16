@@ -31,7 +31,7 @@ rgbd_output/
 Log/
 MUJOCO_LOG.TXT
 data/*.npz
-*.pyc
+third_party/orbbec/
 *.log
 *.png
 *.npy

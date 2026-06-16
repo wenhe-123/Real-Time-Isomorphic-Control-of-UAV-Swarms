@@ -492,6 +492,18 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         default=1,
         help="Record one sample every N frames while armed (default: 1).",
     )
+    parser.add_argument(
+        "--drones-config",
+        type=str,
+        default=None,
+        help="TOML file listing Crazyflie URIs (enables real-swarm mode; disables MuJoCo).",
+    )
+    parser.add_argument(
+        "--real-lighthouse",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use Lighthouse deck localization (default: from drones.toml swarm.lighthouse).",
+    )
 
     return parser
 

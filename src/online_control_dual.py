@@ -12,13 +12,13 @@ Run from ``iso_swarm`` (pixi)::
 With pixi tasks, keep the task separator: ``pixi run online-dual -- --mp-detect-every 1``.
 
 Defaults: Orbbec input, ``--planner axswarm``, ``--point-count 24``. Gesture targets
-flow through axswarm (if enabled) to ``cmd_target``; MuJoCo uses ``render_targets`` only
+flow through axswarm (if enabled) to ``cmd_target``; MuJoCo uses ``render_targets(sim, …)`` only
 (no ``sim.step``). Use ``--planner direct`` for raw gesture chasing without axswarm MPC.
 
 ``--point-count`` / interactive ``n`` must be >= 8 (default 24).
 
 With ``--planner axswarm`` (default here), spacing and motion limits are taken from
-``axswarm-amswarm/params/settings.yaml`` (``vel_max``, collision envelope) unless you
+``axswarm/params/settings.yaml`` (``vel_max``, collision envelope) unless you
 override ``--min-separation-m`` or ``--raw-target-ema``.
 """
 

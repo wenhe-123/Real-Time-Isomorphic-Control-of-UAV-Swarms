@@ -6,7 +6,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -52,12 +52,17 @@ from functions.swarm_motion.prearm import complete_prearm_takeoff
 from functions.swarm_motion.spacing_guard import closest_pair, enforce_min_separation
 from functions.swarm_motion.swarm_workspace_box import SwarmWorkspaceBox
 
+if TYPE_CHECKING:
+    from crazyflow.sim import Sim
+    from functions.real_swarm.executor import RealSwarmExecutor
+
 
 @dataclass
 class OnlineBoot:
     k4a: PyK4A
     calib: Any
-    sim: Sim
+    sim: Sim | None
+    real_executor: RealSwarmExecutor | None
     n_drones: int
     axswarm_rt: AxswarmSafetyFilter | None
     mode_state: ModeState
@@ -173,8 +178,10 @@ def boot_online_control(
     install_hotkey_deps: bool,
     global_hotkeys: bool,
     morph_default_z_clip: float = 1.10,
+    drones_config: Path | str | None = None,
+    real_lighthouse: bool | None = None,
 ) -> OnlineBoot:
-    """Open Orbbec + sim, run prearm, wire axswarm and hotkeys."""
+    """Open Orbbec + sim or real swarm, run prearm, wire axswarm and hotkeys."""
     orbbec_fps = FPS.FPS_15 if _ONLINE_ORBBEC_FPS == "15" else FPS.FPS_30
     k4a = PyK4A(
         Config(
@@ -188,13 +195,29 @@ def boot_online_control(
     calib = k4a.calibration
 
     n_drones = int(point_count)
-    sim = Sim(
-        n_worlds=1,
-        n_drones=n_drones,
-        control=Control.state,
-        drone_model=str(drone_model),
-    )
-    sim.reset()
+    real_executor: RealSwarmExecutor | None = None
+    sim: Sim | None = None
+    motion_freq_hz = 100.0
+
+    if drones_config is not None:
+        from functions.real_swarm.executor import RealSwarmExecutor
+
+        real_executor = RealSwarmExecutor(
+            config_path=Path(drones_config),
+            morph_point_count=n_drones,
+            lighthouse=real_lighthouse,
+        )
+        motion_freq_hz = float(real_executor.ctrl_freq)
+        print("Real-swarm mode: Crazyflow MuJoCo disabled; cmd_target → Crazyflie setpoints.")
+    else:
+        sim = Sim(
+            n_worlds=1,
+            n_drones=n_drones,
+            control=Control.state,
+            drone_model=str(drone_model),
+        )
+        sim.reset()
+        motion_freq_hz = float(sim.freq)
 
     morph_default = np.asarray(live_target.get(), dtype=np.float32)
     morph_default[:, 2] = np.maximum(morph_default[:, 2], morph_default_z_clip)
@@ -232,14 +255,15 @@ def boot_online_control(
             f"flags depth-jump & target-jump every {center_trace_every} frame(s)."
         )
 
-    zeros = jnp.zeros_like(sim.data.states.pos)
-    sim.data = sim.data.replace(
-        states=sim.data.states.replace(
-            pos=jnp.asarray(prearm_spawn[None, :, :], device=sim.device),
-            vel=zeros,
-            ang_vel=zeros,
+    zeros = jnp.zeros((n_drones, 3))
+    if sim is not None:
+        sim.data = sim.data.replace(
+            states=sim.data.states.replace(
+                pos=jnp.asarray(prearm_spawn[None, :, :], device=sim.device),
+                vel=zeros[None, :, :],
+                ang_vel=zeros[None, :, :],
+            )
         )
-    )
 
     planner_key = str(planner).strip().lower()
     axswarm_rt: AxswarmSafetyFilter | None = None
@@ -261,13 +285,13 @@ def boot_online_control(
         axswarm_rt.reset(prearm_spawn, np.zeros((n_drones, 3), dtype=np.float32))
         synced_step = per_substep_target_cap_m(
             vel_max_m_s=float(axswarm_rt.settings.vel_max),
-            sim_freq_hz=int(sim.freq),
+            sim_freq_hz=int(motion_freq_hz),
             outer_fps=int(fps),
             max_substeps=int(max_sim_substeps),
         )
         print(
             f"Motion cap from axswarm yaml: vel_max={float(axswarm_rt.settings.vel_max):.2f} m/s "
-            f"→ ~{synced_step:.4f} m/substep (sim.freq={int(sim.freq)}, fps={int(fps)})."
+            f"→ ~{synced_step:.4f} m/substep (ctrl.freq={int(motion_freq_hz)}, fps={int(fps)})."
         )
         _ax_warm = float(axswarm_rt.arm_warmup_s)
         _ax_after = (
@@ -287,17 +311,19 @@ def boot_online_control(
         hover_z=prearm_hover_z,
         min_separation_m=float(min_separation_m),
     )
-    sim.data = sim.data.replace(
-        states=sim.data.states.replace(
-            pos=jnp.asarray(prearm_final[None, :, :], device=sim.device),
-            vel=zeros,
-            ang_vel=zeros,
+    if sim is not None:
+        sim.data = sim.data.replace(
+            states=sim.data.states.replace(
+                pos=jnp.asarray(prearm_final[None, :, :], device=sim.device),
+                vel=zeros[None, :, :],
+                ang_vel=zeros[None, :, :],
+            )
         )
-    )
     if axswarm_rt is not None:
         axswarm_rt.reset(prearm_final, np.zeros((n_drones, 3), dtype=np.float32))
+    mode_label = "real Crazyflie" if real_executor is not None else "MuJoCo render"
     print(
-        "Mode: gesture targets → axswarm filter (if enabled) → cmd_target; no sim.step."
+        f"Mode: gesture targets → axswarm filter (if enabled) → cmd_target; {mode_label}."
         + (
             f" Planner: {ax_note}."
             if (ax_note := (
@@ -454,6 +480,7 @@ def boot_online_control(
         k4a=k4a,
         calib=calib,
         sim=sim,
+        real_executor=real_executor,
         n_drones=n_drones,
         axswarm_rt=axswarm_rt,
         mode_state=ModeState(),

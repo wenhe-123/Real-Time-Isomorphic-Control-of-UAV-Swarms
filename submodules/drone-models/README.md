@@ -11,14 +11,14 @@ Physics-based and data-driven quadrotor dynamics models for estimation, control,
 [Python Version]: https://img.shields.io/badge/python-3.10+-blue.svg
 [Python Version URL]: https://www.python.org
 
-[Ruff Check]: https://github.com/utiasDSL/drone-models/actions/workflows/ruff.yml/badge.svg?style=flat-square
-[Ruff Check URL]: https://github.com/utiasDSL/drone-models/actions/workflows/ruff.yml
+[Ruff Check]: https://github.com/learnsyslab/drone-models/actions/workflows/ruff.yml/badge.svg?style=flat-square
+[Ruff Check URL]: https://github.com/learnsyslab/drone-models/actions/workflows/ruff.yml
 
-[Tests]: https://github.com/utiasDSL/drone-models/actions/workflows/testing.yml/badge.svg
-[Tests URL]: https://github.com/utiasDSL/drone-models/actions/workflows/testing.yml
+[Tests]: https://github.com/learnsyslab/drone-models/actions/workflows/testing.yml/badge.svg
+[Tests URL]: https://github.com/learnsyslab/drone-models/actions/workflows/testing.yml
 
-[Docs]: https://github.com/utiasDSL/drone-models/actions/workflows/docs.yml/badge.svg
-[Docs URL]: https://utiasdsl.github.io/drone-models/
+[Docs]: https://github.com/learnsyslab/drone-models/actions/workflows/docs.yml/badge.svg
+[Docs URL]: https://learnsyslab.github.io/drone-models/
 
 ## Overview
 
@@ -108,7 +108,7 @@ sym_model = parametrize(symbolic_dynamics, drone_model="cf2x_L250")
 Clone and install with [pixi](https://pixi.sh):
 
 ```bash
-git clone https://github.com/utiasDSL/drone-models.git
+git clone https://github.com/learnsyslab/drone-models.git
 cd drone-models
 pixi install
 ```
@@ -121,4 +121,14 @@ pixi run -e tests tests
 
 ## Citation
 
-Citation information coming soon. See the [docs](https://utiasdsl.github.io/drone-models/) for updates.
+```bibtex
+@misc{schuck2026crazyflow,
+      title={Crazyflow: An Accurate, GPU-Accelerated, Differentiable Drone Simulator in JAX}, 
+      author={Martin Schuck and Marcel P. Rath and Yufei Hua and AbhisheK Goudar and SiQi Zhou and Angela P. Schoellig},
+      year={2026},
+      eprint={2606.01478},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2606.01478}, 
+}
+```

@@ -12,6 +12,7 @@ import numpy as np
 from crazyflow.sim import Sim
 from crazyflow.sim.visualize import draw_line
 from debug.online_control_debug import draw_drone_target_debug_hud, print_center_trace
+from functions.display_sim.crazyflow_render import render_targets
 from functions.display_sim.morph_led_materials import apply_morph_led_theme
 from functions.swarm_motion.swarm_workspace_box import SwarmWorkspaceBox, draw_swarm_workspace_box_in_sim
 
@@ -101,7 +102,7 @@ def present_online_frame(
         try:
             if swarm_workspace.enabled and swarm_workspace.armed:
                 draw_swarm_workspace_box_in_sim(sim, swarm_workspace)
-            sim.render_targets(np.asarray(cmd_target, dtype=np.float64))
+            render_targets(sim, np.asarray(cmd_target, dtype=np.float64))
         except Exception as exc:
             render_enabled = False
             print(f"[WARN] Disabled Crazyflow rendering after render error: {exc}")

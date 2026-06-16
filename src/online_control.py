@@ -168,8 +168,10 @@ def run_integrated_online_control(
     report_panels: ReportDebugPanels | None = None,
     mp_delegate: str = "cpu",
     pipeline_tuning: PipelineTuning | None = None,
+    drones_config: str | None = None,
+    real_lighthouse: bool | None = None,
 ) -> None:
-    """Run MediaPipe, Matplotlib, OpenCV, and Crazyflow in the main thread."""
+    """Run MediaPipe, Matplotlib, OpenCV, and Crazyflow or real Crazyflie in the main thread."""
     resolved_model = resolve_model_path(model_path, __file__)
     mp_delegate_key = str(mp_delegate).strip().lower()
     pipe = pipeline_tuning or online_pipeline_defaults()
@@ -233,6 +235,8 @@ def run_integrated_online_control(
         center_trace_every=center_trace_every,
         install_hotkey_deps=install_hotkey_deps,
         global_hotkeys=global_hotkeys,
+        drones_config=drones_config,
+        real_lighthouse=real_lighthouse,
     )
     _poll_keys = make_key_poller(boot, global_hotkeys=global_hotkeys)
     ocv_window_title = "Online Control Orbbec"
@@ -326,6 +330,7 @@ def run_integrated_online_control(
             left_pose_dbg = ""
             left_swarm_off = None
             left_swarm_R = None
+            prev_gesture_armed = False
 
             while True:
                 elapsed = time.monotonic() - boot.start_time
@@ -562,6 +567,8 @@ def run_integrated_online_control(
                 frame_prof.section("target_filter")
                 boot.cmd_target = filt.cmd_target
                 boot.prev_cmd_target = boot.cmd_target.copy()
+                just_gesture_armed = bool(boot.gesture_control_enabled) and not prev_gesture_armed
+                prev_gesture_armed = bool(boot.gesture_control_enabled)
 
                 if rigid_pose_recorder is not None and tick_rigid_pose_trace is not None:
                     rigid_pose_trace_prev_armed = tick_rigid_pose_trace(
@@ -580,41 +587,75 @@ def run_integrated_online_control(
                         prev_runtime_armed=bool(rigid_pose_trace_prev_armed),
                     )
 
-                boot.render_enabled = present_online_frame(
-                    frame=cap.frame,
-                    sim=boot.sim,
-                    cmd_target=filt.cmd_target,
-                    safe_target=filt.safe_target,
-                    raw_target=raw_target,
-                    filter_src=filt.filter_src,
-                    mode_state=boot.mode_state,
-                    right_state=boot.right_state,
-                    left_pose_state=boot.left_pose_state,
-                    left_pose_dbg=left_pose_dbg,
-                    left_pose_runtime_armed=boot.left_pose_runtime_armed,
-                    axswarm_rt=boot.axswarm_rt,
-                    swarm_workspace=boot.swarm_workspace,
-                    gesture_control_enabled=boot.gesture_control_enabled,
-                    gesture_control_enabled_box=boot.gesture_control_enabled_box,
-                    mode_raw=gest.mode_raw,
-                    open_out=gest.open_out,
-                    tier_count=gest.tier_count,
-                    frame_idx=boot.frame_idx,
-                    elapsed=elapsed,
-                    center_trace=bool(center_trace),
-                    center_trace_every=center_trace_every,
-                    center_trace_prev=boot.center_trace_prev,
-                    debug_drone_targets_every=debug_drone_targets_every,
-                    min_separation_m=min_separation_m,
-                    led_every_n=led_every_n,
-                    trail_every_n=trail_every_n,
-                    sim_render_every=sim_render_every,
-                    n_drones=boot.n_drones,
-                    pos_buffer=boot.pos_buffer,
-                    trail_rgba=boot.trail_rgba,
-                    render_enabled=boot.render_enabled,
-                    section=frame_prof.section,
-                )
+                if boot.real_executor is not None:
+                    from functions.real_swarm.present_real_frame import present_real_online_frame
+
+                    present_real_online_frame(
+                        frame=cap.frame,
+                        real_executor=boot.real_executor,
+                        cmd_target=filt.cmd_target,
+                        safe_target=filt.safe_target,
+                        raw_target=raw_target,
+                        filter_src=filt.filter_src,
+                        mode_state=boot.mode_state,
+                        right_state=boot.right_state,
+                        left_pose_state=boot.left_pose_state,
+                        left_pose_dbg=left_pose_dbg,
+                        left_pose_runtime_armed=boot.left_pose_runtime_armed,
+                        axswarm_rt=boot.axswarm_rt,
+                        swarm_workspace=boot.swarm_workspace,
+                        gesture_control_enabled=boot.gesture_control_enabled,
+                        gesture_control_enabled_box=boot.gesture_control_enabled_box,
+                        just_gesture_armed=just_gesture_armed,
+                        mode_raw=gest.mode_raw,
+                        open_out=gest.open_out,
+                        tier_count=gest.tier_count,
+                        frame_idx=boot.frame_idx,
+                        elapsed=elapsed,
+                        center_trace=bool(center_trace),
+                        center_trace_every=center_trace_every,
+                        center_trace_prev=boot.center_trace_prev,
+                        debug_drone_targets_every=debug_drone_targets_every,
+                        min_separation_m=min_separation_m,
+                        led_every_n=led_every_n,
+                        section=frame_prof.section,
+                    )
+                else:
+                    boot.render_enabled = present_online_frame(
+                        frame=cap.frame,
+                        sim=boot.sim,
+                        cmd_target=filt.cmd_target,
+                        safe_target=filt.safe_target,
+                        raw_target=raw_target,
+                        filter_src=filt.filter_src,
+                        mode_state=boot.mode_state,
+                        right_state=boot.right_state,
+                        left_pose_state=boot.left_pose_state,
+                        left_pose_dbg=left_pose_dbg,
+                        left_pose_runtime_armed=boot.left_pose_runtime_armed,
+                        axswarm_rt=boot.axswarm_rt,
+                        swarm_workspace=boot.swarm_workspace,
+                        gesture_control_enabled=boot.gesture_control_enabled,
+                        gesture_control_enabled_box=boot.gesture_control_enabled_box,
+                        mode_raw=gest.mode_raw,
+                        open_out=gest.open_out,
+                        tier_count=gest.tier_count,
+                        frame_idx=boot.frame_idx,
+                        elapsed=elapsed,
+                        center_trace=bool(center_trace),
+                        center_trace_every=center_trace_every,
+                        center_trace_prev=boot.center_trace_prev,
+                        debug_drone_targets_every=debug_drone_targets_every,
+                        min_separation_m=min_separation_m,
+                        led_every_n=led_every_n,
+                        trail_every_n=trail_every_n,
+                        sim_render_every=sim_render_every,
+                        n_drones=boot.n_drones,
+                        pos_buffer=boot.pos_buffer,
+                        trail_rgba=boot.trail_rgba,
+                        render_enabled=boot.render_enabled,
+                        section=frame_prof.section,
+                    )
 
                 ui_key = poll_cv_key(
                     cv_poll_key=cv_poll_key,
@@ -652,7 +693,13 @@ def run_integrated_online_control(
             boot.k4a.stop()
         except Exception:
             pass
-        boot.sim.close()
+        if boot.real_executor is not None:
+            try:
+                boot.real_executor.land_and_close()
+            except Exception as exc:
+                print(f"[WARN] Real swarm shutdown failed: {exc}")
+        elif boot.sim is not None:
+            boot.sim.close()
         report_figs = boot.extras.get("report_debug_figs")
         if report_figs is not None:
             close_report_debug_figures(report_figs)
@@ -690,12 +737,22 @@ def main() -> None:
     n_default = int(max(8, int(args.point_count)))
     if n_default < 8:
         parser.error("--point-count must be >= 8")
-    if sys.stdin.isatty():
+    if sys.stdin.isatty() and not args.drones_config:
         point_count = int(prompt_and_init_fixed_surface_points(default_n=n_default))
     else:
         init_fixed_surface_points(n_default)
         point_count = n_default
-        print(f"Fixed surface samples initialized (non-interactive): n={point_count}")
+        if args.drones_config:
+            from functions.real_swarm.swarm_config import load_drones_config
+
+            _drones, _, _ = load_drones_config(args.drones_config)
+            print(
+                f"Fixed surface samples: morph n={point_count} (virtual formation); "
+                f"physical Crazyflies n={len(_drones)} from {args.drones_config} "
+                f"(receive cmd_target indices 0..{len(_drones) - 1})."
+            )
+        else:
+            print(f"Fixed surface samples initialized (non-interactive): n={point_count}")
     box_m = float(args.swarm_workspace_box_m)
     wall_m = float(args.swarm_workspace_wall_margin_m)
     formation_cap_m = box_m - 2.0 * wall_m if box_m > 0.0 else None
@@ -842,6 +899,8 @@ def main() -> None:
         report_panels=panels if panels.any_enabled() else None,
         mp_delegate=str(args.mp_delegate),
         pipeline_tuning=pipeline,
+        drones_config=str(args.drones_config) if args.drones_config else None,
+        real_lighthouse=args.real_lighthouse,
     )
 
 

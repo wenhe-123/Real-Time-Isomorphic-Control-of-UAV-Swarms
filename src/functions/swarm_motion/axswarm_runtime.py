@@ -29,18 +29,19 @@ if TYPE_CHECKING:
 
 
 def default_axswarm_project_root() -> Path:
-    """Sibling of ``iso_swarm``: ``../axswarm-amswarm/axswarm-amswarm`` (see pyproject.toml)."""
+    """``submodules/axswarm`` (see pyproject.toml)."""
     here = Path(__file__).resolve()
     iso_swarm = here.parents[3]
-    return iso_swarm.parent / "axswarm-amswarm" / "axswarm-amswarm"
+    return iso_swarm / "submodules" / "axswarm"
 
 
 def _axswarm_root_candidates() -> list[Path]:
     here = Path(__file__).resolve()
     iso_swarm = here.parents[3]
     roots = [
-        iso_swarm.parent / "axswarm-amswarm" / "axswarm-amswarm",
-        iso_swarm / "axswarm-amswarm" / "axswarm-amswarm",
+        iso_swarm / "submodules" / "axswarm",
+        iso_swarm.parent / "axswarm-amswarm",
+        iso_swarm / "axswarm-amswarm",
     ]
     try:
         import axswarm

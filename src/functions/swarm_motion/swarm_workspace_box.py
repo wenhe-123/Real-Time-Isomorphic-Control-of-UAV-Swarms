@@ -439,7 +439,7 @@ def draw_swarm_workspace_box_in_sim(
 ) -> None:
     """Draw a red wireframe cube in Crazyflow for the armed workspace bounds.
 
-    Must be called every frame immediately before ``sim.render()`` / ``sim.render_targets()``.
+    Must be called every frame immediately before ``render_targets(sim, ...)``.
     """
     if not box.enabled or not box.armed:
         return

@@ -6,3 +6,11 @@
 	path = submodules/drone-controllers
 	url = https://github.com/utiasDSL/drone-controllers.git
 	branch = main
+[submodule "submodules/crazyflow"]
+	path = submodules/crazyflow
+	url = https://github.com/utiasDSL/crazyflow.git
+	branch = main
+[submodule "submodules/axswarm"]
+	path = submodules/axswarm
+	url = https://github.com/learnsyslab/axswarm.git
+	branch = amswarm

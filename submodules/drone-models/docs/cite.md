@@ -2,17 +2,14 @@
 
 If you use Drone Models in your research, please cite our work.
 
-## BibTeX Entry
-
-!!! info "Coming Soon"
-    BibTeX entry will be provided here.
-
-## Related Publications
-
-!!! info "Coming Soon"
-    List of related publications will be added here.
-
-## Acknowledgments
-
-!!! info "Coming Soon"
-    Acknowledgments and funding information will be added here.
+```bibtex
+@misc{schuck2026crazyflow,
+      title={Crazyflow: An Accurate, GPU-Accelerated, Differentiable Drone Simulator in JAX}, 
+      author={Martin Schuck and Marcel P. Rath and Yufei Hua and AbhisheK Goudar and SiQi Zhou and Angela P. Schoellig},
+      year={2026},
+      eprint={2606.01478},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2606.01478}, 
+}
+```
