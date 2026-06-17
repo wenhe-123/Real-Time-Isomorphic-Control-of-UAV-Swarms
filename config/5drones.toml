@@ -1,0 +1,40 @@
+# Real Crazyflie swarm config for ``online_control_real_dual.py``.
+
+[swarm]
+lighthouse = true
+ctrl_freq = 100.0
+arm_goto_s = 5.0
+land_on_exit = true
+max_pos_error_m = 0.35
+
+[frame]
+# Gesture/sim coordinates (same frame as Crazyflow) → Lighthouse room frame (meters).
+#   real_xyz = origin + scale * Rz(yaw_deg) * sim_xyz
+origin = [0.0, 0.0, 0.0]
+scale = 1.0
+yaw_deg = 0.0
+
+[[drone]]
+id = "0"
+uri = "radio://0/73/2M/ABAD1DEA11"
+home = [0.0, 0.0, 0.0]
+
+[[drone]]
+id = "1"
+uri = "radio://0/73/2M/ABAD1DEA13"
+home = [0.94, 0.54, 0.0]
+
+[[drone]]
+id = "2"
+uri = "radio://0/73/2M/ABAD1DEA12"
+home = [0.9, -0.3, 0.0]
+
+[[drone]]
+id = "3"
+uri = "radio://0/73/2M/ABAD1DEA14"
+home = [-0.87, 0.55, 0.0]
+
+[[drone]]
+id = "4"
+uri = "radio://0/73/2M/ABAD1DEA15"
+home = [-0.83, -0.5, 0.0]
