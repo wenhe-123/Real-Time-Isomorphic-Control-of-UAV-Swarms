@@ -80,10 +80,12 @@ Morph uses **8 virtual formation points** by default; physical drone count is on
 
 | Key | Action |
 |-----|--------|
-| `1` | Toggle **ground ↔ hover** (TOML / chessboard ground → pre–Space hover layout; axswarm-filtered). Press again to descend. Blocked after `Space` arms gestures. |
-| `Space` | Arm gesture control (hand-driven formation) |
+| `1` | Toggle **ground ↔ hover** (TOML / chessboard ground → pre–Space hover layout; axswarm-filtered). Press again to descend. Blocked while gesture control is armed (`Space`). |
+| `Space` | **Arm / disarm** gesture control (hand-driven formation). Disarm first, then `1` to descend. |
 | `0` | Arm / disarm left-hand whole-formation pose |
-| `q` or `Enter` | Quit |
+| `q` or `Enter` | Quit (real swarm: lands at TOML `home` when `land_on_exit = true`) |
+
+**Typical shutdown (real or sim):** `Space` (disarm gestures) → `1` (descend to ground if at hover) → `q`.
 
 Legacy scripts and unit tests are on the **`backup-archive`** git branch.
 

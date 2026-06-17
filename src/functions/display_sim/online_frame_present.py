@@ -28,7 +28,7 @@ def _draw_online_hud_overlay(inp: PresentFrameInput, *, label: str, color: tuple
         pose_hint = ""
     ax_hint = f" | {boot.axswarm_rt.status_line()}" if boot.axswarm_rt is not None else ""
     if boot.gesture_control_enabled_box[0]:
-        phase = "ARMED"
+        phase = "ARMED (Space disarm)"
     elif boot.prearm_climb_enabled:
         phase = "CLIMB - press SPACE"
     else:

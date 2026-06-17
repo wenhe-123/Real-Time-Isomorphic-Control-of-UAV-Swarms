@@ -436,7 +436,7 @@ def boot_online_control(
             f"(camera|legacy|fwd_y|flip_depth), {wf}, "
             f"palm_basis={left_palm_basis!r}."
         )
-    print("Ground hold until 1; 1 toggles ground ↔ hover; SPACE arms gesture control.")
+    print("Ground hold until 1; 1 toggles ground ↔ hover; SPACE arms/disarms gesture control.")
 
     left_pose_state = LeftSwarmPoseState(enabled=bool(left_swarm_pose))
     swarm_workspace = SwarmWorkspaceBox(
@@ -499,7 +499,7 @@ def boot_online_control(
             print("[WARN] No hotkey backends started.")
             print(format_hotkey_install_hint(_hk_probe))
         else:
-            print(f"Hotkeys: {_hk} — 1 ground↔hover, SPACE arm, 0/q without Orbbec focus.")
+            print(f"Hotkeys: {_hk} — 1 ground↔hover, SPACE arm/disarm, 0/q without Orbbec focus.")
         print(
             "Left control: palm_centroid — press-0 palm center + palm basis; "
             f"frozen cam→sim preset {left_cam_preset!r} when camera_at_arm."

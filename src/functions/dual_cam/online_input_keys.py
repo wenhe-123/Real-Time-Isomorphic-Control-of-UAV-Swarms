@@ -1,4 +1,4 @@
-"""Global / queued key handling for online control (1 climb, SPACE arm, 0 L-move, q quit)."""
+"""Global / queued key handling for online control (1 climb, SPACE arm/disarm, 0 L-move, q quit)."""
 
 from __future__ import annotations
 
@@ -370,6 +370,12 @@ def apply_online_control_key(
         return False
     if key == _KEY_SPACE:
         if gesture_control_enabled[0]:
+            gesture_control_enabled[0] = False
+            _warned_climb_while_gestured = False
+            print(
+                "Gesture control disarmed. Press 1 to descend to ground layout "
+                "(toggle hover ↔ ground), then q to quit."
+            )
             return False
         gesture_control_enabled[0] = True
         print("Gesture control armed: Crazyflow targets now follow mode/open recognition.")
