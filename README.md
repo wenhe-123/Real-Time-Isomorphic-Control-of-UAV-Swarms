@@ -105,7 +105,7 @@ config/drones.toml            # real-swarm URIs, home, frame mapping
 
 ## Acknowledgements
 
-Crazyflow · MediaPipe · Orbbec · [axswarm / AMSwarm](https://github.com/learnsyslab/axswarm/tree/amswarm)
+[Crazyflow](https://github.com/utiasDSL/crazyflow) · [MediaPipe](https://developers.google.com/mediapipe) · [Orbbec](https://www.orbbec.com) · [axswarm / AMSwarm](https://github.com/learnsyslab/axswarm/tree/amswarm)
 
 ## License
 
