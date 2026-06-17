@@ -9,6 +9,7 @@ import numpy as np
 
 from functions.real_swarm.drone_swarm import DroneSwarm
 from functions.real_swarm.swarm_config import RealFrameMapping, RealSwarmOptions, load_drones_config
+from functions.swarm_motion.spacing_guard import enforce_min_separation_xy
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,46 @@ class RealSwarmExecutor:
             )
         return pts[: self.n_physical]
 
+    def get_sim_ground_layout(self, n_morph: int, *, min_separation_m: float) -> np.ndarray:
+        """TOML ``home`` poses → sim frame for physical drones; chessboard fill for virtual rows."""
+        from functions.swarm_motion.prearm import sim_chessboard_ground_layout
+
+        n = int(n_morph)
+        homes = np.stack([self._homes[uri] for uri in self._uris], axis=0)
+        sim_phys = self.mapping.real_to_sim(homes).astype(np.float32)
+        z_ground = float(np.median(sim_phys[:, 2]))
+        xy_half = max(0.5, float(np.max(np.abs(sim_phys[:, :2]))) + 0.6)
+        layout = sim_chessboard_ground_layout(
+            n,
+            min_separation_m=float(min_separation_m),
+            z_ground=z_ground,
+            xy_half_extent_m=xy_half,
+        )
+        layout[: self.n_physical] = sim_phys
+        out = enforce_min_separation_xy(
+            layout, float(min_separation_m), z_ground, iters=10
+        )
+        out[: self.n_physical] = sim_phys
+        return out
+
+    def get_sim_track_positions(
+        self, morph_fallback: np.ndarray, n_morph: int
+    ) -> np.ndarray | None:
+        """Lighthouse poses → sim frame for physical rows; morph fallback for virtual."""
+        real_pos = self.get_positions_for_debug()
+        if real_pos is None:
+            return None
+        fallback = np.asarray(morph_fallback, dtype=np.float32)
+        if fallback.ndim != 2 or fallback.shape[1] != 3:
+            raise ValueError(f"morph_fallback must be (N,3), got {fallback.shape}")
+        n = int(n_morph)
+        if fallback.shape[0] < n:
+            raise ValueError(f"morph_fallback has {fallback.shape[0]} rows but need {n}")
+        out = fallback[:n].copy()
+        sim_phys = self.mapping.real_to_sim(real_pos).astype(np.float32)
+        out[: self.n_physical] = sim_phys[: self.n_physical]
+        return out
+
     def verify_near_sim_layout(self, sim_layout: np.ndarray) -> bool:
         """Check drones are close to mapped sim layout before arming."""
         real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
@@ -161,23 +202,29 @@ class RealSwarmExecutor:
         morph_mode: int,
         led_every_n: int,
         frame_idx: int,
+        prearm_climb_enabled: bool = False,
     ) -> None:
         cmd = np.asarray(cmd_target, dtype=np.float32)
         self._last_cmd = cmd.copy()
 
-        if just_armed and gesture_enabled:
-            if not self.verify_near_sim_layout(cmd):
+        if gesture_enabled:
+            if just_armed and not self.physical_armed:
+                if not self.verify_near_sim_layout(cmd):
+                    print(
+                        "[WARN] Real swarm position check failed; still flying to arm layout. "
+                        "Move drones near mapped hover poses or adjust config/frame.origin."
+                    )
+                self.goto_sim_layout(cmd)
+            elif self.physical_armed:
+                self.send_sim_layout(cmd)
+        elif prearm_climb_enabled or self.physical_armed:
+            if not self.physical_armed:
                 print(
-                    "[WARN] Real swarm position check failed; still flying to arm layout. "
-                    "Move drones near mapped hover poses or adjust config/frame.origin."
+                    "Real layout stream: axswarm-filtered setpoints "
+                    "(1 = ground ↔ hover, SPACE = gestures)."
                 )
-            self.goto_sim_layout(cmd)
-            return
-
-        if gesture_enabled and self.physical_armed:
+                self.physical_armed = True
             self.send_sim_layout(cmd)
-        elif self.physical_armed and self._last_cmd is not None and not gesture_enabled:
-            self.send_sim_layout(self._last_cmd)
 
         if led_every_n > 0 and (frame_idx % led_every_n) == 0:
             mode = int(morph_mode)

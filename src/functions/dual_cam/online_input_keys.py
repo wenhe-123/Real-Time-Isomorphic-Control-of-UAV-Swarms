@@ -1,4 +1,4 @@
-"""Global / queued key handling for online control (SPACE arm, 0 L-move, q quit)."""
+"""Global / queued key handling for online control (1 climb, SPACE arm, 0 L-move, q quit)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from functions.mode_switch.modes_runtime import clear_mode_rotation_freeze_latch
 _KEY_SPACE = ord(" ")
 _KEY_ENTER = 13
 _KEY_Q = ord("q")
+_warned_climb_while_gestured = False
 
 
 def probe_global_hotkey_backends() -> dict:
@@ -164,6 +165,8 @@ class OnlineKeyQueue:
                             self._q.put(_KEY_ENTER)
                         elif name == "z":
                             self._q.put(ord("z"))
+                        elif name == "1":
+                            self._q.put(ord("1"))
                     except Exception:
                         pass
 
@@ -290,6 +293,7 @@ def process_online_control_keys(
     global_hotkeys: bool,
     cv_key: int | None = None,
     gesture_control_enabled: list,
+    prearm_climb_enabled: list,
     left_pose_reset_req: list,
     left_pose_runtime_armed: list,
     left_pose_state,
@@ -314,6 +318,7 @@ def process_online_control_keys(
         if apply_online_control_key(
             k,
             gesture_control_enabled=gesture_control_enabled,
+            prearm_climb_enabled=prearm_climb_enabled,
             left_pose_reset_req=left_pose_reset_req,
             left_pose_runtime_armed=left_pose_runtime_armed,
             left_pose_state=left_pose_state,
@@ -329,6 +334,7 @@ def apply_online_control_key(
     key: int | None,
     *,
     gesture_control_enabled: list,
+    prearm_climb_enabled: list,
     left_pose_reset_req: list,
     left_pose_runtime_armed: list,
     left_pose_state,
@@ -337,11 +343,34 @@ def apply_online_control_key(
     left_swarm_enabled: bool,
 ) -> bool:
     """Handle one key press. Returns True to quit the main loop."""
+    global _warned_climb_while_gestured
     if key is None:
         return False
     if key in (_KEY_Q, _KEY_ENTER):
         return True
+    if key == ord("1"):
+        if gesture_control_enabled[0]:
+            if not _warned_climb_while_gestured:
+                print("Cannot toggle climb/ground: gesture control is armed (SPACE).")
+                _warned_climb_while_gestured = True
+            return False
+        _warned_climb_while_gestured = False
+        if prearm_climb_enabled[0]:
+            prearm_climb_enabled[0] = False
+            print(
+                "Returning to ground layout "
+                "(axswarm-filtered when enabled). Press 1 to climb again."
+            )
+        else:
+            prearm_climb_enabled[0] = True
+            print(
+                "Prearm climb: ascending toward hover layout "
+                "(axswarm-filtered when enabled). Press 1 to return to ground."
+            )
+        return False
     if key == _KEY_SPACE:
+        if gesture_control_enabled[0]:
+            return False
         gesture_control_enabled[0] = True
         print("Gesture control armed: Crazyflow targets now follow mode/open recognition.")
         return False

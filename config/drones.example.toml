@@ -16,8 +16,6 @@ origin = [0.0, 0.0, 1.0]
 scale = 1.0
 yaw_deg = 0.0
 
-# Physical drones: count here is independent of --point-count (morph virtual points, min 8).
-# Drone id "0" receives morph point 0, id "1" → point 1, etc.
 
 [[drone]]
 id = "0"
@@ -29,4 +27,4 @@ id = "1"
 uri = "radio://0/80/2M/E7E7E7E7E8"
 home = [0.3, 0.0, 0.05]
 
-# Add more [[drone]] blocks until count matches --point-count.
+

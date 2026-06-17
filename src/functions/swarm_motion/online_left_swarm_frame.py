@@ -12,8 +12,10 @@ from functions.display_sim.left_pose_frame_viz import draw_left_pose_frame_overl
 from functions.display_sim.orbbec_hand import DEPTH_MEDIAN_PATCH_RADIUS
 from functions.dual_cam.dual_view_utils import draw_hand_webcam
 from functions.dual_cam.left_hand_rotation_dual import resolve_dual_left_rotation
-from functions.mode_switch.modes_runtime import ModeState, RightHandState
-from functions.runtime.online_defaults import _WCAM_PREVIEW_WINDOW
+from functions.dual_cam.online_frame_capture import OrbbecCaptureFrame
+from functions.mode_switch.online_frame_gesture import GestureFrameResult
+from functions.runtime.online_boot import OnlineBoot
+from functions.runtime.online_runtime_config import OnlineRuntimeConfig, OnlineWebcamState
 from functions.swarm_motion.left_hand_swarm_pose import (
     LeftSwarmPoseState,
     apply_rigid_to_targets,
@@ -26,6 +28,7 @@ from functions.swarm_motion.left_hand_swarm_pose import (
     update_left_swarm_pose,
 )
 from functions.swarm_motion.swarm_workspace_box import SwarmWorkspaceBox
+from functions.runtime.online_defaults import _WCAM_PREVIEW_WINDOW
 
 
 @dataclass
@@ -47,79 +50,85 @@ def clamp_workspace_targets(swarm_workspace: SwarmWorkspaceBox, raw_target: np.n
 
 def apply_left_swarm_frame(
     *,
+    boot: OnlineBoot,
+    cfg: OnlineRuntimeConfig,
+    cap: OrbbecCaptureFrame,
+    gest: GestureFrameResult,
     raw_target: np.ndarray,
     morph_targets_before_left_m: np.ndarray,
-    frame: np.ndarray,
-    result: Any,
-    idx_l: int | None,
-    pts_l_pose_mm: Any,
-    palm_center_depth_mm: Any,
-    palm_center_color_px: Any,
-    mph: int,
-    mpw: int,
-    frame_idx: int,
-    fps: float,
-    mode_vis_min: float,
-    orbbec_vis_min_now: float | None,
-    left_pose_state: LeftSwarmPoseState,
-    left_pose_runtime_armed: bool,
-    left_pose_reset_req: bool,
-    left_pose_reset_req_box: list,
-    mode_state: ModeState,
-    right_state: RightHandState,
-    swarm_workspace: SwarmWorkspaceBox,
-    prev_cmd_target: np.ndarray,
-    left_use_camera_at_arm: bool,
-    left_cam_preset: str,
-    left_cam_y_to_world_z: float,
-    left_rot_pivot_key: str,
-    left_dual_webcam_rot_eff: bool,
-    left_rot_webcam_vis_thresh: float,
-    show_webcam_preview: bool,
-    webcam_cap: Any,
-    webcam_landmarker: Any,
-    webcam_frame_idx: int,
-    mp_input_scale: float,
-    prefetch_B: Any,
-    prefetch_res: Any,
-    prefetch_wfr: Any,
-    left_M_rot: Any,
-    left_M_trans: Any,
-    left_trans_scale: float,
-    left_rot_scale: float,
-    left_plane_rot_scale_mul: float,
-    left_trans_ema: float,
-    left_rot_ema: float,
-    left_max_offset_m: float,
-    left_max_rot_rad: float,
-    left_axis_sign: tuple[float, float, float],
-    left_lost_decay: float,
-    left_rot_gate_rad: float,
-    left_rot_gain: float,
-    left_rot_trans_tau_mm: float,
-    left_rot_world_z_scale: float,
-    left_palm_basis: str,
-    left_axis_trans_deadzone_m: float,
-    left_axis_rot_deadzone_rad: float,
-    left_axis_trans_on_m: float,
-    left_axis_rot_on_rad: float,
-    left_axis_trans_rot_coupling: float,
-    left_palm_depth_outlier_z_mm: float,
-    left_palm_depth_outlier_lat_ratio: float,
-    left_palm_center_depth_ema: float,
-    left_pose_debug: bool,
-    left_pose_debug_every: int,
-    left_pose_frame_viz: bool,
-    left_pose_frame_viz_every: int,
-    left_axis_rot_on_rad_viz: float,
-    calib: Any,
-    depth_aligned: Any = None,
-    depth_raw: Any = None,
+    webcam: OnlineWebcamState,
     section: Callable[[str], None] | None = None,
 ) -> LeftSwarmFrameResult:
     def _sec(name: str) -> None:
         if section is not None:
             section(name)
+
+    frame = cap.frame
+    result = cap.result
+    depth_aligned = cap.depth_aligned
+    depth_raw = cap.depth_raw
+    frame_idx = boot.frame_idx
+    webcam_frame_idx = webcam.frame_idx
+    idx_l = gest.idx_l
+    pts_l_pose_mm = gest.pts_l_pose_mm
+    palm_center_depth_mm = gest.palm_center_depth_mm
+    palm_center_color_px = gest.palm_center_color_px
+    mph = gest.mph
+    mpw = gest.mpw
+    orbbec_vis_min_now = gest.orbbec_vis_min_now
+    prefetch_B = gest.prefetch_B
+    prefetch_res = gest.prefetch_res
+    prefetch_wfr = gest.prefetch_wfr
+    left_pose_state = boot.left_pose_state
+    left_pose_runtime_armed = boot.left_pose_runtime_armed
+    left_pose_reset_req = boot.left_pose_reset_req
+    left_pose_reset_req_box = boot.left_pose_reset_req_box
+    mode_state = boot.mode_state
+    right_state = boot.right_state
+    swarm_workspace = boot.swarm_workspace
+    prev_cmd_target = boot.prev_cmd_target
+    left_use_camera_at_arm = boot.left_use_camera_at_arm
+    left_cam_preset = boot.left_cam_preset
+    left_cam_y_to_world_z = cfg.left_cam_y_to_world_z
+    left_rot_pivot_key = boot.left_rot_pivot_key
+    left_dual_webcam_rot_eff = boot.left_dual_webcam_rot_eff
+    left_rot_webcam_vis_thresh = boot.left_rot_webcam_vis_thresh
+    show_webcam_preview = cfg.show_webcam_preview
+    webcam_cap = webcam.cap
+    webcam_landmarker = webcam.landmarker
+    mp_input_scale = cfg.mp_input_scale
+    left_M_rot = boot.left_M_rot
+    left_M_trans = boot.left_M_trans
+    left_trans_scale = cfg.left_trans_scale
+    left_rot_scale = cfg.left_rot_scale
+    left_plane_rot_scale_mul = cfg.left_plane_rot_scale_mul
+    left_trans_ema = cfg.left_trans_ema
+    left_rot_ema = cfg.left_rot_ema
+    left_max_offset_m = cfg.left_max_offset_m
+    left_max_rot_rad = cfg.left_max_rot_rad
+    left_axis_sign = cfg.left_axis_sign
+    left_lost_decay = cfg.left_lost_decay
+    left_rot_gate_rad = cfg.left_rot_gate_rad
+    left_rot_gain = cfg.left_rot_gain
+    left_rot_trans_tau_mm = cfg.left_rot_trans_tau_mm
+    left_rot_world_z_scale = cfg.left_rot_world_z_scale
+    left_palm_basis = boot.left_palm_basis
+    left_axis_trans_deadzone_m = cfg.left_axis_trans_deadzone_m
+    left_axis_rot_deadzone_rad = cfg.left_axis_rot_deadzone_rad
+    left_axis_trans_on_m = cfg.left_axis_trans_on_m
+    left_axis_rot_on_rad = cfg.left_axis_rot_on_rad
+    left_axis_trans_rot_coupling = cfg.left_axis_trans_rot_coupling
+    left_palm_depth_outlier_z_mm = cfg.left_palm_depth_outlier_z_mm
+    left_palm_depth_outlier_lat_ratio = cfg.left_palm_depth_outlier_lat_ratio
+    left_palm_center_depth_ema = cfg.left_palm_center_depth_ema
+    left_pose_debug = cfg.left_pose_debug
+    left_pose_debug_every = cfg.left_pose_debug_every
+    left_pose_frame_viz = cfg.left_pose_frame_viz
+    left_pose_frame_viz_every = cfg.left_pose_frame_viz_every
+    left_axis_rot_on_rad_viz = cfg.left_axis_rot_on_rad
+    calib = boot.calib
+    mode_vis_min = cfg.mode_vis_min
+    fps = cfg.fps
 
     morph_targets_before_left_m = np.asarray(morph_targets_before_left_m, dtype=np.float32)
     raw_target = np.asarray(raw_target, dtype=np.float32)

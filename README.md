@@ -76,9 +76,12 @@ pixi run real-dual -- --drones-config config/drones.toml
 
 Morph uses **8 virtual formation points** by default; physical drone count is only `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow points 0 and 1).
 
+**Startup layout:** simulation spawns on a ground chessboard; real drones use `home` in `drones.toml`. Axswarm safety filtering is active from launch.
+
 | Key | Action |
 |-----|--------|
-| `Space` | Enable / disable gesture control |
+| `1` | Toggle **ground ↔ hover** (TOML / chessboard ground → pre–Space hover layout; axswarm-filtered). Press again to descend. Blocked after `Space` arms gestures. |
+| `Space` | Arm gesture control (hand-driven formation) |
 | `0` | Arm / disarm left-hand whole-formation pose |
 | `q` or `Enter` | Quit |
 

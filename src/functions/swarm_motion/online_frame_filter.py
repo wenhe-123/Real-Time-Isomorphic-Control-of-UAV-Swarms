@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
-from functions.swarm_motion.axswarm_runtime import AxswarmSafetyFilter
+from functions.mode_switch.online_frame_gesture import GestureFrameResult
+from functions.runtime.online_boot import OnlineBoot
+from functions.runtime.online_runtime_config import OnlineRuntimeConfig
 from functions.swarm_motion.spacing_guard import closest_pair, enforce_min_separation
 
 
@@ -21,26 +22,31 @@ class TargetFilterResult:
 
 def filter_online_targets(
     *,
+    boot: OnlineBoot,
+    cfg: OnlineRuntimeConfig,
+    gest: GestureFrameResult,
     raw_target: np.ndarray,
-    raw_target_filt: np.ndarray,
-    raw_target_ema: float,
-    min_separation_m: float,
-    axswarm_rt: AxswarmSafetyFilter | None,
-    gesture_control_enabled: bool,
-    prev_gesture_control_enabled: bool,
-    prev_cmd_target: np.ndarray,
-    elapsed: float,
-    open_out: float | None,
-    open_jump_reset: float,
-    prev_open_for_snap: float | None,
-    spacing_audit_every: int,
-    frame_idx: int,
-    left_pose_runtime_armed: bool,
-    left_pose_state: Any,
-    swarm_workspace: Any,
     morph_targets_before_left_m: np.ndarray,
+    elapsed: float,
+    track_pos: np.ndarray | None,
 ) -> tuple[TargetFilterResult, np.ndarray, float | None, bool]:
     """Return filtered targets and updated raw_target_filt / prev_open / prev_gesture flags."""
+    raw_target_filt = boot.raw_target_filt
+    raw_target_ema = cfg.raw_target_ema
+    min_separation_m = cfg.min_separation_m
+    axswarm_rt = boot.axswarm_rt
+    gesture_control_enabled = boot.gesture_control_enabled
+    prev_gesture_control_enabled = boot.prev_gesture_control_enabled
+    prev_cmd_target = boot.prev_cmd_target
+    open_out = gest.open_out
+    open_jump_reset = cfg.open_jump_reset
+    prev_open_for_snap = boot.prev_open_for_snap
+    spacing_audit_every = cfg.spacing_audit_every
+    frame_idx = boot.frame_idx
+    left_pose_runtime_armed = boot.left_pose_runtime_armed
+    left_pose_state = boot.left_pose_state
+    swarm_workspace = boot.swarm_workspace
+
     if raw_target_ema > 0.0:
         b = raw_target_ema
         raw_target_filt = b * raw_target + (1.0 - b) * raw_target_filt
@@ -68,6 +74,13 @@ def filter_online_targets(
         )
     if gesture_control_enabled and not prev_gesture_control_enabled:
         if axswarm_rt is not None:
+            _pos = (
+                np.asarray(track_pos, dtype=np.float32)
+                if track_pos is not None
+                else np.asarray(prev_cmd_target, dtype=np.float32)
+            )
+            _vel = np.zeros((axswarm_rt.n_drones, 3), dtype=np.float32)
+            axswarm_rt.sync_gesture(_pos, _vel)
             axswarm_rt.mark_armed(float(elapsed))
             _aw = float(axswarm_rt.arm_warmup_s)
             _ax_msg = (
@@ -81,11 +94,16 @@ def filter_online_targets(
     prev_gesture_control_enabled = bool(gesture_control_enabled)
 
     control_target = safe_target
-    if axswarm_rt is not None and gesture_control_enabled:
+    if axswarm_rt is not None:
+        _track = (
+            np.asarray(track_pos, dtype=np.float32)
+            if track_pos is not None
+            else np.asarray(prev_cmd_target, dtype=np.float32)
+        )
         control_target = axswarm_rt.safety_filter_targets(
             elapsed,
             filter_src,
-            track_pos=np.asarray(prev_cmd_target, dtype=np.float32),
+            track_pos=_track,
         )
     if (
         open_jump_reset > 0.0

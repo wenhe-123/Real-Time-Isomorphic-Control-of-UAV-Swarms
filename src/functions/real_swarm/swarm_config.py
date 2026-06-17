@@ -27,6 +27,21 @@ class RealFrameMapping:
         out = self.origin + (pts @ rot.T) * float(self.scale)
         return out[0] if single else out
 
+    def real_to_sim(self, real_xyz: np.ndarray) -> np.ndarray:
+        """Inverse of :meth:`sim_to_real` (room / mocap → gesture sim frame)."""
+        pts = np.asarray(real_xyz, dtype=np.float64)
+        single = pts.ndim == 1
+        if single:
+            pts = pts[None, :]
+        c, s = np.cos(self.yaw_rad), np.sin(self.yaw_rad)
+        rot = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+        scale = float(self.scale)
+        if abs(scale) < 1e-9:
+            raise ValueError("frame.scale must be non-zero for real_to_sim")
+        local = (pts - self.origin) / scale
+        out = local @ rot
+        return out[0] if single else out
+
 
 @dataclass(frozen=True)
 class RealSwarmOptions:

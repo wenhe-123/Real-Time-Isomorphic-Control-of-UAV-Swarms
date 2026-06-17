@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from functions.display_sim.gesture_report_debug import (
-    ReportDebugFigures,
     ReportDebugPanels,
     update_report_debug_figures,
 )
@@ -17,8 +14,10 @@ from functions.display_sim.online_plot import (
     refresh_3d_plot_nonblocking,
     update_online_3d_plot,
 )
-from functions.mode_switch.morph_shape_control import LpShapePipelineState
+from functions.mode_switch.online_frame_gesture import GestureFrameResult
 from functions.mode_switch.webcam_mode_defaults import analyze_hand_topology
+from functions.runtime.online_boot import OnlineBoot
+from functions.runtime.online_runtime_config import OnlineRuntimeConfig
 
 
 def _pick_hand_for_plot(
@@ -37,30 +36,34 @@ def _pick_hand_for_plot(
 
 def update_online_plot_frame(
     *,
-    plot_enabled: bool,
-    plot_every_n: int,
-    frame_idx: int,
-    fig: Any,
-    ax_hand: Any,
-    ax_topo: Any,
-    hands_3d: list | None,
-    hands_3d_all: list,
-    idx_l: int | None,
-    mode_state: Any,
-    open_out: float | None,
-    lp_shape: LpShapePipelineState,
-    formation_rigid_3d_debug: bool,
-    left_pose_state: Any,
-    left_pose_runtime_armed: bool,
-    morph_targets_before_left_m: np.ndarray,
+    boot: OnlineBoot,
+    cfg: OnlineRuntimeConfig,
+    gest: GestureFrameResult,
     raw_target: np.ndarray,
+    morph_targets_before_left_m: np.ndarray,
     left_swarm_R: np.ndarray | None,
     left_swarm_off: np.ndarray | None,
-    report_panels: ReportDebugPanels | None = None,
-    report_debug_figs: ReportDebugFigures | None = None,
-    pts_l_pose_mm: Any = None,
 ) -> bool:
     """Update 3D plot if due; return updated plot_enabled (False if disabled after error)."""
+    plot_enabled = boot.plot_enabled
+    plot_every_n = cfg.plot_every_n
+    frame_idx = boot.frame_idx
+    fig = boot.fig
+    ax_hand = boot.ax_hand
+    ax_topo = boot.ax_topo
+    hands_3d = gest.hands_3d
+    hands_3d_all = gest.hands_3d_all
+    idx_l = gest.idx_l
+    mode_state = boot.mode_state
+    open_out = gest.open_out
+    lp_shape = boot.lp_shape
+    formation_rigid_3d_debug = cfg.formation_rigid_3d_debug
+    left_pose_state = boot.left_pose_state
+    left_pose_runtime_armed = boot.left_pose_runtime_armed
+    report_panels = boot.extras.get("report_panels")
+    report_debug_figs = boot.extras.get("report_debug_figs")
+    pts_l_pose_mm = gest.pts_l_pose_mm
+
     if not plot_enabled or plot_every_n <= 0:
         return plot_enabled
     if (frame_idx % plot_every_n) != 0:

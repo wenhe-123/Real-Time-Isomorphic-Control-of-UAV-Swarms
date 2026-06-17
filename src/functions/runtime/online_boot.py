@@ -34,7 +34,9 @@ from functions.mode_switch.modes_runtime import ModeState, RightHandState
 from functions.mode_switch.morph_shape_control import LpShapePipelineState
 from functions.open_close.morph_world import ScaleConfig
 from functions.runtime.live_target import LiveTargetState
+from functions.runtime.online_runtime_config import OnlineRuntimeConfig
 from functions.runtime.online_defaults import (
+    _DEFAULT_GROUND_Z,
     _DEFAULT_PREARM_TAKEOFF_Z,
     _ONLINE_ORBBEC_FPS,
     _TRAIL_BUFFER_MAXLEN,
@@ -48,7 +50,7 @@ from functions.swarm_motion.left_hand_swarm_pose import (
     make_cam_translation_matrix,
     palm_basis_pair_indices,
 )
-from functions.swarm_motion.prearm import complete_prearm_takeoff
+from functions.swarm_motion.prearm import complete_prearm_takeoff, sim_chessboard_ground_layout
 from functions.swarm_motion.spacing_guard import closest_pair, enforce_min_separation
 from functions.swarm_motion.swarm_workspace_box import SwarmWorkspaceBox
 
@@ -75,6 +77,9 @@ class OnlineBoot:
     cmd_target: np.ndarray
     prev_cmd_target: np.ndarray
     raw_target_filt: np.ndarray
+    ground_layout: np.ndarray
+    ground_z: float
+    prearm_hover_layout: np.ndarray
     prearm_hover_z: float
     trail_rgba: list
     pos_buffer: deque
@@ -87,6 +92,7 @@ class OnlineBoot:
     swarm_workspace: SwarmWorkspaceBox
     key_queue: OnlineKeyQueue
     gesture_control_enabled_box: list[bool]
+    prearm_climb_enabled_box: list[bool]
     left_pose_reset_req_box: list[bool]
     left_pose_runtime_armed_box: list[bool]
     orbbec_swap_mp_hands: bool
@@ -105,6 +111,8 @@ class OnlineBoot:
     prev_open_for_snap: float | None = None
     gesture_control_enabled: bool = False
     prev_gesture_control_enabled: bool = False
+    prearm_climb_enabled: bool = False
+    prev_prearm_climb_enabled: bool = False
     left_pose_reset_req: bool = False
     left_pose_runtime_armed: bool = False
     frame_idx: int = 0
@@ -131,57 +139,58 @@ def print_pipeline_mode(pipe: PipelineTuning, *, draw_hand_debug: bool, mp_deleg
 def boot_online_control(
     *,
     live_target: LiveTargetState,
-    point_count: int,
-    fps: int,
-    min_separation_m: float,
-    scale: ScaleConfig,
-    pipe: PipelineTuning,
-    drone_model: str,
-    prearm_hover_z: float,
-    prearm_takeoff_z: float,
-    planner: str,
-    axswarm_settings: str | None,
-    axswarm_project_root: str | None,
-    axswarm_max_iters: int | None,
-    axswarm_max_solve_ms: float,
-    axswarm_max_deviation_m: float,
-    axswarm_pos_weight: float | None,
-    max_sim_substeps: int,
-    plot_every_n: int,
-    debug_report_panels: ReportDebugPanels | None = None,
-    left_swarm_pose: bool,
-    left_unwind_s: float,
-    left_rot_direct_follow: bool,
-    left_swarm_depth_frame_motion: bool,
-    left_world_frame: str,
-    left_cam_preset: str,
-    left_cam_y_to_world_z: float,
-    left_palm_basis: str,
-    left_plane_rot_scale_mul: float,
-    left_rot_pivot: str,
-    left_dual_webcam_rot: bool,
-    left_rot_webcam_vis_thresh: float,
-    left_rot_scale: float,
-    left_rot_gain: float,
-    left_rot_gate_rad: float,
-    left_rot_trans_tau_mm: float,
-    left_rot_world_z_scale: float,
-    orbbec_flip_horizontal: bool,
-    orbbec_use_transformed_depth: bool,
-    orbbec_hand_swap: str,
-    swarm_workspace_box_m: float,
-    swarm_workspace_wall_margin_m: float,
-    swarm_workspace_clear_margin_m: float,
-    swarm_workspace_mode: str,
-    center_trace: bool,
-    center_trace_every: int,
-    install_hotkey_deps: bool,
-    global_hotkeys: bool,
+    cfg: OnlineRuntimeConfig,
     morph_default_z_clip: float = 1.10,
-    drones_config: Path | str | None = None,
-    real_lighthouse: bool | None = None,
 ) -> OnlineBoot:
     """Open Orbbec + sim or real swarm, run prearm, wire axswarm and hotkeys."""
+    point_count = int(cfg.point_count)
+    fps = int(cfg.fps)
+    min_separation_m = float(cfg.min_separation_m)
+    scale = cfg.scale
+    pipe = cfg.pipe
+    drone_model = str(cfg.drone_model)
+    prearm_hover_z = float(cfg.prearm_hover_z)
+    prearm_takeoff_z = float(cfg.prearm_takeoff_z)
+    planner = str(cfg.planner)
+    axswarm_settings = cfg.axswarm_settings
+    axswarm_project_root = cfg.axswarm_project_root
+    axswarm_max_iters = cfg.axswarm_max_iters
+    axswarm_max_solve_ms = float(cfg.axswarm_max_solve_ms)
+    axswarm_max_deviation_m = float(cfg.axswarm_max_deviation_m)
+    axswarm_pos_weight = cfg.axswarm_pos_weight
+    max_sim_substeps = int(cfg.max_sim_substeps)
+    plot_every_n = int(cfg.plot_every_n)
+    debug_report_panels = cfg.report_panels
+    left_swarm_pose = bool(cfg.left_swarm_pose)
+    left_unwind_s = float(cfg.left_unwind_s)
+    left_rot_direct_follow = bool(cfg.left_rot_direct_follow)
+    left_swarm_depth_frame_motion = bool(cfg.left_swarm_depth_frame_motion)
+    left_world_frame = str(cfg.left_world_frame)
+    left_cam_preset = str(cfg.left_cam_preset)
+    left_cam_y_to_world_z = float(cfg.left_cam_y_to_world_z)
+    left_palm_basis = str(cfg.left_palm_basis)
+    left_plane_rot_scale_mul = float(cfg.left_plane_rot_scale_mul)
+    left_rot_pivot = str(cfg.left_rot_pivot)
+    left_dual_webcam_rot = bool(cfg.left_dual_webcam_rot)
+    left_rot_webcam_vis_thresh = float(cfg.left_rot_webcam_vis_thresh)
+    left_rot_scale = float(cfg.left_rot_scale)
+    left_rot_gain = float(cfg.left_rot_gain)
+    left_rot_gate_rad = float(cfg.left_rot_gate_rad)
+    left_rot_trans_tau_mm = float(cfg.left_rot_trans_tau_mm)
+    left_rot_world_z_scale = float(cfg.left_rot_world_z_scale)
+    orbbec_flip_horizontal = bool(cfg.orbbec_flip_horizontal)
+    orbbec_use_transformed_depth = bool(cfg.orbbec_use_transformed_depth)
+    orbbec_hand_swap = str(cfg.orbbec_hand_swap)
+    swarm_workspace_box_m = float(cfg.swarm_workspace_box_m)
+    swarm_workspace_wall_margin_m = float(cfg.swarm_workspace_wall_margin_m)
+    swarm_workspace_clear_margin_m = float(cfg.swarm_workspace_clear_margin_m)
+    swarm_workspace_mode = str(cfg.swarm_workspace_mode)
+    center_trace = bool(cfg.center_trace)
+    center_trace_every = int(cfg.center_trace_every)
+    install_hotkey_deps = bool(cfg.install_hotkey_deps)
+    global_hotkeys = bool(cfg.global_hotkeys)
+    drones_config: Path | str | None = cfg.drones_config
+    real_lighthouse = cfg.real_lighthouse
     orbbec_fps = FPS.FPS_15 if _ONLINE_ORBBEC_FPS == "15" else FPS.FPS_30
     k4a = PyK4A(
         Config(
@@ -226,11 +235,6 @@ def boot_online_control(
     if abs(prearm_takeoff_z - _DEFAULT_PREARM_TAKEOFF_Z) < 1e-6:
         prearm_takeoff_z = morph_z0
     prearm_takeoff_z = float(np.clip(prearm_takeoff_z, float(scale.z_min) + 0.02, prearm_hover_z))
-    prearm_spawn = enforce_min_separation(
-        lift_morph_to_hover_z(morph_default, prearm_takeoff_z),
-        float(min_separation_m),
-        iters=12,
-    )
     prearm_hold = enforce_min_separation(
         lift_morph_to_hover_z(morph_default, prearm_hover_z),
         float(min_separation_m),
@@ -256,14 +260,6 @@ def boot_online_control(
         )
 
     zeros = jnp.zeros((n_drones, 3))
-    if sim is not None:
-        sim.data = sim.data.replace(
-            states=sim.data.states.replace(
-                pos=jnp.asarray(prearm_spawn[None, :, :], device=sim.device),
-                vel=zeros[None, :, :],
-                ang_vel=zeros[None, :, :],
-            )
-        )
 
     planner_key = str(planner).strip().lower()
     axswarm_rt: AxswarmSafetyFilter | None = None
@@ -282,7 +278,6 @@ def boot_online_control(
             max_solve_ms=float(axswarm_max_solve_ms),
             outer_fps=int(fps),
         )
-        axswarm_rt.reset(prearm_spawn, np.zeros((n_drones, 3), dtype=np.float32))
         synced_step = per_substep_target_cap_m(
             vel_max_m_s=float(axswarm_rt.settings.vel_max),
             sim_freq_hz=int(motion_freq_hz),
@@ -295,9 +290,9 @@ def boot_online_control(
         )
         _ax_warm = float(axswarm_rt.arm_warmup_s)
         _ax_after = (
-            f"MPC after {_ax_warm:.1f}s post-SPACE warmup"
+            f"MPC after {_ax_warm:.1f}s startup warmup"
             if _ax_warm > 1e-6
-            else "MPC active immediately after SPACE"
+            else "MPC active from startup"
         )
         print(
             f"Planner: gesture setpoints + axswarm safety filter @ {axswarm_rt.mpc_hz:.0f} Hz, "
@@ -306,21 +301,49 @@ def boot_online_control(
     elif planner_key != "direct":
         raise ValueError(f"unknown --planner {planner!r}; use 'direct' or 'axswarm'")
 
-    prearm_final = complete_prearm_takeoff(
+    prearm_hover_layout = complete_prearm_takeoff(
         morph_default,
         hover_z=prearm_hover_z,
         min_separation_m=float(min_separation_m),
     )
+    z_ground = float(_DEFAULT_GROUND_Z)
+    if real_executor is not None:
+        ground_layout = real_executor.get_sim_ground_layout(
+            n_drones, min_separation_m=float(min_separation_m)
+        )
+        z_ground = float(np.median(ground_layout[: real_executor.n_physical, 2]))
+        print(
+            f"Startup layout: TOML home positions (sim frame, z≈{z_ground:.2f}m). "
+            "Press 1 to climb toward hover."
+        )
+    else:
+        ground_layout = sim_chessboard_ground_layout(
+            n_drones,
+            min_separation_m=float(min_separation_m),
+            z_ground=z_ground,
+            xy_half_extent_m=float(scale.xy_radius) * 0.85,
+        )
+        d_g, pi_g, pj_g = closest_pair(ground_layout)
+        print(
+            f"Startup layout: chessboard ground (z={z_ground:.2f}m, "
+            f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). Press 1 to climb toward hover."
+        )
+    boot_cmd = ground_layout.copy()
+    if real_executor is not None:
+        track0 = real_executor.get_sim_track_positions(ground_layout, n_drones)
+        if track0 is not None:
+            boot_cmd = track0
     if sim is not None:
         sim.data = sim.data.replace(
             states=sim.data.states.replace(
-                pos=jnp.asarray(prearm_final[None, :, :], device=sim.device),
+                pos=jnp.asarray(ground_layout[None, :, :], device=sim.device),
                 vel=zeros[None, :, :],
                 ang_vel=zeros[None, :, :],
             )
         )
     if axswarm_rt is not None:
-        axswarm_rt.reset(prearm_final, np.zeros((n_drones, 3), dtype=np.float32))
+        axswarm_rt.reset(boot_cmd, np.zeros((n_drones, 3), dtype=np.float32))
+        axswarm_rt.mark_armed(0.0)
     mode_label = "real Crazyflie" if real_executor is not None else "MuJoCo render"
     print(
         f"Mode: gesture targets → axswarm filter (if enabled) → cmd_target; {mode_label}."
@@ -334,7 +357,16 @@ def boot_online_control(
             else ""
         )
     )
-    print(f"Pre-SPACE hover complete: z={prearm_hover_z:.2f}m. Press SPACE to arm gestures.")
+    if axswarm_rt is not None:
+        print(
+            "Axswarm safety filter active from startup. "
+            f"Press 1 ↔ hover z={prearm_hover_z:.2f}m; SPACE → gesture control."
+        )
+    else:
+        print(
+            f"Press 1 to toggle ground ↔ hover z={prearm_hover_z:.2f}m; "
+            "SPACE to arm gestures."
+        )
 
     left_cam_preset = str(left_cam_preset).strip().lower()
     left_cam_y_to_world_z = float(np.clip(left_cam_y_to_world_z, 0.0, 1.0))
@@ -404,7 +436,7 @@ def boot_online_control(
             f"(camera|legacy|fwd_y|flip_depth), {wf}, "
             f"palm_basis={left_palm_basis!r}."
         )
-    print("Holding default M1/open=1 target until SPACE is pressed.")
+    print("Ground hold until 1; 1 toggles ground ↔ hover; SPACE arms gesture control.")
 
     left_pose_state = LeftSwarmPoseState(enabled=bool(left_swarm_pose))
     swarm_workspace = SwarmWorkspaceBox(
@@ -467,7 +499,7 @@ def boot_online_control(
             print("[WARN] No hotkey backends started.")
             print(format_hotkey_install_hint(_hk_probe))
         else:
-            print(f"Hotkeys: {_hk} — SPACE/0/q without Orbbec focus.")
+            print(f"Hotkeys: {_hk} — 1 ground↔hover, SPACE arm, 0/q without Orbbec focus.")
         print(
             "Left control: palm_centroid — press-0 palm center + palm basis; "
             f"frozen cam→sim preset {left_cam_preset!r} when camera_at_arm."
@@ -490,9 +522,12 @@ def boot_online_control(
         scale=scale,
         pipe=pipe,
         use_depth_fusion=bool(pipe.depth_fusion_enabled),
-        cmd_target=prearm_final.copy(),
-        prev_cmd_target=prearm_final.copy(),
-        raw_target_filt=prearm_final.copy(),
+        cmd_target=boot_cmd.copy(),
+        prev_cmd_target=boot_cmd.copy(),
+        raw_target_filt=boot_cmd.copy(),
+        ground_layout=ground_layout.copy(),
+        ground_z=z_ground,
+        prearm_hover_layout=prearm_hover_layout.copy(),
         prearm_hover_z=prearm_hover_z,
         trail_rgba=trail_rgba,
         pos_buffer=deque(maxlen=_TRAIL_BUFFER_MAXLEN),
@@ -505,6 +540,7 @@ def boot_online_control(
         swarm_workspace=swarm_workspace,
         key_queue=key_queue,
         gesture_control_enabled_box=[gesture_control_enabled],
+        prearm_climb_enabled_box=[False],
         left_pose_reset_req_box=[False],
         left_pose_runtime_armed_box=[False],
         orbbec_swap_mp_hands=orbbec_swap_mp_hands,
@@ -519,7 +555,6 @@ def boot_online_control(
         left_unwind_s=float(left_unwind_s),
         start_time=time.monotonic(),
         extras={
-            "center_trace_every": center_trace_every,
             "report_debug_figs": report_debug_figs,
             "report_panels": panels if panels.any_enabled() else None,
         },
@@ -533,6 +568,7 @@ def make_key_poller(boot: OnlineBoot, *, global_hotkeys: bool):
             global_hotkeys=bool(global_hotkeys),
             cv_key=cv_key,
             gesture_control_enabled=boot.gesture_control_enabled_box,
+            prearm_climb_enabled=boot.prearm_climb_enabled_box,
             left_pose_reset_req=boot.left_pose_reset_req_box,
             left_pose_runtime_armed=boot.left_pose_runtime_armed_box,
             left_pose_state=boot.left_pose_state,
@@ -546,5 +582,6 @@ def make_key_poller(boot: OnlineBoot, *, global_hotkeys: bool):
 
 def sync_armed_flags(boot: OnlineBoot) -> None:
     boot.gesture_control_enabled = bool(boot.gesture_control_enabled_box[0])
+    boot.prearm_climb_enabled = bool(boot.prearm_climb_enabled_box[0])
     boot.left_pose_reset_req = bool(boot.left_pose_reset_req_box[0])
     boot.left_pose_runtime_armed = bool(boot.left_pose_runtime_armed_box[0])

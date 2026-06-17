@@ -72,6 +72,22 @@ def clamp_targets_step(prev: np.ndarray, nxt: np.ndarray, max_step_m: float) -> 
     return out.astype(np.float32)
 
 
+def enforce_min_separation_xy(
+    points: np.ndarray,
+    min_sep: float,
+    z_fixed: float,
+    *,
+    iters: int = 6,
+) -> np.ndarray:
+    """Repel in XY only; keep every row at ``z_fixed`` (ground plane)."""
+    pts = np.asarray(points, dtype=np.float64).copy()
+    flat = np.column_stack([pts[:, :2], np.zeros((pts.shape[0], 1), dtype=np.float64)])
+    flat = enforce_min_separation(flat, min_sep, iters=iters)
+    pts[:, :2] = flat[:, :2]
+    pts[:, 2] = float(z_fixed)
+    return pts.astype(np.float32)
+
+
 def enforce_min_separation(points: np.ndarray, min_sep: float, *, iters: int = 6) -> np.ndarray:
     """Lightweight collision guard: iteratively repel pairs closer than ``min_sep``."""
     pts = np.asarray(points, dtype=np.float64).copy()

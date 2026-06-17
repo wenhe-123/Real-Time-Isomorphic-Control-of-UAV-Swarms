@@ -34,6 +34,8 @@ _DEFAULT_RAW_TARGET_EMA = 0.0
 _DEFAULT_MAX_TARGET_STEP_M = 0.038
 # When |Δopen| >= this after a frame's gesture update, restart post-SPACE slow blend (0=off).
 _DEFAULT_OPEN_JUMP_RESET = 0.34
+# Sim / spawn: physical ground plane in Crazyflow sim frame (m), not gesture workspace z_min.
+_DEFAULT_GROUND_Z = 0.05
 # Before SPACE: morph layout hover (fits default 3.5 m workspace: floor 0.05 + half 1.75).
 _DEFAULT_PREARM_HOVER_Z = 1.80
 _DEFAULT_PREARM_TAKEOFF_Z = 0.92

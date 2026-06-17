@@ -16,11 +16,10 @@ from functions.dual_cam.mp_hand_utils import (
 )
 from functions.mode_switch.hand_constants import MCP_IDS, THUMB_TIP_ID, WRIST_ID
 from functions.mode_switch.modes_runtime import process_left_mode, process_right_open
-from functions.mode_switch.morph_shape_control import (
-    LpShapePipelineState,
-    advance_lp_shape_p,
-    index_mcp_tip_segment_norm,
-)
+from functions.mode_switch.morph_shape_control import advance_lp_shape_p, index_mcp_tip_segment_norm
+from functions.dual_cam.online_frame_capture import OrbbecCaptureFrame
+from functions.runtime.online_boot import OnlineBoot
+from functions.runtime.online_runtime_config import OnlineRuntimeConfig, OnlineWebcamState
 from functions.swarm_motion.left_hand_swarm_pose import (
     left_hand_pose_matrix_depth_mm,
     mp_hand_visibility_scores,
@@ -52,43 +51,28 @@ class GestureFrameResult:
 
 def process_online_gesture_frame(
     *,
-    frame: np.ndarray,
-    mp_frame: np.ndarray,
-    result: Any,
-    hands_3d_all: list,
-    calib: Any,
-    depth_aligned: Any,
-    depth_raw: Any,
-    boot_mode_state: Any,
-    boot_right_state: Any,
-    boot_lp_shape: LpShapePipelineState,
-    boot_left_pose_state: Any,
-    left_pose_runtime_armed: bool,
-    left_dual_webcam_rot_eff: bool,
-    left_rot_webcam_vis_thresh: float,
-    mode_vis_min: float,
-    open_vis_min: float,
-    left_palm_basis: str,
-    pipe: Any,
-    fps: float,
-    mp_input_scale: float,
-    webcam_cap: Any,
-    webcam_landmarker: Any,
-    webcam_frame_idx: int,
-    wcam_rot_cache: dict,
-    wcam_rot_stride: int,
-    show_webcam_preview: bool,
-    frame_idx: int,
-    orbbec_swap_mp_hands: bool,
+    boot: OnlineBoot,
+    cfg: OnlineRuntimeConfig,
+    cap: OrbbecCaptureFrame,
+    webcam: OnlineWebcamState,
     section: Callable[[str], None] | None = None,
 ) -> GestureFrameResult:
     def _sec(name: str) -> None:
         if section is not None:
             section(name)
 
+    frame = cap.frame
+    mp_frame = cap.mp_frame
+    result = cap.result
+    hands_3d_all = cap.hands_3d_all
+    depth_aligned = cap.depth_aligned
+    depth_raw = cap.depth_raw
+    frame_idx = boot.frame_idx
+    webcam_frame_idx = webcam.frame_idx
+
     idx_l, idx_r = resolve_mode_open_hand_indices(
         result,
-        swap_mp_hands=bool(orbbec_swap_mp_hands),
+        swap_mp_hands=bool(boot.orbbec_swap_mp_hands),
     )
     _sec("gesture_indices")
     pts_l = (
@@ -108,16 +92,16 @@ def process_online_gesture_frame(
     _hold_morph_mode = False
     if (
         orbbec_vis_min_now is not None
-        and float(mode_vis_min) > 0.0
-        and float(orbbec_vis_min_now) < float(mode_vis_min)
+        and float(cfg.mode_vis_min) > 0.0
+        and float(orbbec_vis_min_now) < float(cfg.mode_vis_min)
     ):
         _hold_morph_mode = True
-    _dual_mode_assist = bool(left_dual_webcam_rot_eff)
+    _dual_mode_assist = bool(boot.left_dual_webcam_rot_eff)
     prefetch_B = None
     prefetch_res = None
     prefetch_wfr = None
     prefetch_widx: int | None = None
-    if left_dual_webcam_rot_eff and webcam_cap is not None and webcam_landmarker is not None:
+    if boot.left_dual_webcam_rot_eff and webcam.cap is not None and webcam.landmarker is not None:
         (
             prefetch_B,
             prefetch_res,
@@ -125,21 +109,21 @@ def process_online_gesture_frame(
             prefetch_widx,
             webcam_frame_idx,
         ) = poll_webcam_dual_cache(
-            webcam_cap=webcam_cap,
-            webcam_landmarker=webcam_landmarker,
-            cache=wcam_rot_cache,
+            webcam_cap=webcam.cap,
+            webcam_landmarker=webcam.landmarker,
+            cache=webcam.rot_cache,
             frame_idx=frame_idx,
-            stride=wcam_rot_stride,
-            show_preview=bool(show_webcam_preview),
+            stride=webcam.rot_stride,
+            show_preview=bool(cfg.show_webcam_preview),
             orbbec_vis_min=orbbec_vis_min_now,
-            rot_vis_thresh=float(left_rot_webcam_vis_thresh),
-            mode_vis_min=float(mode_vis_min),
+            rot_vis_thresh=float(boot.left_rot_webcam_vis_thresh),
+            mode_vis_min=float(cfg.mode_vis_min),
             rotating=bool(_left_rotating),
             dual_mode_assist=_dual_mode_assist,
             orbbec_thumb_vis=orbbec_thumb_vis,
-            fps=float(fps),
-            mp_input_scale=float(mp_input_scale),
-            palm_basis=left_palm_basis,
+            fps=float(cfg.fps),
+            mp_input_scale=float(cfg.mp_input_scale),
+            palm_basis=boot.left_palm_basis,
             prefer_hand_idx=idx_l,
             webcam_frame_idx=webcam_frame_idx,
         )
@@ -147,11 +131,11 @@ def process_online_gesture_frame(
     mode_raw, tier_count = process_left_mode(
         hands_3d_all,
         idx_l,
-        boot_mode_state,
+        boot.mode_state,
         mp_result=result,
-        mode_vis_min=float(mode_vis_min),
+        mode_vis_min=float(cfg.mode_vis_min),
         hold_mode=_hold_morph_mode,
-        debounce_frames=int(pipe.mode_debounce_frames),
+        debounce_frames=int(cfg.pipe.mode_debounce_frames),
         webcam_mp_result=prefetch_res,
         webcam_idx_left=prefetch_widx,
         dual_mode_assist=_dual_mode_assist,
@@ -162,15 +146,15 @@ def process_online_gesture_frame(
     hands_3d, open_out = process_right_open(
         hands_3d_all,
         idx_r,
-        boot_right_state,
+        boot.right_state,
         mp_result=result,
-        open_vis_min=float(open_vis_min),
+        open_vis_min=float(cfg.open_vis_min),
     )
     _sec("gesture_open")
     mph, mpw = int(mp_frame.shape[0]), int(mp_frame.shape[1])
     palm_center_depth_mm = None
     palm_center_color_px = None
-    if calib is not None and idx_l is not None:
+    if boot.calib is not None and idx_l is not None:
         _pose_depth = left_hand_pose_matrix_depth_mm(
             result,
             idx_l,
@@ -178,11 +162,11 @@ def process_online_gesture_frame(
             int(frame.shape[1]),
             mph,
             mpw,
-            calibration=calib,
+            calibration=boot.calib,
             depth_aligned=depth_aligned,
             depth_raw=depth_raw,
             patch_r=int(DEPTH_MEDIAN_PATCH_RADIUS),
-            palm_basis=left_palm_basis,
+            palm_basis=boot.left_palm_basis,
         )
         if _pose_depth is not None:
             pts_l_pose_mm, palm_center_depth_mm = _pose_depth
@@ -207,7 +191,7 @@ def process_online_gesture_frame(
         if pts_l is not None
         else None
     )
-    advance_lp_shape_p(dist_norm, int(boot_mode_state.morph_mode), boot_lp_shape)
+    advance_lp_shape_p(dist_norm, int(boot.mode_state.morph_mode), boot.lp_shape)
     _sec("gesture_lp_shape")
     return GestureFrameResult(
         idx_l=idx_l,
