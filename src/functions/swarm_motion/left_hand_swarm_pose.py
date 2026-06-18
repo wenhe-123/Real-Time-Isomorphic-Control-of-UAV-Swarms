@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from functions.swarm_motion.left_pose_tuning import LeftPoseSensorInput, LeftPoseTuning
 from functions.mode_switch.hand_constants import (
     HAND_SPAN_LANDMARK_IDS,
     INDEX_MCP_ID,
@@ -1893,52 +1894,54 @@ def disarm_left_swarm_pose(state: LeftSwarmPoseState) -> None:
 
 
 def update_left_swarm_pose(
-    pts_l,
-    state: "LeftSwarmPoseState",
+    state: LeftSwarmPoseState,
     *,
-    trans_scale: float,
-    rot_scale: float,
-    trans_ema: float,
-    rot_ema: float,
-    max_offset_m: float,
-    max_rot_rad: float,
-    axis_sign: tuple[float, float, float] = (1.0, 1.0, 1.0),
-    hand_lost_decay: float = 0.92,
-    force_reset: bool = False,
-    cam_delta_to_world: np.ndarray | None = None,
-    cam_translation_to_world: np.ndarray | None = None,
-    rot_gate_rad: float = 0.11,
-    rot_gain: float = 1.0,
-    rot_trans_tau_mm: float = 0.0,
-    max_trans_step_m: float = 0.055,
-    rot_world_z_scale: float = 1.0,
-    palm_basis: str = DEFAULT_LEFT_PALM_BASIS,
-    arm_sim_from_cam: np.ndarray | None = None,
-    arm_sim_trans_from_cam: np.ndarray | None = None,
-    arm_cam_preset_label: str = "",
-    ref_drone_xyz: np.ndarray | None = None,
-    ref_swarm_xyz: np.ndarray | None = None,
-    ref_basis_image: np.ndarray | None = None,
-    B_rot: np.ndarray | None = None,
-    rot_ref_basis: np.ndarray | None = None,
-    trans_deadzone_m: float = 0.018,
-    rot_deadzone_rad: float = 0.055,
-    trans_on_m: float = 0.004,
-    rot_on_rad: float = 0.020,
-    trans_rot_coupling: float = 0.50,
-    palm_center_mm: np.ndarray | None = None,
-    palm_center_color_px: tuple[int, int] | None = None,
-    palm_depth_outlier_z_mm: float = 95.0,
-    palm_depth_outlier_lateral_ratio: float = 2.2,
-    palm_center_depth_ema: float = 0.42,
-    palm_depth_patch_r: int = 2,
-    palm_calib: object | None = None,
-    palm_frame_h: int = 0,
-    palm_frame_w: int = 0,
-    palm_depth_aligned: object | None = None,
-    palm_depth_raw: object | None = None,
+    sensor: LeftPoseSensorInput,
+    tuning: LeftPoseTuning,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Rigid follow: direct arm-relative (offset, R) with frame reject + slerp smoothing."""
+    pts_l = sensor.pts_l_pose_mm
+    trans_scale = tuning.trans_scale
+    rot_scale = tuning.rot_scale * float(sensor.plane_rot_mul)
+    trans_ema = tuning.trans_ema
+    rot_ema = tuning.rot_ema
+    max_offset_m = tuning.max_offset_m
+    max_rot_rad = tuning.max_rot_rad
+    axis_sign = tuning.axis_sign
+    hand_lost_decay = tuning.lost_decay
+    force_reset = sensor.force_reset
+    cam_delta_to_world = sensor.cam_delta_to_world
+    cam_translation_to_world = sensor.cam_translation_to_world
+    rot_gate_rad = tuning.rot_gate_rad
+    rot_gain = tuning.rot_gain
+    rot_trans_tau_mm = tuning.rot_trans_tau_mm
+    rot_world_z_scale = tuning.rot_world_z_scale
+    palm_basis = sensor.palm_basis
+    arm_sim_from_cam = sensor.arm_sim_from_cam
+    arm_sim_trans_from_cam = sensor.arm_sim_trans_from_cam
+    arm_cam_preset_label = sensor.arm_cam_preset_label
+    ref_drone_xyz = sensor.ref_drone_xyz
+    ref_swarm_xyz = sensor.ref_swarm_xyz
+    ref_basis_image = sensor.ref_basis_image
+    B_rot = sensor.B_rot
+    trans_deadzone_m = tuning.axis_trans_deadzone_m
+    rot_deadzone_rad = tuning.axis_rot_deadzone_rad
+    trans_on_m = tuning.axis_trans_on_m
+    rot_on_rad = tuning.axis_rot_on_rad
+    trans_rot_coupling = tuning.axis_trans_rot_coupling
+    palm_center_mm = sensor.palm_center_depth_mm
+    palm_center_color_px = sensor.palm_center_color_px
+    palm_depth_outlier_z_mm = tuning.palm_depth_outlier_z_mm
+    palm_depth_outlier_lateral_ratio = tuning.palm_depth_outlier_lat_ratio
+    palm_center_depth_ema = tuning.palm_center_depth_ema
+    palm_depth_patch_r = sensor.palm_depth_patch_r
+    palm_calib = sensor.palm_calib
+    palm_frame_h = sensor.palm_frame_h
+    palm_frame_w = sensor.palm_frame_w
+    palm_depth_aligned = sensor.palm_depth_aligned
+    palm_depth_raw = sensor.palm_depth_raw
+    max_trans_step_m = 0.055
+
     if not state.enabled:
         return np.zeros(3, dtype=np.float64), np.eye(3, dtype=np.float64)
 

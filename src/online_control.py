@@ -274,7 +274,6 @@ def run_integrated_online_control(
                 morph_targets_before_left_m = raw_target.copy()
                 ls = apply_left_swarm_frame(
                     boot=boot,
-                    cfg=cfg,
                     cap=cap,
                     gest=gest,
                     raw_target=raw_target,

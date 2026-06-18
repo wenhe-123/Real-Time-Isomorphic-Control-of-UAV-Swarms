@@ -50,6 +50,7 @@ from functions.swarm_motion.left_hand_swarm_pose import (
     make_cam_translation_matrix,
     palm_basis_pair_indices,
 )
+from functions.swarm_motion.left_pose_tuning import LeftPoseTuning
 from functions.swarm_motion.prearm import complete_prearm_takeoff, sim_chessboard_ground_layout
 from functions.swarm_motion.spacing_guard import closest_pair, enforce_min_separation
 from functions.swarm_motion.swarm_workspace_box import SwarmWorkspaceBox
@@ -105,6 +106,7 @@ class OnlineBoot:
     left_dual_webcam_rot_eff: bool
     left_rot_webcam_vis_thresh: float
     left_unwind_s: float
+    left_pose_tuning: LeftPoseTuning
     start_time: float
     render_enabled: bool = True
     orbbec_flip_depth_warned: bool = False
@@ -143,54 +145,8 @@ def boot_online_control(
     morph_default_z_clip: float = 1.10,
 ) -> OnlineBoot:
     """Open Orbbec + sim or real swarm, run prearm, wire axswarm and hotkeys."""
-    point_count = int(cfg.point_count)
-    fps = int(cfg.fps)
-    min_separation_m = float(cfg.min_separation_m)
+    n_drones = int(cfg.point_count)
     scale = cfg.scale
-    pipe = cfg.pipe
-    drone_model = str(cfg.drone_model)
-    prearm_hover_z = float(cfg.prearm_hover_z)
-    prearm_takeoff_z = float(cfg.prearm_takeoff_z)
-    planner = str(cfg.planner)
-    axswarm_settings = cfg.axswarm_settings
-    axswarm_project_root = cfg.axswarm_project_root
-    axswarm_max_iters = cfg.axswarm_max_iters
-    axswarm_max_solve_ms = float(cfg.axswarm_max_solve_ms)
-    axswarm_max_deviation_m = float(cfg.axswarm_max_deviation_m)
-    axswarm_pos_weight = cfg.axswarm_pos_weight
-    max_sim_substeps = int(cfg.max_sim_substeps)
-    plot_every_n = int(cfg.plot_every_n)
-    debug_report_panels = cfg.report_panels
-    left_swarm_pose = bool(cfg.left_swarm_pose)
-    left_unwind_s = float(cfg.left_unwind_s)
-    left_rot_direct_follow = bool(cfg.left_rot_direct_follow)
-    left_swarm_depth_frame_motion = bool(cfg.left_swarm_depth_frame_motion)
-    left_world_frame = str(cfg.left_world_frame)
-    left_cam_preset = str(cfg.left_cam_preset)
-    left_cam_y_to_world_z = float(cfg.left_cam_y_to_world_z)
-    left_palm_basis = str(cfg.left_palm_basis)
-    left_plane_rot_scale_mul = float(cfg.left_plane_rot_scale_mul)
-    left_rot_pivot = str(cfg.left_rot_pivot)
-    left_dual_webcam_rot = bool(cfg.left_dual_webcam_rot)
-    left_rot_webcam_vis_thresh = float(cfg.left_rot_webcam_vis_thresh)
-    left_rot_scale = float(cfg.left_rot_scale)
-    left_rot_gain = float(cfg.left_rot_gain)
-    left_rot_gate_rad = float(cfg.left_rot_gate_rad)
-    left_rot_trans_tau_mm = float(cfg.left_rot_trans_tau_mm)
-    left_rot_world_z_scale = float(cfg.left_rot_world_z_scale)
-    orbbec_flip_horizontal = bool(cfg.orbbec_flip_horizontal)
-    orbbec_use_transformed_depth = bool(cfg.orbbec_use_transformed_depth)
-    orbbec_hand_swap = str(cfg.orbbec_hand_swap)
-    swarm_workspace_box_m = float(cfg.swarm_workspace_box_m)
-    swarm_workspace_wall_margin_m = float(cfg.swarm_workspace_wall_margin_m)
-    swarm_workspace_clear_margin_m = float(cfg.swarm_workspace_clear_margin_m)
-    swarm_workspace_mode = str(cfg.swarm_workspace_mode)
-    center_trace = bool(cfg.center_trace)
-    center_trace_every = int(cfg.center_trace_every)
-    install_hotkey_deps = bool(cfg.install_hotkey_deps)
-    global_hotkeys = bool(cfg.global_hotkeys)
-    drones_config: Path | str | None = cfg.drones_config
-    real_lighthouse = cfg.real_lighthouse
     orbbec_fps = FPS.FPS_15 if _ONLINE_ORBBEC_FPS == "15" else FPS.FPS_30
     k4a = PyK4A(
         Config(
@@ -203,18 +159,18 @@ def boot_online_control(
     k4a.start()
     calib = k4a.calibration
 
-    n_drones = int(point_count)
+    n_drones = int(cfg.point_count)
     real_executor: RealSwarmExecutor | None = None
     sim: Sim | None = None
     motion_freq_hz = 100.0
 
-    if drones_config is not None:
+    if cfg.drones_config is not None:
         from functions.real_swarm.executor import RealSwarmExecutor
 
         real_executor = RealSwarmExecutor(
-            config_path=Path(drones_config),
+            config_path=Path(cfg.drones_config),
             morph_point_count=n_drones,
-            lighthouse=real_lighthouse,
+            lighthouse=cfg.real_lighthouse,
         )
         motion_freq_hz = float(real_executor.ctrl_freq)
         print("Real-swarm mode: Crazyflow MuJoCo disabled; cmd_target → Crazyflie setpoints.")
@@ -223,7 +179,7 @@ def boot_online_control(
             n_worlds=1,
             n_drones=n_drones,
             control=Control.state,
-            drone_model=str(drone_model),
+            drone_model=str(cfg.drone_model),
         )
         sim.reset()
         motion_freq_hz = float(sim.freq)
@@ -231,13 +187,14 @@ def boot_online_control(
     morph_default = np.asarray(live_target.get(), dtype=np.float32)
     morph_default[:, 2] = np.maximum(morph_default[:, 2], morph_default_z_clip)
     morph_z0 = float(np.mean(morph_default[:, 2]))
-    prearm_hover_z = float(np.clip(prearm_hover_z, float(scale.z_min) + 0.05, float(scale.z_max) - 0.05))
+    prearm_hover_z = float(np.clip(cfg.prearm_hover_z, float(scale.z_min) + 0.05, float(scale.z_max) - 0.05))
+    prearm_takeoff_z = float(cfg.prearm_takeoff_z)
     if abs(prearm_takeoff_z - _DEFAULT_PREARM_TAKEOFF_Z) < 1e-6:
         prearm_takeoff_z = morph_z0
     prearm_takeoff_z = float(np.clip(prearm_takeoff_z, float(scale.z_min) + 0.02, prearm_hover_z))
     prearm_hold = enforce_min_separation(
         lift_morph_to_hover_z(morph_default, prearm_hover_z),
-        float(min_separation_m),
+        float(cfg.min_separation_m),
         iters=12,
     )
     d_hold, pi_h, pj_h = closest_pair(prearm_hold)
@@ -246,14 +203,14 @@ def boot_online_control(
         f"spacing=({pi_h},{pj_h}) {d_hold:.2f}m"
     )
 
-    center_trace_every = max(1, int(center_trace_every))
+    center_trace_every = max(1, int(cfg.center_trace_every))
     center_trace_prev: dict[str, float | None] = {
         "hand_z": None,
         "raw_z": None,
         "safe_z": None,
         "smooth_z": None,
     }
-    if bool(center_trace):
+    if cfg.center_trace:
         print(
             "Center trace: hand (cam mm), hand_rel_m, raw/safe/smooth target centroids, sim; "
             f"flags depth-jump & target-jump every {center_trace_every} frame(s)."
@@ -261,32 +218,32 @@ def boot_online_control(
 
     zeros = jnp.zeros((n_drones, 3))
 
-    planner_key = str(planner).strip().lower()
+    planner_key = str(cfg.planner).strip().lower()
     axswarm_rt: AxswarmSafetyFilter | None = None
     if planner_key == "axswarm":
         axswarm_rt = AxswarmSafetyFilter.create(
             n_drones,
-            min_separation_m=float(min_separation_m),
+            min_separation_m=float(cfg.min_separation_m),
             xy_radius_m=float(scale.xy_radius),
             z_min_m=float(scale.z_min),
             z_max_m=float(scale.z_max),
-            settings_path=Path(axswarm_settings) if axswarm_settings else None,
-            project_root=Path(axswarm_project_root) if axswarm_project_root else None,
-            max_iters=axswarm_max_iters,
-            pos_weight=axswarm_pos_weight,
-            max_deviation_m=float(axswarm_max_deviation_m),
-            max_solve_ms=float(axswarm_max_solve_ms),
-            outer_fps=int(fps),
+            settings_path=Path(cfg.axswarm_settings) if cfg.axswarm_settings else None,
+            project_root=Path(cfg.axswarm_project_root) if cfg.axswarm_project_root else None,
+            max_iters=cfg.axswarm_max_iters,
+            pos_weight=cfg.axswarm_pos_weight,
+            max_deviation_m=float(cfg.axswarm_max_deviation_m),
+            max_solve_ms=float(cfg.axswarm_max_solve_ms),
+            outer_fps=int(cfg.fps),
         )
         synced_step = per_substep_target_cap_m(
             vel_max_m_s=float(axswarm_rt.settings.vel_max),
             sim_freq_hz=int(motion_freq_hz),
-            outer_fps=int(fps),
-            max_substeps=int(max_sim_substeps),
+            outer_fps=int(cfg.fps),
+            max_substeps=int(cfg.max_sim_substeps),
         )
         print(
             f"Motion cap from axswarm yaml: vel_max={float(axswarm_rt.settings.vel_max):.2f} m/s "
-            f"→ ~{synced_step:.4f} m/substep (ctrl.freq={int(motion_freq_hz)}, fps={int(fps)})."
+            f"→ ~{synced_step:.4f} m/substep (ctrl.freq={int(motion_freq_hz)}, fps={int(cfg.fps)})."
         )
         _ax_warm = float(axswarm_rt.arm_warmup_s)
         _ax_after = (
@@ -304,12 +261,12 @@ def boot_online_control(
     prearm_hover_layout = complete_prearm_takeoff(
         morph_default,
         hover_z=prearm_hover_z,
-        min_separation_m=float(min_separation_m),
+        min_separation_m=float(cfg.min_separation_m),
     )
     z_ground = float(_DEFAULT_GROUND_Z)
     if real_executor is not None:
         ground_layout = real_executor.get_sim_ground_layout(
-            n_drones, min_separation_m=float(min_separation_m)
+            n_drones, min_separation_m=float(cfg.min_separation_m)
         )
         z_ground = float(np.median(ground_layout[: real_executor.n_physical, 2]))
         print(
@@ -319,7 +276,7 @@ def boot_online_control(
     else:
         ground_layout = sim_chessboard_ground_layout(
             n_drones,
-            min_separation_m=float(min_separation_m),
+            min_separation_m=float(cfg.min_separation_m),
             z_ground=z_ground,
             xy_half_extent_m=float(scale.xy_radius) * 0.85,
         )
@@ -368,19 +325,12 @@ def boot_online_control(
             "SPACE to arm gestures."
         )
 
-    left_cam_preset = str(left_cam_preset).strip().lower()
-    left_cam_y_to_world_z = float(np.clip(left_cam_y_to_world_z, 0.0, 1.0))
-    left_palm_basis = str(left_palm_basis).strip().lower()
+    left_cam_preset = str(cfg.left_cam_preset).strip().lower()
+    left_cam_y_to_world_z = float(np.clip(cfg.left_cam_y_to_world_z, 0.0, 1.0))
+    left_palm_basis = str(cfg.left_palm_basis).strip().lower()
     palm_basis_pair_indices(left_palm_basis)
-    if bool(left_rot_direct_follow):
-        left_rot_world_z_scale = 1.0
-        left_rot_trans_tau_mm = 0.0
-        left_rot_gate_rad = 0.02
-        left_plane_rot_scale_mul = 1.0
-        left_rot_scale = float(max(left_rot_scale, 0.72))
-        left_rot_gain = float(max(left_rot_gain, 0.92))
-    left_cam_motion = bool(left_swarm_depth_frame_motion) and calib is not None
-    left_world_frame_key = str(left_world_frame).strip().lower()
+    left_cam_motion = bool(cfg.left_swarm_depth_frame_motion) and calib is not None
+    left_world_frame_key = str(cfg.left_world_frame).strip().lower()
     left_use_camera_at_arm = left_world_frame_key == "camera_at_arm" and left_cam_motion
     left_M_rot = left_cam_preset_rotation(left_cam_preset) if left_cam_motion else None
     left_M_trans = (
@@ -389,14 +339,14 @@ def boot_online_control(
         else None
     )
     orbbec_swap_mp_hands = orbbec_resolve_swap_mp_hands(
-        hand_swap=orbbec_hand_swap,
-        flip_horizontal=bool(orbbec_flip_horizontal),
+        hand_swap=cfg.orbbec_hand_swap,
+        flip_horizontal=bool(cfg.orbbec_flip_horizontal),
         use_orbbec=True,
     )
 
-    panels = debug_report_panels or ReportDebugPanels()
+    panels = cfg.report_panels or ReportDebugPanels()
     report_debug_figs: ReportDebugFigures | None = None
-    if panels.any_enabled() and int(plot_every_n) > 0:
+    if panels.any_enabled() and int(cfg.plot_every_n) > 0:
         report_debug_figs = init_report_debug_figures(panels)
         plot_enabled = True
         fig = report_debug_figs.fig_morph
@@ -404,17 +354,17 @@ def boot_online_control(
         ax_hand = None
         print(
             f"Debug report panels: {', '.join(panels.enabled_labels()) or 'none'} "
-            f"(plot-every={plot_every_n}; use one panel at a time for screenshots)."
+            f"(plot-every={cfg.plot_every_n}; use one panel at a time for screenshots)."
         )
     else:
-        plot_enabled, fig, ax_hand, ax_topo = init_3d_plot(plot_every_n, "Online Control Orbbec + 3D")
+        plot_enabled, fig, ax_hand, ax_topo = init_3d_plot(cfg.plot_every_n, "Online Control Orbbec + 3D")
     print("Orbbec input started. Left hand = MODE, right hand = OPEN. Press q/Enter to stop.")
-    if bool(orbbec_flip_horizontal):
+    if cfg.orbbec_flip_horizontal:
         print(
             "Orbbec horizontal flip is ON (ego view vs mirror). "
             "Use --no-orbbec-flip-horizontal if depth/3D looks wrong."
         )
-    if bool(orbbec_use_transformed_depth):
+    if cfg.orbbec_use_transformed_depth:
         print(
             "Orbbec transformed_depth is ON (K4A alignment). If the process aborts, use "
             "--no-orbbec-use-transformed-depth (default off for Femto Bolt)."
@@ -422,7 +372,7 @@ def boot_online_control(
     if orbbec_swap_mp_hands:
         print(
             "Orbbec: swapping MediaPipe left/right for mode vs open hand "
-            f"(policy {str(orbbec_hand_swap).strip().lower()!r}; auto follows horizontal flip). "
+            f"(policy {str(cfg.orbbec_hand_swap).strip().lower()!r}; auto follows horizontal flip). "
             "Override: --orbbec-hand-swap off | on | auto."
         )
     if left_cam_motion:
@@ -438,25 +388,28 @@ def boot_online_control(
         )
     print("Ground hold until 1; 1 toggles ground ↔ hover; SPACE arms/disarms gesture control.")
 
-    left_pose_state = LeftSwarmPoseState(enabled=bool(left_swarm_pose))
+    left_pose_state = LeftSwarmPoseState(enabled=bool(cfg.left_swarm_pose))
     swarm_workspace = SwarmWorkspaceBox(
-        size_m=float(swarm_workspace_box_m),
-        wall_margin_m=float(swarm_workspace_wall_margin_m),
-        clear_margin_m=float(swarm_workspace_clear_margin_m),
-        mode=str(swarm_workspace_mode),
+        size_m=float(cfg.swarm_workspace_box_m),
+        wall_margin_m=float(cfg.swarm_workspace_wall_margin_m),
+        clear_margin_m=float(cfg.swarm_workspace_clear_margin_m),
+        mode=str(cfg.swarm_workspace_mode),
     )
-    left_rot_pivot_key = str(left_rot_pivot).strip().lower()
+    left_rot_pivot_key = str(cfg.left_rot_pivot).strip().lower()
     if left_rot_pivot_key not in ("per_drone", "centroid"):
         left_rot_pivot_key = "per_drone"
-    left_dual_webcam_rot_eff = bool(left_dual_webcam_rot)
-    left_rot_webcam_vis_thresh = float(np.clip(left_rot_webcam_vis_thresh, 0.05, 0.99))
+    left_dual_webcam_rot_eff = bool(cfg.left_dual_webcam_rot)
+    left_rot_webcam_vis_thresh = float(np.clip(cfg.left_rot_webcam_vis_thresh, 0.05, 0.99))
+    left_pose_tuning = LeftPoseTuning.from_config(
+        cfg, direct_follow=bool(cfg.left_rot_direct_follow)
+    )
     if left_pose_state.enabled:
         print(
             "Left-hand whole formation: press 0 to START (zero pose = current hand; "
             "current palm center + pose are tracked relative to press-0), "
-            f"0 again to restore morph frame (~{float(left_unwind_s):.1f}s)."
+            f"0 again to restore morph frame (~{float(cfg.left_unwind_s):.1f}s)."
         )
-        if bool(left_rot_direct_follow):
+        if bool(cfg.left_rot_direct_follow):
             print(
                 "Left rotation direct-follow: palm-local axes drive swarm axes "
                 "(palm normal twist -> world Z yaw); planar/tau damping disabled."
@@ -485,11 +438,11 @@ def boot_online_control(
     gesture_control_enabled = False
     _hk_probe = (
         try_install_hotkey_dependencies()
-        if bool(install_hotkey_deps)
+        if cfg.install_hotkey_deps
         else probe_global_hotkey_backends()
     )
     key_queue = OnlineKeyQueue()
-    if bool(global_hotkeys):
+    if cfg.global_hotkeys:
         key_queue.start(use_global=True, use_stdin=True)
         _hk = key_queue.mode
         if "pynput" not in _hk and "keyboard" not in _hk:
@@ -520,8 +473,8 @@ def boot_online_control(
         lp_shape=LpShapePipelineState(),
         live_target=live_target,
         scale=scale,
-        pipe=pipe,
-        use_depth_fusion=bool(pipe.depth_fusion_enabled),
+        pipe=cfg.pipe,
+        use_depth_fusion=bool(cfg.pipe.depth_fusion_enabled),
         cmd_target=boot_cmd.copy(),
         prev_cmd_target=boot_cmd.copy(),
         raw_target_filt=boot_cmd.copy(),
@@ -552,7 +505,8 @@ def boot_online_control(
         left_rot_pivot_key=left_rot_pivot_key,
         left_dual_webcam_rot_eff=left_dual_webcam_rot_eff,
         left_rot_webcam_vis_thresh=left_rot_webcam_vis_thresh,
-        left_unwind_s=float(left_unwind_s),
+        left_unwind_s=float(cfg.left_unwind_s),
+        left_pose_tuning=left_pose_tuning,
         start_time=time.monotonic(),
         extras={
             "report_debug_figs": report_debug_figs,
