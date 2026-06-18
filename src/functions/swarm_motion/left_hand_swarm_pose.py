@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from functions.swarm_motion.left_pose_tuning import LeftPoseSensorInput, LeftPoseTuning
+if TYPE_CHECKING:
+    from functions.swarm_motion.left_pose_tuning import LeftPoseSensorInput, LeftPoseTuning
 from functions.mode_switch.hand_constants import (
     HAND_SPAN_LANDMARK_IDS,
     INDEX_MCP_ID,
