@@ -30,24 +30,12 @@ class RealSwarmExecutor:
         *,
         config_path: Path,
         morph_point_count: int | None = None,
-        lighthouse: bool | None = None,
     ):
         drones, mapping, opts = load_drones_config(config_path)
         n_physical = len(drones)
         if morph_point_count is not None and int(morph_point_count) < n_physical:
             raise ValueError(
                 f"morph point-count ({morph_point_count}) must be >= physical drones ({n_physical})"
-            )
-
-        if lighthouse is not None:
-            opts = RealSwarmOptions(
-                lighthouse=bool(lighthouse),
-                ctrl_freq=opts.ctrl_freq,
-                update_freq=opts.update_freq,
-                col_freq=opts.col_freq,
-                arm_goto_s=opts.arm_goto_s,
-                land_on_exit=opts.land_on_exit,
-                max_pos_error_m=opts.max_pos_error_m,
             )
 
         self.mapping = mapping
@@ -68,8 +56,7 @@ class RealSwarmExecutor:
         )
         print(
             f"Connecting {n_physical} Crazyflie(s) ({morph_note}; "
-            f"physical indices 0..{n_physical - 1}) "
-            f"lighthouse={'ON' if opts.lighthouse else 'mocap/ROS'} ..."
+            f"physical indices 0..{n_physical - 1}) mocap/ROS ..."
         )
         print(
             f"  Sim (0,0,0) → room {np.round(mapping.origin, 3)} m "
@@ -80,7 +67,7 @@ class RealSwarmExecutor:
             ctrl_freq=opts.ctrl_freq,
             update_freq=opts.update_freq,
             col_freq=opts.col_freq,
-            lighthouse=opts.lighthouse,
+            lighthouse=False,
         )
         missing = self.swarm.missing_uris()
         if missing:

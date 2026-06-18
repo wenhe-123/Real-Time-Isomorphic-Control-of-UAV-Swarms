@@ -3,14 +3,16 @@
 Run from ``iso_swarm`` (pixi)::
 
     cd /path/to/iso_swarm
-    pixi shell
-    cp config/drones.example.toml config/drones.toml   # edit URIs / homes
-    python src/online_control_real_dual.py --drones-config config/drones.toml
+    pixi install -e deploy
+    pixi run -e deploy setup
+    cp config/drones.example.toml config/drones.toml
+    pixi run -e deploy real-dual -- --drones-config config/drones.toml
 
 Uses the same gesture / axswarm / left-hand pose pipeline as ``online_control_dual.py``,
 but streams ``cmd_target`` to physical drones via cflib2 instead of Crazyflow MuJoCo.
 
-Requires: ``cflib2`` (+ ``drone_estimators`` when ``lighthouse=false`` in drones.toml).
+Requires: ``cflib2``, ``drone-estimators``, and ROS 2 mocap (``pixi install -e deploy``).
+Start mocap in a separate terminal: ``pixi run -e deploy mocap``.
 """
 
 from __future__ import annotations
@@ -42,6 +44,8 @@ def inject_real_dual_default_argv(argv: list[str]) -> list[str]:
 
 
 def _require_drones_config(argv: list[str]) -> list[str]:
+    if any(a in ("-h", "--help") for a in argv):
+        return list(argv)
     out = list(argv)
     if not _argv_has_flag(out, "--drones-config"):
         default = Path("config/drones.toml")
@@ -70,9 +74,9 @@ def main() -> None:
     except ImportError as exc:
         print(
             "Real-swarm mode needs cflib2 (Linux only).\n"
-            "  pixi install\n"
+            "  pixi install -e deploy\n"
             "  pixi run setup          # once: Orbbec SDK + pyk4a\n"
-            "  pixi run real-dual -- --drones-config config/drones.toml\n"
+            "  pixi run -e deploy real-dual -- --drones-config config/drones.toml\n"
             f"({exc})",
             file=sys.stderr,
         )

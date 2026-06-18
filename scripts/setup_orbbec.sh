@@ -59,6 +59,4 @@ fi
 ln -sfn "$(basename "${EXTRACTED}")" current
 rm -f "${ARCHIVE}"
 echo "Orbbec K4A Wrapper ready: ${DEST}/current"
-
-bash "${ROOT}/scripts/install_pyk4a.sh"
 echo "Re-enter pixi shell so PATH/LD_LIBRARY_PATH update."

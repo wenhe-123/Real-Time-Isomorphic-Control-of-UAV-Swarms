@@ -28,11 +28,35 @@ if TYPE_CHECKING:
     from crazyflow.sim import Sim
 
 
+def default_axswarm_settings_path() -> Path:
+    """Bundled ``config/axswarm_settings.yaml`` (pip ``.[sim]``; no submodule required)."""
+    return Path(__file__).resolve().parents[3] / "config" / "axswarm_settings.yaml"
+
+
 def default_axswarm_project_root() -> Path:
-    """``submodules/axswarm`` (see pyproject.toml)."""
+    """Legacy submodule checkout path (optional dev override)."""
     here = Path(__file__).resolve()
     iso_swarm = here.parents[3]
     return iso_swarm / "submodules" / "axswarm"
+
+
+def resolve_axswarm_settings_path(
+    settings_path: Path | None,
+    project_root: Path | None,
+) -> Path:
+    if settings_path is not None:
+        return Path(settings_path)
+    root = ensure_axswarm_import(project_root)
+    legacy = root / "params" / "settings.yaml"
+    if legacy.is_file():
+        return legacy
+    bundled = default_axswarm_settings_path()
+    if bundled.is_file():
+        return bundled
+    raise FileNotFoundError(
+        "axswarm settings not found. Pass --axswarm-settings PATH or install sim deps: "
+        "pip install -e \".[sim]\""
+    )
 
 
 def _axswarm_root_candidates() -> list[Path]:
@@ -154,10 +178,8 @@ def load_axswarm_motion_limits(
     min_separation_m: float | None = None,
 ) -> AxswarmMotionLimits:
     """Read yaml limits and derive online Crazyflow caps (dual / integrated defaults)."""
-    root = ensure_axswarm_import(project_root)
-    if settings_path is None:
-        settings_path = root / "params" / "settings.yaml"
-    settings_dict, _ = load_axswarm_yaml(Path(settings_path))
+    settings_path = resolve_axswarm_settings_path(settings_path, project_root)
+    settings_dict, _ = load_axswarm_yaml(settings_path)
     vel = float(settings_dict.get("vel_max", 1.73))
     acc = float(settings_dict.get("acc_max", 1.0))
     freq = float(settings_dict.get("freq", 8.0))
@@ -258,12 +280,11 @@ class AxswarmSafetyFilter:
             max_solve_ms = max(float(max_solve_ms), 220.0)
         if n_drones < 8:
             raise ValueError(f"axswarm safety filter requires n_drones >= 8, got {n_drones}")
-        root = ensure_axswarm_import(project_root)
+        ensure_axswarm_import(project_root)
         from axswarm import SolverData, SolverSettings, solve  # noqa: WPS433
 
-        if settings_path is None:
-            settings_path = root / "params" / "settings.yaml"
-        settings_dict, dynamics = load_axswarm_yaml(Path(settings_path))
+        settings_path = resolve_axswarm_settings_path(settings_path, project_root)
+        settings_dict, dynamics = load_axswarm_yaml(settings_path)
         settings_dict = adapt_settings_dict_for_online(
             settings_dict,
             n_drones=n_drones,

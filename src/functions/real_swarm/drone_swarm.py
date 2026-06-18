@@ -67,11 +67,17 @@ class DroneSwarm:
         self.context = LinkContext()
         self.toc_cache = FileTocCache("./cache")
         self.ros_connector: ROSConnector | None = None
+        self._rclpy_init_by_us = False
         self._loop = asyncio.new_event_loop()
         self._closed = False
 
         if not lighthouse:
+            import rclpy
             from drone_estimators.ros_nodes.ros2_connector import ROSConnector
+
+            if not rclpy.ok():
+                rclpy.init()
+                self._rclpy_init_by_us = True
 
             self.ros_connector = ROSConnector(
                 tf_names=[f"cf{int(d['uri'][-2:], 16)}" for d in self.drones.values()], timeout=10.0
@@ -91,6 +97,11 @@ class DroneSwarm:
             self._loop.close()
             if self.ros_connector is not None:
                 self.ros_connector.close()
+            if getattr(self, "_rclpy_init_by_us", False):
+                import rclpy
+
+                if rclpy.ok():
+                    rclpy.shutdown()
             raise
         logger.info("init done")
 
@@ -330,6 +341,11 @@ class DroneSwarm:
             self._loop.close()
             if self.ros_connector is not None:
                 self.ros_connector.close()
+            if self._rclpy_init_by_us:
+                import rclpy
+
+                if rclpy.ok():
+                    rclpy.shutdown()
 
     def _run(self, coroutine: Awaitable[Any]) -> Any:
         """Run a cflib2 coroutine on the swarm event loop."""

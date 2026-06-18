@@ -2,16 +2,15 @@
 # Copy to ``config/drones.toml`` and edit URIs / home positions.
 
 [swarm]
-lighthouse = true
 ctrl_freq = 100.0
 arm_goto_s = 5.0
 land_on_exit = true
 max_pos_error_m = 0.35
 
 [frame]
-# Gesture/sim coordinates (same frame as Crazyflow) → Lighthouse room frame (meters).
+# Gesture/sim coordinates (same frame as Crazyflow) → mocap room frame (meters).
 #   real_xyz = origin + scale * Rz(yaw_deg) * sim_xyz
-# Sim (0,0,0) maps to ``origin`` in the room. Measure homes in cfclient / Lighthouse viewer.
+# Sim (0,0,0) maps to ``origin`` in the room. Measure homes from your mocap / ROS TF tree.
 origin = [0.0, 0.0, 1.0]
 scale = 1.0
 yaw_deg = 0.0

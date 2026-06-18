@@ -28,15 +28,16 @@ camera input
 | **Left** | Formation mode (M1–M5), global swarm translation and rotation |
 | **Right** | Continuous open–close deformation |
 
-Simulation and visualization use [Crazyflow](https://github.com/utiasDSL/crazyflow). Optional collision-aware filtering uses [axswarm](https://github.com/learnsyslab/axswarm/tree/amswarm) (AMSwarm, JAX).
+Simulation and visualization use [Crazyflow](https://github.com/utiasDSL/crazyflow). Collision-aware filtering uses [axswarm](https://github.com/learnsyslab/axswarm/tree/amswarm) (AMSwarm, JAX).
 
 ---
 
 ## Requirements
 
-- Linux x86_64 (real Crazyflies) or Linux / macOS arm64 (simulation)
-- [pixi](https://pixi.sh)
-- Orbbec depth camera (Femto Bolt / similar)
+- **Linux x86_64** — Orbbec camera, real Crazyflies, ROS 2 mocap
+- **Linux / macOS arm64** — simulation only (no real-swarm / deploy env)
+- [pixi](https://pixi.sh) (recommended) or Python 3.12 + pip
+- Orbbec depth camera (Femto Bolt / similar) on Linux
 
 GPU is optional (JAX runs on CPU by default).
 
@@ -44,17 +45,19 @@ GPU is optional (JAX runs on CPU by default).
 
 ## Installation
 
+**Simulation (Linux, Orbbec camera):**
+
 ```bash
-git clone --recurse-submodules <repo-url> iso_swarm
-cd iso_swarm
-pixi install
-pixi run setup    # once: download Orbbec K4A Wrapper + build pyk4a
+pixi install && pixi run setup
 ```
 
-Submodules: **crazyflow**, **drone-models**, **drone-controllers**, **axswarm** (`amswarm`).  
-On Linux, `pixi install` also pulls **cflib2** (real Crazyflie control). macOS is simulation-only.
+**Real Crazyflies (+ ROS 2 mocap):**
 
-`pixi shell` sets `PYTHONPATH=src` and wires `ORBBEC_ROOT` when `third_party/orbbec/current` exists.
+```bash
+pixi install -e deploy && pixi run -e deploy setup
+```
+
+`setup` downloads the Orbbec SDK and builds `pyk4a` for the active pixi environment.
 
 ---
 
@@ -62,30 +65,38 @@ On Linux, `pixi install` also pulls **cflib2** (real Crazyflie control). macOS i
 
 From the repo root (so `hand_landmarker.task` resolves):
 
+### Simulation (MuJoCo + Orbbec)
+
 ```bash
-pixi shell
-
-# Simulation (MuJoCo + Orbbec)
-python src/online_control_dual.py
-python src/online_control_dual.py --no-left-dual-webcam-rot   # Orbbec only
-
-# Real Crazyflies (Linux, Lighthouse — no ROS)
-cp config/drones.example.toml config/drones.toml   # edit URIs + home
-pixi run real-dual -- --drones-config config/drones.toml
+pixi run online-dual
 ```
 
-Morph uses **8 virtual formation points** by default; physical drone count is only `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow points 0 and 1).
+### Real Crazyflies (Linux, motion capture via ROS 2)
+
+```bash
+# Terminal 1
+pixi run -e deploy mocap
+
+# Terminal 2
+pixi run -e deploy real-dual -- --drones-config config/2drones.toml
+```
+
+Edit `config/2drones.toml` (or copy from `config/drones.example.toml`) for your drone URIs and room frame.
+
+Morph uses **8 virtual formation points** by default (`online_control_real_dual.py`); physical drone count is the number of `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow indices 0 and 1).
 
 **Startup layout:** simulation spawns on a ground chessboard; real drones use `home` in `drones.toml`. Axswarm safety filtering is active from launch.
 
+### Controls
+
 | Key | Action |
 |-----|--------|
-| `1` | Toggle **ground ↔ hover** (TOML / chessboard ground → pre–Space hover layout; axswarm-filtered). Press again to descend. Blocked while gesture control is armed (`Space`). |
-| `Space` | **Arm / disarm** gesture control (hand-driven formation). Disarm first, then `1` to descend. |
+| `1` | Toggle **ground ↔ hover** (axswarm-filtered). Blocked while gesture control is armed (`Space`). |
+| `Space` | **Arm / disarm** gesture control (hand-driven formation). |
 | `0` | Arm / disarm left-hand whole-formation pose |
 | `q` or `Enter` | Quit (real swarm: lands at TOML `home` when `land_on_exit = true`) |
 
-**Typical shutdown (real or sim):** `Space` (disarm gestures) → `1` (descend to ground if at hover) → `q`.
+**Typical shutdown:** `Space` → `1` (descend if at hover) → `q`.
 
 Legacy scripts and unit tests are on the **`backup-archive`** git branch.
 
@@ -100,17 +111,21 @@ src/
   online_control.py           # shared main loop
   functions/
     display_sim/              # Orbbec hand pipeline, plots
-    real_swarm/               # Crazyflie bridge (cflib2)
-submodules/
-  crazyflow/  drone-models/  drone-controllers/  axswarm/
-config/drones.toml            # real-swarm URIs, home, frame mapping
+    real_swarm/               # Crazyflie bridge (cflib2 + mocap)
+config/
+  drones.example.toml         # template
+  2drones.toml / 5drones.toml # lab presets (swarmGPT-style URIs)
+  axswarm_settings.yaml       # axswarm MPC / collision defaults
+scripts/
+  setup_orbbec.sh             # download Orbbec K4A Wrapper
+  setup_mocap.sh              # clone/build motion_capture_tracking (deploy)
 ```
 
 ---
 
 ## Acknowledgements
 
-[Crazyflow](https://github.com/utiasDSL/crazyflow) · [MediaPipe](https://developers.google.com/mediapipe) · [Orbbec K4A Wrapper](https://github.com/orbbec/OrbbecSDK-K4A-Wrapper) · [axswarm / AMSwarm](https://github.com/learnsyslab/axswarm/tree/amswarm)
+[Crazyflow](https://github.com/utiasDSL/crazyflow) · [swarmGPT](https://github.com/utiasDSL/swarmGPT) · [MediaPipe](https://developers.google.com/mediapipe) · [Orbbec K4A Wrapper](https://github.com/orbbec/OrbbecSDK-K4A-Wrapper) · [axswarm / AMSwarm](https://github.com/learnsyslab/axswarm/tree/amswarm)
 
 ## License
 

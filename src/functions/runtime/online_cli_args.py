@@ -498,12 +498,6 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         default=None,
         help="TOML file listing Crazyflie URIs (enables real-swarm mode; disables MuJoCo).",
     )
-    parser.add_argument(
-        "--real-lighthouse",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Use Lighthouse deck localization (default: from drones.toml swarm.lighthouse).",
-    )
 
     return parser
 

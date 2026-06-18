@@ -31,6 +31,7 @@ rgbd_output/
 Log/
 MUJOCO_LOG.TXT
 data/*.npz
+ros_ws/
 third_party/orbbec/
 *.log
 *.png

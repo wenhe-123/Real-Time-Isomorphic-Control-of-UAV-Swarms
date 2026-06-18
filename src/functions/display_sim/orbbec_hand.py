@@ -11,7 +11,14 @@ from typing import Optional, Tuple
 import cv2
 import mediapipe as mp
 import numpy as np
-from pyk4a import Config, FPS, PyK4A
+
+try:
+    from pyk4a import Config, FPS, PyK4A
+except ImportError as exc:
+    raise ImportError(
+        "pyk4a is missing (Linux: reinstall with pixi install / pip install -e '.'). "
+        "Also run once: pixi run setup-orbbec  (Orbbec native libs under third_party/orbbec/)."
+    ) from exc
 
 from functions.display_sim.depth_fusion_utils import (
     ema_point_triplet as _shared_ema_point_triplet,

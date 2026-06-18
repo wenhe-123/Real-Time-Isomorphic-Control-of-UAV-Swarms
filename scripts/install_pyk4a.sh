@@ -21,5 +21,18 @@ export CPATH="${ORBBEC_ROOT}/include${CPATH:+:${CPATH}}"
 export LIBRARY_PATH="${ORBBEC_ROOT}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"
 export CFLAGS="-I${ORBBEC_ROOT}/include ${CFLAGS:-}"
 export LDFLAGS="-L${ORBBEC_ROOT}/lib ${LDFLAGS:-}"
-echo "Installing pyk4a (ORBBEC_ROOT=${ORBBEC_ROOT}) ..."
-pip install pyk4a
+
+_ENV_NAME="${1:-${PIXI_ENVIRONMENT_NAME:-default}}"
+PYTHON="${PIXI_ENVIRONMENT:-${ROOT}/.pixi/envs/${_ENV_NAME}}"
+PYTHON="${PYTHON%/}/bin/python"
+if [[ ! -x "${PYTHON}" ]]; then
+  PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+fi
+if [[ -z "${PYTHON}" || ! -x "${PYTHON}" ]]; then
+  echo "Pixi python not found at ${ROOT}/.pixi/envs/${_ENV_NAME}/bin/python" >&2
+  echo "Run: pixi install   then: pixi run setup" >&2
+  exit 1
+fi
+
+echo "Installing pyk4a into $("${PYTHON}" -c 'import sys; print(sys.prefix)') (ORBBEC_ROOT=${ORBBEC_ROOT}) ..."
+"${PYTHON}" -m pip install "pyk4a>=1.5.0"

@@ -23,6 +23,9 @@ _PROFILE_SIM_RENDER = os.environ.get("ISO_SWARM_PROFILE_SIM_RENDER", "0").strip(
 )
 _PROFILE_SIM_RENDER_EVERY = max(1, int(os.environ.get("ISO_SWARM_PROFILE_SIM_RENDER_EVERY", "200")))
 
+# Crazyflow 0.1+ uses free joints (7 qpos per drone), not mocap bodies.
+_QPOS_ADR_CACHE: dict[int, np.ndarray] = {}
+
 
 @dataclass
 class SimRenderProfiler:
@@ -97,6 +100,21 @@ if _render_prof.enabled:
     )
 
 
+def _drone_qpos_adrs(sim: Sim) -> np.ndarray:
+    """Start index in ``mj_data.qpos`` for each ``drone:i`` free joint."""
+    key = (id(sim.mj_model), sim.n_drones)
+    cached = _QPOS_ADR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    adrs = np.empty(sim.n_drones, dtype=np.int32)
+    for i in range(sim.n_drones):
+        body_id = sim.mj_model.body(f"drone:{i}").id
+        jnt_id = int(sim.mj_model.body_jntadr[body_id])
+        adrs[i] = int(sim.mj_model.jnt_qposadr[jnt_id])
+    _QPOS_ADR_CACHE[key] = adrs
+    return adrs
+
+
 def _ensure_viewer(
     sim: Sim,
     *,
@@ -133,15 +151,13 @@ def _ensure_viewer(
         sim.viewer.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
 
 
-def _drone_mocap_ids(sim: Sim) -> np.ndarray:
-    """MuJoCo mocap slot indices for ``drone:0`` … ``drone:n-1``."""
-    try:
-        return np.asarray(sim.data.core.drone_mocap_ids, dtype=np.int32).reshape(-1)
-    except Exception:
-        return np.array(
-            [int(sim.mj_model.body(f"drone:{i}").mocapid[0]) for i in range(sim.n_drones)],
-            dtype=np.int32,
-        )
+def _write_targets_to_qpos(sim: Sim, pts: np.ndarray) -> None:
+    """Viz-only: place drones at targets without JAX sync_sim2mjx."""
+    adrs = _drone_qpos_adrs(sim)
+    qpos = sim.mj_data.qpos
+    for i, adr in enumerate(adrs):
+        qpos[adr : adr + 3] = pts[i]
+        qpos[adr + 3 : adr + 7] = (1.0, 0.0, 0.0, 0.0)  # MuJoCo quat [w,x,y,z]
 
 
 def render_targets(
@@ -154,7 +170,10 @@ def render_targets(
     width: int = 1920,
     height: int = 1080,
 ) -> NDArray | None:
-    """Render drones at command targets (viz-only fast path; physics unchanged upstream).
+    """Render drones at command targets (viz-only fast path; physics unchanged).
+
+    Uses direct ``qpos`` writes + ``mj_forward`` — not ``sim.render()``, which runs a full
+    JAX ``sync_sim2mjx`` (kinematics/collision) every frame and is much slower.
 
     Enable timing: ``ISO_SWARM_PROFILE_SIM_RENDER=1`` (optional ``ISO_SWARM_PROFILE_SIM_RENDER_EVERY=N``).
     """
@@ -173,12 +192,8 @@ def render_targets(
         pts = np.asarray(targets, dtype=np.float64)
         if pts.shape != (sim.n_drones, 3):
             raise ValueError(f"targets must have shape ({sim.n_drones}, 3), got {pts.shape}")
-        mocap_ids = _drone_mocap_ids(sim)
-        quat = np.zeros((sim.n_drones, 4), dtype=np.float64)
-        quat[:, 0] = 1.0  # MuJoCo mocap quat is [w, x, y, z].
-        sim.mj_data.mocap_pos[mocap_ids] = pts
-        sim.mj_data.mocap_quat[mocap_ids] = quat
-        _render_prof.section("target_mocap")
+        _write_targets_to_qpos(sim, pts)
+        _render_prof.section("target_qpos")
 
         mujoco.mj_forward(sim.mj_model, sim.mj_data)
         _render_prof.section("mj_forward")

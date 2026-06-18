@@ -66,7 +66,6 @@ class OnlineRuntimeConfig:
     install_hotkey_deps: bool
     global_hotkeys: bool
     drones_config: str | None
-    real_lighthouse: bool | None
     morph_radius_mm: float
     trail_every_n: int
     led_every_n: int
@@ -184,7 +183,6 @@ def build_online_runtime_config(
         install_hotkey_deps=bool(args.install_hotkey_deps),
         global_hotkeys=not bool(args.no_global_hotkeys),
         drones_config=str(args.drones_config) if args.drones_config else None,
-        real_lighthouse=args.real_lighthouse,
         morph_radius_mm=float(args.radius_mm),
         trail_every_n=max(0, int(args.trail_every)),
         led_every_n=max(1, int(args.led_every)),

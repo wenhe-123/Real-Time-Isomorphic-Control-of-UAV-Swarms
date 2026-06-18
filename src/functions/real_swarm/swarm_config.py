@@ -11,7 +11,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class RealFrameMapping:
-    """Map gesture/sim targets (m) into the Lighthouse / mocap room frame."""
+    """Map gesture/sim targets (m) into the mocap room frame."""
 
     origin: np.ndarray
     scale: float
@@ -45,7 +45,6 @@ class RealFrameMapping:
 
 @dataclass(frozen=True)
 class RealSwarmOptions:
-    lighthouse: bool
     ctrl_freq: float
     update_freq: float
     col_freq: float
@@ -96,7 +95,6 @@ def load_drones_config(path: Path) -> tuple[dict[str, dict], RealFrameMapping, R
     yaw_deg = float(frame.get("yaw_deg", 0.0))
 
     opts = RealSwarmOptions(
-        lighthouse=bool(swarm.get("lighthouse", True)),
         ctrl_freq=float(swarm.get("ctrl_freq", 100.0)),
         update_freq=float(swarm.get("update_freq", 50.0)),
         col_freq=float(swarm.get("col_freq", 10.0)),

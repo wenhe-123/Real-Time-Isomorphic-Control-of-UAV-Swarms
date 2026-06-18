@@ -170,7 +170,6 @@ def boot_online_control(
         real_executor = RealSwarmExecutor(
             config_path=Path(cfg.drones_config),
             morph_point_count=n_drones,
-            lighthouse=cfg.real_lighthouse,
         )
         motion_freq_hz = float(real_executor.ctrl_freq)
         print("Real-swarm mode: Crazyflow MuJoCo disabled; cmd_target → Crazyflie setpoints.")
