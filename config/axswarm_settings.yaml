@@ -28,7 +28,7 @@ SolverSettings:
   # MPC
   K: 50  # Number of timesteps in the optimization horizon
   N: 10  # Spline order for AMSwarm trajectories
-  freq: 10  # MPC control frequency of AMSwarm in Hz
+  freq: 8  # MPC control frequency of AMSwarm in Hz
   goal_steps: 30  # Number of final horizon steps used for the setpoint tracking cost
   bf_gamma: 0.2  # Barrier function gamma [0, 1.0] -> 1.0 is most aggressive
   setpoint_pos_tol: 0.1  # Tolerance for the setpoint position constraint
