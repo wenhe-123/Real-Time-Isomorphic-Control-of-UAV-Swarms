@@ -57,6 +57,12 @@ pixi install && pixi run setup
 pixi install -e deploy && pixi run -e deploy setup
 ```
 
+After pulling changes that touch `swarmgpt`, refresh the locked git revision:
+
+```bash
+pixi update -e deploy swarmgpt && pixi install -e deploy
+```
+
 `setup` downloads the Orbbec SDK and builds `pyk4a` for the active pixi environment.
 
 ---
@@ -74,14 +80,12 @@ pixi run online-dual
 ### Real Crazyflies (Linux, motion capture via ROS 2)
 
 ```bash
-# Terminal 1
+# Terminal 1 — use deploy env only (do not source system ROS /opt/ros/jazzy)
 pixi run -e deploy mocap
 
 # Terminal 2
 pixi run -e deploy real-dual -- --drones-config config/2drones.toml
 ```
-
-Edit `config/2drones.toml` (or copy from `config/drones.example.toml`) for your drone URIs and room frame.
 
 Edit `config/2drones.toml` (or copy from `config/drones.example.toml`) for your drone URIs and room frame.
 
@@ -139,6 +143,7 @@ config/
 scripts/
   setup_orbbec.sh             # download Orbbec K4A Wrapper
   setup_mocap.sh              # clone/build motion_capture_tracking (deploy)
+  ensure_sqlite.sh            # deploy: libsqlite for swarm_gpt import (pixi activation)
 ```
 
 ---
