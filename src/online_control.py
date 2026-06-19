@@ -439,9 +439,15 @@ def run_integrated_online_control(
             pass
         if boot.real_executor is not None:
             try:
-                boot.real_executor.land_and_close()
+                from functions.real_swarm.land_on_exit import stream_real_swarm_land_on_exit
+
+                stream_real_swarm_land_on_exit(boot, cfg)
             except Exception as exc:
                 print(f"[WARN] Real swarm shutdown failed: {exc}")
+                try:
+                    boot.real_executor.close_connections()
+                except Exception:
+                    pass
         elif boot.sim is not None:
             with warnings.catch_warnings():
                 try:

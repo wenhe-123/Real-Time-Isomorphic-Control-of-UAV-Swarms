@@ -48,6 +48,7 @@ class RealSwarmExecutor:
         self.physical_armed = False
         self._last_cmd: np.ndarray | None = None
         self._last_mode = 1
+        self._mocap_hold_logged = False
 
         morph_note = (
             f"morph={self.morph_point_count} virtual targets"
@@ -169,7 +170,19 @@ class RealSwarmExecutor:
         self.swarm.goto(targets, duration=dur)
         self.physical_armed = True
 
+    def mocap_ok(self) -> bool:
+        """True when every active drone has a fresh mocap pose."""
+        return self.get_positions_for_debug() is not None
+
     def send_sim_layout(self, sim_layout: np.ndarray) -> None:
+        if not self.mocap_ok():
+            if not self._mocap_hold_logged:
+                logger.warning(
+                    "Mocap unavailable — pausing setpoint stream until poses return."
+                )
+                self._mocap_hold_logged = True
+            return
+        self._mocap_hold_logged = False
         real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
         targets = {
             uri: [float(real[i, 0]), float(real[i, 1]), float(real[i, 2]), 0.0]
@@ -254,29 +267,16 @@ class RealSwarmExecutor:
             except Exception as exc:
                 logger.warning("LED update failed: %s", exc)
 
-    def land_and_close(self) -> None:
-        if self.opts.land_on_exit and self.physical_armed:
-            landing = {
-                uri: [
-                    float(self._homes[uri][0]),
-                    float(self._homes[uri][1]),
-                    float(max(self._homes[uri][2], 0.05)),
-                    0.0,
-                ]
-                for uri in self._uris
-                if self.swarm.is_active(uri)
-            }
-            if landing:
-                print("Real swarm landing ...")
-                try:
-                    self.swarm.goto(landing, duration=2.5)
-                except Exception as exc:
-                    logger.warning("Landing goto failed: %s", exc)
+    def close_connections(self) -> None:
         print("Closing real swarm connections ...")
         self.swarm.close()
 
+    def land_and_close(self) -> None:
+        """Deprecated: use :func:`land_on_exit.stream_real_swarm_land_on_exit` from main."""
+        self.close_connections()
+
     def close(self) -> None:
-        self.land_and_close()
+        self.close_connections()
 
     def get_positions_for_debug(self) -> np.ndarray | None:
         rows = []

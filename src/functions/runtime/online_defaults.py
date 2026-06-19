@@ -39,7 +39,7 @@ _DEFAULT_OPEN_JUMP_RESET = 0.34
 # Sim / spawn: physical ground plane in Crazyflow sim frame (m), not gesture workspace z_min.
 _DEFAULT_GROUND_Z = 0.00
 # Before SPACE: morph layout hover (fits default 3.5 m workspace: floor 0.05 + half 1.75).
-_DEFAULT_PREARM_HOVER_Z = 1.80
+_DEFAULT_PREARM_HOVER_Z = 1.50
 # Vertical prearm: 1st / 3rd ``1`` leg height (m); 4th ``1`` descends from here to ground.
 _DEFAULT_PREARM_TAKEOFF_Z = 0.40
 # Left hand: rigid motion of whole swarm (translation + rotation about formation centroid)

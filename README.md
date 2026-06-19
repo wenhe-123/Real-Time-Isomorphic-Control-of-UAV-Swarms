@@ -96,7 +96,7 @@ Axswarm safety filter **engages on the first `1`** (not at idle on ground). Defa
 | Press `1` | Phase | Target |
 |-----------|--------|--------|
 | 1 | **Vertical climb** | Ground XY, rise to `--prearm-takeoff-z` (default ≈ morph z₀, often ~1.4 m) |
-| 2 | **Hover formation** | Spread to `--prearm-hover-z` (default 1.80 m) |
+| 2 | **Hover formation** | Spread to `--prearm-hover-z` (default 1.50 m) |
 | 3 | **Vertical descend** | Shrink back to takeoff height (ground XY) |
 | 4 | **Ground** | Return to startup layout |
 
