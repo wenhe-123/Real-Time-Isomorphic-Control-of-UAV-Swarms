@@ -48,7 +48,6 @@ class RealSwarmOptions:
     ctrl_freq: float
     update_freq: float
     col_freq: float
-    arm_goto_s: float
     land_on_exit: bool
     max_pos_error_m: float
 
@@ -98,7 +97,6 @@ def load_drones_config(path: Path) -> tuple[dict[str, dict], RealFrameMapping, R
         ctrl_freq=float(swarm.get("ctrl_freq", 100.0)),
         update_freq=float(swarm.get("update_freq", 50.0)),
         col_freq=float(swarm.get("col_freq", 10.0)),
-        arm_goto_s=float(swarm.get("arm_goto_s", 5.0)),
         land_on_exit=bool(swarm.get("land_on_exit", True)),
         max_pos_error_m=float(swarm.get("max_pos_error_m", 0.35)),
     )

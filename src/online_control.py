@@ -413,6 +413,11 @@ def run_integrated_online_control(
                 sync_armed_flags(boot)
                 boot.frame_idx += 1
 
+            if boot.real_executor is not None:
+                from functions.real_swarm.land_on_exit import try_stream_real_swarm_land_on_exit
+
+                try_stream_real_swarm_land_on_exit(boot, cfg)
+
             if webcam.landmarker is not None:
                 try:
                     webcam.landmarker.close()
@@ -423,6 +428,10 @@ def run_integrated_online_control(
             boot.key_queue.stop()
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user, stopping online control...")
+        if boot.real_executor is not None:
+            from functions.real_swarm.land_on_exit import try_stream_real_swarm_land_on_exit
+
+            try_stream_real_swarm_land_on_exit(boot, cfg)
     finally:
         if rigid_pose_recorder is not None:
             try:
@@ -439,15 +448,9 @@ def run_integrated_online_control(
             pass
         if boot.real_executor is not None:
             try:
-                from functions.real_swarm.land_on_exit import stream_real_swarm_land_on_exit
-
-                stream_real_swarm_land_on_exit(boot, cfg)
+                boot.real_executor.close()
             except Exception as exc:
-                print(f"[WARN] Real swarm shutdown failed: {exc}")
-                try:
-                    boot.real_executor.close_connections()
-                except Exception:
-                    pass
+                print(f"[WARN] Real swarm close failed: {exc}")
         elif boot.sim is not None:
             with warnings.catch_warnings():
                 try:

@@ -42,12 +42,14 @@ def stream_real_swarm_land_on_exit(
     *,
     max_duration_s: float = 45.0,
 ) -> None:
-    """Stream ``ground_layout`` through axswarm until near home, then disconnect."""
+    """Stream ``ground_layout`` through axswarm until near home.
+
+    Caller must ``real_executor.close()`` in a ``finally`` block (see ``online_control``).
+    """
     ex = boot.real_executor
     if ex is None:
         return
     if not ex.opts.land_on_exit or not ex.physical_armed:
-        ex.close_connections()
         return
 
     print("Real swarm axswarm-filtered exit landing to ground ...")
@@ -106,6 +108,17 @@ def stream_real_swarm_land_on_exit(
                 break
         time.sleep(period_s)
     else:
-        print("[WARN] Exit axswarm land timed out — closing connections.")
+        print("[WARN] Exit axswarm land timed out.")
 
-    ex.close_connections()
+
+def try_stream_real_swarm_land_on_exit(
+    boot: OnlineBoot,
+    cfg: OnlineRuntimeConfig,
+    *,
+    max_duration_s: float = 45.0,
+) -> None:
+    """Best-effort exit land (swarmGPT ``try`` body); errors are logged, not re-raised."""
+    try:
+        stream_real_swarm_land_on_exit(boot, cfg, max_duration_s=max_duration_s)
+    except Exception as exc:
+        print(f"[WARN] Real swarm exit landing failed: {exc}")

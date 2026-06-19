@@ -2,7 +2,6 @@
 
 [swarm]
 ctrl_freq = 10.0
-arm_goto_s = 5.0
 land_on_exit = true
 max_pos_error_m = 0.35
 

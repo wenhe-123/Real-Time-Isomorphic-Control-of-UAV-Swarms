@@ -156,20 +156,6 @@ class RealSwarmExecutor:
                 ok = False
         return ok
 
-    def goto_sim_layout(self, sim_layout: np.ndarray, *, duration: float | None = None) -> None:
-        real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
-        targets = {
-            uri: [float(real[i, 0]), float(real[i, 1]), float(real[i, 2]), 0.0]
-            for i, uri in enumerate(self._uris)
-            if self.swarm.is_active(uri)
-        }
-        if not targets:
-            raise RuntimeError("No active drones for goto")
-        dur = float(self.opts.arm_goto_s if duration is None else duration)
-        print(f"Real swarm goto arm layout ({dur:.1f}s) ...")
-        self.swarm.goto(targets, duration=dur)
-        self.physical_armed = True
-
     def mocap_ok(self) -> bool:
         """True when every active drone has a fresh mocap pose."""
         return self.get_positions_for_debug() is not None
@@ -267,16 +253,9 @@ class RealSwarmExecutor:
             except Exception as exc:
                 logger.warning("LED update failed: %s", exc)
 
-    def close_connections(self) -> None:
+    def close(self) -> None:
         print("Closing real swarm connections ...")
         self.swarm.close()
-
-    def land_and_close(self) -> None:
-        """Deprecated: use :func:`land_on_exit.stream_real_swarm_land_on_exit` from main."""
-        self.close_connections()
-
-    def close(self) -> None:
-        self.close_connections()
 
     def get_positions_for_debug(self) -> np.ndarray | None:
         rows = []

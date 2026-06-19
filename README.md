@@ -100,9 +100,9 @@ Axswarm safety filter **engages on the first `1`** (not at idle on ground). Defa
 | 3 | **Vertical descend** | Shrink back to takeoff height (ground XY) |
 | 4 | **Ground** | Return to startup layout |
 
-Then cycle repeats from ground. Formation spread and vertical shrink use axswarm gradual streaming (recover mode); climb from ground and final landing use stronger convergence.
+Then cycle repeats from ground. All prearm moves and exit landing use the same axswarm-filtered `send_setpoint_tick` stream as gesture control.
 
-**Real swarm:** same key sequence; first vertical climb and final ground use `goto` (`arm_goto_s` in TOML); formation / descend vertical use axswarm-filtered `send_setpoint_tick`.
+**Real swarm:** same key sequence and the same axswarm-filtered setpoint stream (no separate blocking `goto`).
 
 ### Controls
 
