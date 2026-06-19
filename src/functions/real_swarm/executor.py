@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 
 import numpy as np
+from swarm_gpt.core.drone_swarm import DroneSwarm
 
-from functions.real_swarm.drone_swarm import DroneSwarm
 from functions.real_swarm.swarm_config import RealFrameMapping, RealSwarmOptions, load_drones_config
 from functions.swarm_motion.spacing_guard import enforce_min_separation_xy
 
@@ -20,6 +20,14 @@ _MODE_LED_COLORS = {
     4: np.array([180, 80, 255, 0], dtype=np.float64),
     5: np.array([80, 255, 120, 0], dtype=np.float64),
 }
+
+
+def _ensure_rclpy() -> None:
+    """ROSConnector (mocap) requires ``rclpy.ok()`` in this process."""
+    import rclpy
+
+    if not rclpy.ok():
+        rclpy.init()
 
 
 class RealSwarmExecutor:
@@ -41,33 +49,29 @@ class RealSwarmExecutor:
         self.mapping = mapping
         self.opts = opts
         self.n_physical = n_physical
-        self.morph_point_count = int(morph_point_count) if morph_point_count is not None else None
-        self._drone_ids = list(drones.keys())
-        self._uris = [drones[k]["uri"] for k in self._drone_ids]
-        self._homes = {drones[k]["uri"]: np.asarray(drones[k]["pos"], dtype=np.float64) for k in self._drone_ids}
+        self._uris = [d["uri"] for d in drones.values()]
+        self._homes = {
+            d["uri"]: np.asarray(d["pos"], dtype=np.float64) for d in drones.values()
+        }
         self.physical_armed = False
-        self._last_cmd: np.ndarray | None = None
         self._last_mode = 1
         self._mocap_hold_logged = False
 
-        morph_note = (
-            f"morph={self.morph_point_count} virtual targets"
-            if self.morph_point_count is not None
-            else "morph virtual targets"
-        )
         print(
-            f"Connecting {n_physical} Crazyflie(s) ({morph_note}; "
+            f"Connecting {n_physical} Crazyflie(s) (morph={morph_point_count} virtual targets; "
             f"physical indices 0..{n_physical - 1}) mocap/ROS ..."
         )
         print(
             f"  Sim (0,0,0) → room {np.round(mapping.origin, 3)} m "
             f"(scale={mapping.scale}, yaw={np.rad2deg(mapping.yaw_rad):.1f}°)"
         )
+        _ensure_rclpy()
         self.swarm = DroneSwarm(
             drones,
             ctrl_freq=opts.ctrl_freq,
             update_freq=opts.update_freq,
             col_freq=opts.col_freq,
+            lighthouse=False,
         )
         missing = self.swarm.missing_uris()
         if missing:
@@ -87,6 +91,14 @@ class RealSwarmExecutor:
                 f"cmd_target has {pts.shape[0]} points but {self.n_physical} physical drones need indices 0..{self.n_physical - 1}"
             )
         return pts[: self.n_physical]
+
+    def _room_targets(self, sim_layout: np.ndarray) -> dict[str, list[float]]:
+        real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
+        return {
+            uri: [float(real[i, 0]), float(real[i, 1]), float(real[i, 2]), 0.0]
+            for i, uri in enumerate(self._uris)
+            if self.swarm.is_active(uri)
+        }
 
     def get_sim_ground_layout(self, n_morph: int, *, min_separation_m: float) -> np.ndarray:
         """TOML ``home`` poses → sim frame for physical drones; chessboard fill for virtual rows."""
@@ -169,14 +181,10 @@ class RealSwarmExecutor:
                 self._mocap_hold_logged = True
             return
         self._mocap_hold_logged = False
-        real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
-        targets = {
-            uri: [float(real[i, 0]), float(real[i, 1]), float(real[i, 2]), 0.0]
-            for i, uri in enumerate(self._uris)
-            if self.swarm.is_active(uri)
-        }
+        targets = self._room_targets(sim_layout)
         if targets:
-            self.swarm.send_setpoint_tick(targets)
+            self.swarm.setpoint(targets)
+            self.physical_armed = True
 
     def track_frame(
         self,
@@ -191,11 +199,8 @@ class RealSwarmExecutor:
         prearm_vertical_leg: str = "climb",
         just_prearm_phase: bool = False,
         prearm_vertical_layout: np.ndarray | None = None,
-        prearm_hover_layout: np.ndarray | None = None,
-        ground_layout: np.ndarray | None = None,
     ) -> None:
         cmd = np.asarray(cmd_target, dtype=np.float32)
-        self._last_cmd = cmd.copy()
         phase = str(prearm_phase)
 
         if just_prearm_phase:
@@ -228,7 +233,7 @@ class RealSwarmExecutor:
                     f"Real axswarm-filtered descent to ground (from z≈{z_from:.2f}m)."
                 )
 
-        if gesture_enabled and just_armed and not self.physical_armed:
+        if gesture_enabled and just_armed:
             if not self.verify_near_sim_layout(cmd):
                 print(
                     "[WARN] Real swarm position check failed; streaming arm layout anyway. "
@@ -236,7 +241,6 @@ class RealSwarmExecutor:
                 )
 
         self.send_sim_layout(cmd)
-        self.physical_armed = True
 
         if led_every_n > 0 and (frame_idx % led_every_n) == 0:
             mode = int(morph_mode)
@@ -254,7 +258,6 @@ class RealSwarmExecutor:
                 logger.warning("LED update failed: %s", exc)
 
     def close(self) -> None:
-        print("Closing real swarm connections ...")
         self.swarm.close()
 
     def get_positions_for_debug(self) -> np.ndarray | None:

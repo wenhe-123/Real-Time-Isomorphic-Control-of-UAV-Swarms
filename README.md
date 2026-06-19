@@ -100,7 +100,7 @@ Axswarm safety filter **engages on the first `1`** (not at idle on ground). Defa
 | 3 | **Vertical descend** | Shrink back to takeoff height (ground XY) |
 | 4 | **Ground** | Return to startup layout |
 
-Then cycle repeats from ground. All prearm moves and exit landing use the same axswarm-filtered `send_setpoint_tick` stream as gesture control.
+Then cycle repeats from ground. All prearm moves and exit landing use the same axswarm-filtered `swarm.setpoint` stream as gesture control.
 
 **Real swarm:** same key sequence and the same axswarm-filtered setpoint stream (no separate blocking `goto`).
 
@@ -130,7 +130,7 @@ src/
   online_control.py           # shared main loop (prearm phases, gestures, filter)
   functions/
     display_sim/              # Orbbec hand pipeline, Crazyflow step/render
-    real_swarm/               # executor + swarmGPT DroneSwarm wrapper (cflib2 + mocap)
+    real_swarm/               # executor (swarmGPT DroneSwarm + sim→room setpoints)
     swarm_motion/             # axswarm filter, prearm layouts, spacing
 config/
   drones.example.toml         # template

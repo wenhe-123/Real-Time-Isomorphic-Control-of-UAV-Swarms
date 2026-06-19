@@ -44,7 +44,7 @@ def stream_real_swarm_land_on_exit(
 ) -> None:
     """Stream ``ground_layout`` through axswarm until near home.
 
-    Caller must ``real_executor.close()`` in a ``finally`` block (see ``online_control``).
+    Caller must ``real_executor.close()`` (``swarm.close()``) in a ``finally`` block (see ``online_control``).
     """
     ex = boot.real_executor
     if ex is None:

@@ -55,8 +55,6 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
             prearm_vertical_leg=str(boot.prearm_vertical_leg),
             just_prearm_phase=bool(inp.just_prearm_phase),
             prearm_vertical_layout=boot.prearm_vertical_layout,
-            prearm_hover_layout=boot.prearm_hover_layout,
-            ground_layout=boot.ground_layout,
         )
     _sec("real_cmd")
 
