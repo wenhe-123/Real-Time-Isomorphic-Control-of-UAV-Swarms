@@ -45,6 +45,13 @@ GPU is optional (JAX runs on CPU by default).
 
 ## Installation
 
+Clone the repository, then install dependencies with [pixi](https://pixi.sh):
+
+```bash
+git clone https://github.com/wenhe-123/Real-Time-Isomorphic-Control-of-UAV-Swarms.git iso_swarm
+cd iso_swarm
+```
+
 **Simulation (Linux, Orbbec camera):**
 
 ```bash
