@@ -17,6 +17,8 @@ _DEFAULT_ONLINE_IMSHOW_EVERY = 4
 _DEFAULT_TARGET_ALPHA = 0.44
 _DEFAULT_DRONE_MODEL = "cf21B_500"
 _DEFAULT_MIN_SEPARATION_M = 0.32
+# Axswarm MPC replan rate (yaml ``freq`` is also 8 Hz); profiled ~13ms solve @ 24 drones.
+_DEFAULT_AXSWARM_MPC_HZ = 8.0
 # Lower than 1.2 so open≈1 plane shell fits the default 3.5 m workspace (see formation_max_extent_m).
 _DEFAULT_MORPH_WORLD_SCALE = 0.55
 # Morph mode debounce: see online_pipeline_defaults (production: 1 frame).
@@ -35,10 +37,11 @@ _DEFAULT_MAX_TARGET_STEP_M = 0.038
 # When |Δopen| >= this after a frame's gesture update, restart post-SPACE slow blend (0=off).
 _DEFAULT_OPEN_JUMP_RESET = 0.34
 # Sim / spawn: physical ground plane in Crazyflow sim frame (m), not gesture workspace z_min.
-_DEFAULT_GROUND_Z = 0.05
+_DEFAULT_GROUND_Z = 0.00
 # Before SPACE: morph layout hover (fits default 3.5 m workspace: floor 0.05 + half 1.75).
 _DEFAULT_PREARM_HOVER_Z = 1.80
-_DEFAULT_PREARM_TAKEOFF_Z = 0.92
+# Vertical prearm: 1st / 3rd ``1`` leg height (m); 4th ``1`` descends from here to ground.
+_DEFAULT_PREARM_TAKEOFF_Z = 0.40
 # Left hand: rigid motion of whole swarm (translation + rotation about formation centroid)
 # Pose uses MediaPipe world landmarks in mm (wrist is not fixed at origin unlike HAND_FRAME_SCALED).
 # fwd_y: dz→sim Y (in/out). Flip Y so hand-toward-camera matches expected swarm direction.

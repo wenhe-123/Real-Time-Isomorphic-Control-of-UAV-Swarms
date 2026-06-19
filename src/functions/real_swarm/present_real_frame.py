@@ -51,7 +51,12 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
             morph_mode=int(boot.mode_state.morph_mode),
             led_every_n=int(cfg.led_every_n),
             frame_idx=int(frame_idx),
-            prearm_climb_enabled=bool(boot.prearm_climb_enabled),
+            prearm_phase=str(boot.prearm_phase),
+            prearm_vertical_leg=str(boot.prearm_vertical_leg),
+            just_prearm_phase=bool(inp.just_prearm_phase),
+            prearm_vertical_layout=boot.prearm_vertical_layout,
+            prearm_hover_layout=boot.prearm_hover_layout,
+            ground_layout=boot.ground_layout,
         )
     _sec("real_cmd")
 

@@ -67,7 +67,6 @@ class RealSwarmExecutor:
             ctrl_freq=opts.ctrl_freq,
             update_freq=opts.update_freq,
             col_freq=opts.col_freq,
-            lighthouse=False,
         )
         missing = self.swarm.missing_uris()
         if missing:
@@ -113,7 +112,7 @@ class RealSwarmExecutor:
     def get_sim_track_positions(
         self, morph_fallback: np.ndarray, n_morph: int
     ) -> np.ndarray | None:
-        """Lighthouse poses → sim frame for physical rows; morph fallback for virtual."""
+        """Mocap poses (ROS TF) → sim frame for physical rows; morph fallback for virtual."""
         real_pos = self.get_positions_for_debug()
         if real_pos is None:
             return None
@@ -189,29 +188,56 @@ class RealSwarmExecutor:
         morph_mode: int,
         led_every_n: int,
         frame_idx: int,
-        prearm_climb_enabled: bool = False,
+        prearm_phase: str = "ground",
+        prearm_vertical_leg: str = "climb",
+        just_prearm_phase: bool = False,
+        prearm_vertical_layout: np.ndarray | None = None,
+        prearm_hover_layout: np.ndarray | None = None,
+        ground_layout: np.ndarray | None = None,
     ) -> None:
         cmd = np.asarray(cmd_target, dtype=np.float32)
         self._last_cmd = cmd.copy()
+        phase = str(prearm_phase)
 
-        if gesture_enabled:
-            if just_armed and not self.physical_armed:
-                if not self.verify_near_sim_layout(cmd):
-                    print(
-                        "[WARN] Real swarm position check failed; still flying to arm layout. "
-                        "Move drones near mapped hover poses or adjust config/frame.origin."
-                    )
-                self.goto_sim_layout(cmd)
-            elif self.physical_armed:
-                self.send_sim_layout(cmd)
-        elif prearm_climb_enabled or self.physical_armed:
-            if not self.physical_armed:
-                print(
-                    "Real layout stream: axswarm-filtered setpoints "
-                    "(1 = ground ↔ hover, SPACE = gestures)."
+        if just_prearm_phase:
+            if phase == "vertical" and prearm_vertical_layout is not None:
+                z_takeoff = float(
+                    np.median(prearm_vertical_layout[: self.n_physical, 2])
                 )
-                self.physical_armed = True
-            self.send_sim_layout(cmd)
+                if str(prearm_vertical_leg) == "climb":
+                    print(
+                        f"Real vertical takeoff → z={z_takeoff:.2f}m "
+                        "(axswarm-filtered stream, same as sim)."
+                    )
+                else:
+                    print(
+                        f"Real vertical descend → z={z_takeoff:.2f}m "
+                        "(axswarm-filtered stream). Press 1 for ground."
+                    )
+            elif phase == "formation":
+                print(
+                    "Real hover formation: axswarm-filtered stream "
+                    "(gradual spread; press 1 to shrink to vertical)."
+                )
+            elif phase == "ground":
+                z_from = (
+                    float(np.median(prearm_vertical_layout[: self.n_physical, 2]))
+                    if prearm_vertical_layout is not None
+                    else float(np.median(cmd[: self.n_physical, 2]))
+                )
+                print(
+                    f"Real axswarm-filtered descent to ground (from z≈{z_from:.2f}m)."
+                )
+
+        if gesture_enabled and just_armed and not self.physical_armed:
+            if not self.verify_near_sim_layout(cmd):
+                print(
+                    "[WARN] Real swarm position check failed; streaming arm layout anyway. "
+                    "Move drones near mapped hover poses or adjust config/frame.origin."
+                )
+
+        self.send_sim_layout(cmd)
+        self.physical_armed = True
 
         if led_every_n > 0 and (frame_idx % led_every_n) == 0:
             mode = int(morph_mode)

@@ -7,7 +7,7 @@ import numpy as np
 
 from crazyflow.sim.visualize import draw_line
 from debug.online_control_debug import draw_drone_target_debug_hud, print_center_trace
-from functions.display_sim.crazyflow_render import render_targets
+from functions.display_sim.crazyflow_render import render_sim, step_sim_to_cmd
 from functions.display_sim.morph_led_materials import apply_morph_led_theme
 from functions.display_sim.online_present_input import PresentFrameInput
 from functions.swarm_motion.swarm_workspace_box import draw_swarm_workspace_box_in_sim
@@ -29,10 +29,15 @@ def _draw_online_hud_overlay(inp: PresentFrameInput, *, label: str, color: tuple
     ax_hint = f" | {boot.axswarm_rt.status_line()}" if boot.axswarm_rt is not None else ""
     if boot.gesture_control_enabled_box[0]:
         phase = "ARMED (Space disarm)"
-    elif boot.prearm_climb_enabled:
-        phase = "CLIMB - press SPACE"
+    elif boot.prearm_phase_box[0] == "formation":
+        phase = "HOVER FORM - press 1 shrink vertical"
+    elif boot.prearm_phase_box[0] == "vertical":
+        if boot.prearm_vertical_leg_box[0] == "descend":
+            phase = "VERT DESC - press 1 ground"
+        else:
+            phase = "VERT CLIMB - press 1 formation"
     else:
-        phase = "GROUND - press 1"
+        phase = "GROUND - press 1 takeoff"
     cv2.putText(
         inp.frame,
         f"{label} {phase} "
@@ -117,6 +122,18 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
                 print(f"[WARN] Disabled Crazyflow trail drawing after render error: {exc}")
                 break
     _sec("trail")
+    if boot.sim is not None:
+        try:
+            step_sim_to_cmd(
+                boot.sim,
+                np.asarray(filt.cmd_target, dtype=np.float64),
+                outer_fps=int(cfg.fps),
+                max_substeps=int(cfg.max_sim_substeps),
+            )
+        except Exception as exc:
+            render_enabled = False
+            print(f"[WARN] Disabled Crazyflow sim step after error: {exc}")
+    _sec("sim_step")
     if (
         render_enabled
         and cfg.sim_render_every > 0
@@ -126,7 +143,7 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
         try:
             if boot.swarm_workspace.enabled and boot.swarm_workspace.armed:
                 draw_swarm_workspace_box_in_sim(boot.sim, boot.swarm_workspace)
-            render_targets(boot.sim, np.asarray(filt.cmd_target, dtype=np.float64))
+            render_sim(boot.sim)
         except Exception as exc:
             render_enabled = False
             print(f"[WARN] Disabled Crazyflow rendering after render error: {exc}")

@@ -22,10 +22,11 @@ from functions.display_sim.online_plot import close_3d_plot, init_3d_plot
 from functions.display_sim.online_plot_frame import update_online_plot_frame
 from functions.display_sim.orbbec_hand import create_hand_landmarker
 from functions.dual_cam.dual_view_utils import open_webcam_capture
-from functions.dual_cam.online_frame_capture import grab_orbbec_mp_frame
-from functions.dual_cam.online_input_keys import apply_online_control_key  # re-export
+from functions.dual_cam.online_frame_capture import CaptureFrameInput, grab_orbbec_mp_frame
 from functions.dual_cam.online_input_keys import (
+    OnlineKeyContext,
     OnlineKeyQueue,
+    apply_online_control_key,
     format_hotkey_install_hint,
     process_online_control_keys,
     probe_global_hotkey_backends,
@@ -181,6 +182,7 @@ def run_integrated_online_control(
             left_swarm_R = None
             prev_gesture_armed = False
             boot.prev_prearm_climb_enabled = False
+            boot.prev_prearm_phase = "ground"
 
             while True:
                 elapsed = time.monotonic() - boot.start_time
@@ -188,33 +190,23 @@ def run_integrated_online_control(
                     break
                 if _poll_keys():
                     break
-                just_prearm_climb = bool(boot.prearm_climb_enabled_box[0]) and not boot.prev_prearm_climb_enabled
-                just_prearm_descend = boot.prev_prearm_climb_enabled and not bool(
-                    boot.prearm_climb_enabled_box[0]
-                )
                 sync_armed_flags(boot)
+                just_prearm_phase = boot.prearm_phase != boot.prev_prearm_phase
 
                 frame_prof.frame_start()
                 t_ms = int(boot.frame_idx * (1000 / max(float(cfg.fps), 1.0)))
                 cap, poll_frame, boot.orbbec_flip_depth_warned = grab_orbbec_mp_frame(
-                    k4a=boot.k4a,
-                    landmarker=landmarker,
-                    frame_idx=boot.frame_idx,
-                    t_ms=t_ms,
-                    fps=float(cfg.fps),
-                    mp_detect_every=cfg.mp_detect_every,
-                    mp_input_scale=float(cfg.mp_input_scale),
-                    orbbec_flip_horizontal=cfg.orbbec_flip_horizontal,
-                    orbbec_use_transformed_depth=cfg.orbbec_use_transformed_depth,
-                    use_depth_fusion=boot.use_depth_fusion,
-                    pipe=boot.pipe,
-                    calib=boot.calib,
-                    draw_hand_debug=cfg.draw_hand_debug,
-                    cached_mp_result=cached_mp_result,
-                    cached_hands_3d_all=cached_hands_3d_all,
-                    ema_3d=ema_3d,
-                    orbbec_flip_depth_warned=boot.orbbec_flip_depth_warned,
-                    section=frame_prof.section,
+                    CaptureFrameInput(
+                        boot=boot,
+                        cfg=cfg,
+                        landmarker=landmarker,
+                        frame_idx=boot.frame_idx,
+                        t_ms=t_ms,
+                        cached_mp_result=cached_mp_result,
+                        cached_hands_3d_all=cached_hands_3d_all,
+                        ema_3d=ema_3d,
+                        section=frame_prof.section,
+                    )
                 )
                 if cap is None:
                     _pf = poll_frame if poll_frame is not None else np.zeros((1, 1, 3), np.uint8)
@@ -256,9 +248,15 @@ def run_integrated_online_control(
                         min_separation_m=float(cfg.min_separation_m),
                     )
                     raw_target = np.asarray(boot.live_target.get(), dtype=np.float32)
-                elif boot.prearm_climb_enabled:
+                elif boot.prearm_phase == "formation":
                     raw_target = enforce_min_separation(
                         boot.prearm_hover_layout.copy(),
+                        float(cfg.min_separation_m),
+                        iters=10,
+                    )
+                elif boot.prearm_phase == "vertical":
+                    raw_target = enforce_min_separation(
+                        boot.prearm_vertical_layout.copy(),
                         float(cfg.min_separation_m),
                         iters=10,
                     )
@@ -312,10 +310,7 @@ def run_integrated_online_control(
                             boot.sim.data.states.pos[0], dtype=np.float32
                         )
 
-                if (
-                    (just_prearm_climb or just_prearm_descend)
-                    and boot.axswarm_rt is not None
-                ):
+                if just_prearm_phase and boot.axswarm_rt is not None:
                     _layout_pos = (
                         axswarm_track_pos
                         if axswarm_track_pos is not None
@@ -325,6 +320,30 @@ def run_integrated_online_control(
                         np.asarray(_layout_pos, dtype=np.float32),
                         np.zeros((boot.n_drones, 3), dtype=np.float32),
                     )
+                    if (
+                        boot.prearm_phase == "vertical"
+                        and boot.prev_prearm_phase == "ground"
+                    ):
+                        boot.axswarm_rt.mark_armed(float(elapsed))
+                    elif (
+                        boot.prearm_phase == "ground"
+                        and boot.prev_prearm_phase == "vertical"
+                    ):
+                        boot.axswarm_rt.enter_recover(float(elapsed), hold_s=8.0)
+                    elif (
+                        boot.prearm_phase == "formation"
+                        and boot.prev_prearm_phase == "vertical"
+                    ):
+                        # One continuous move to hover formation (no recover slow segment).
+                        pass
+                    elif (
+                        boot.prearm_phase == "vertical"
+                        and boot.prev_prearm_phase == "formation"
+                    ):
+                        # One continuous shrink to vertical (no recover slow segment).
+                        pass
+                    else:
+                        boot.axswarm_rt.enter_recover(float(elapsed), hold_s=5.0)
 
                 filt, boot.raw_target_filt, boot.prev_open_for_snap, boot.prev_gesture_control_enabled = (
                     filter_online_targets(
@@ -341,6 +360,7 @@ def run_integrated_online_control(
                 boot.cmd_target = filt.cmd_target
                 boot.prev_cmd_target = boot.cmd_target.copy()
                 boot.prev_prearm_climb_enabled = bool(boot.prearm_climb_enabled)
+                boot.prev_prearm_phase = str(boot.prearm_phase)
                 just_gesture_armed = bool(boot.gesture_control_enabled) and not prev_gesture_armed
                 prev_gesture_armed = bool(boot.gesture_control_enabled)
 
@@ -371,6 +391,7 @@ def run_integrated_online_control(
                     left_pose_dbg=left_pose_dbg,
                     elapsed=elapsed,
                     just_gesture_armed=just_gesture_armed,
+                    just_prearm_phase=just_prearm_phase,
                     section=frame_prof.section,
                 )
                 if boot.real_executor is not None:
@@ -445,6 +466,7 @@ def run_integrated_online_control(
 __all__ = [
     "FrameSectionProfiler",
     "LiveTargetState",
+    "OnlineKeyContext",
     "OnlineKeyQueue",
     "OnlineRuntimeConfig",
     "PipelineTuning",

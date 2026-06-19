@@ -35,11 +35,15 @@ from online_control_dual import (
 
 def inject_real_dual_default_argv(argv: list[str]) -> list[str]:
     """Real entry: axswarm + morph point-count 8 (not 24); physical count from drones.toml."""
+    from functions.runtime.online_defaults import _DEFAULT_AXSWARM_MPC_HZ
+
     out = list(argv)
     if not _argv_has_flag(out, "--planner"):
         out.extend(["--planner", "axswarm"])
     if not _argv_has_flag(out, "--point-count"):
         out.extend(["--point-count", "8"])
+    if not _argv_has_flag(out, "--axswarm-mpc-hz"):
+        out.extend(["--axswarm-mpc-hz", f"{_DEFAULT_AXSWARM_MPC_HZ:g}"])
     return out
 
 

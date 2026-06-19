@@ -11,6 +11,7 @@ from functions.runtime.online_defaults import (
     _DEFAULT_AXIS_ROT_ON_RAD,
     _DEFAULT_AXIS_TRANS_DEADZONE_M,
     _DEFAULT_AXIS_TRANS_ON_M,
+    _DEFAULT_AXSWARM_MPC_HZ,
     _DEFAULT_DRONE_MODEL,
     _DEFAULT_LEFT_CAM_PRESET,
     _DEFAULT_LEFT_CAM_Y_TO_WORLD_Z,
@@ -465,6 +466,12 @@ def build_online_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--axswarm-max-iters", type=int, default=None)
     parser.add_argument("--axswarm-max-solve-ms", type=float, default=90.0)
     parser.add_argument("--axswarm-max-deviation-m", type=float, default=0.2)
+    parser.add_argument(
+        "--axswarm-mpc-hz",
+        type=float,
+        default=_DEFAULT_AXSWARM_MPC_HZ,
+        help=f"Axswarm MPC replan rate (Hz). Default {_DEFAULT_AXSWARM_MPC_HZ:g} (matches axswarm_settings.yaml).",
+    )
     parser.add_argument("--axswarm-pos-weight", type=float, default=None)
     parser.add_argument("--swarm-workspace-box-m", type=float, default=_DEFAULT_SWARM_WORKSPACE_BOX_M)
     parser.add_argument("--swarm-workspace-wall-margin-m", type=float, default=_DEFAULT_SWARM_WORKSPACE_WALL_MARGIN_M)

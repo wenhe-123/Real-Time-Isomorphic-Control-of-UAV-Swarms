@@ -83,20 +83,39 @@ pixi run -e deploy real-dual -- --drones-config config/2drones.toml
 
 Edit `config/2drones.toml` (or copy from `config/drones.example.toml`) for your drone URIs and room frame.
 
-Morph uses **8 virtual formation points** by default (`online_control_real_dual.py`); physical drone count is the number of `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow indices 0 and 1).
+Edit `config/2drones.toml` (or copy from `config/drones.example.toml`) for your drone URIs and room frame.
 
-**Startup layout:** simulation spawns on a ground chessboard; real drones use `home` in `drones.toml`. Axswarm safety filtering is active from launch.
+- **Sim:** 24 virtual morph points (`online-dual` default)
+- **Real:** 8 virtual morph points; physical count = `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow indices 0 and 1)
+- **Ground layout:** sim uses a chessboard at `z=0.05 m`; real uses each drone’s TOML `home` (XY fixed on vertical legs)
+
+### Prearm sequence (press `1` four times per cycle)
+
+Axswarm safety filter **engages on the first `1`** (not at idle on ground). Default MPC replan rate is **8 Hz** (`--axswarm-mpc-hz`, matches `config/axswarm_settings.yaml`).
+
+| Press `1` | Phase | Target |
+|-----------|--------|--------|
+| 1 | **Vertical climb** | Ground XY, rise to `--prearm-takeoff-z` (default ≈ morph z₀, often ~1.4 m) |
+| 2 | **Hover formation** | Spread to `--prearm-hover-z` (default 1.80 m) |
+| 3 | **Vertical descend** | Shrink back to takeoff height (ground XY) |
+| 4 | **Ground** | Return to startup layout |
+
+Then cycle repeats from ground. Formation spread and vertical shrink use axswarm gradual streaming (recover mode); climb from ground and final landing use stronger convergence.
+
+**Real swarm:** same key sequence; first vertical climb and final ground use `goto` (`arm_goto_s` in TOML); formation / descend vertical use axswarm-filtered `send_setpoint_tick`.
 
 ### Controls
 
 | Key | Action |
 |-----|--------|
-| `1` | Toggle **ground ↔ hover** (axswarm-filtered). Blocked while gesture control is armed (`Space`). |
-| `Space` | **Arm / disarm** gesture control (hand-driven formation). |
+| `1` | Advance prearm: climb → formation → descend → ground (blocked while gesture armed) |
+| `Space` | **Arm / disarm** gesture control (hand-driven formation; use after hover formation) |
 | `0` | Arm / disarm left-hand whole-formation pose |
-| `q` or `Enter` | Quit (real swarm: lands at TOML `home` when `land_on_exit = true`) |
+| `q` or `Enter` | Quit (real: lands at TOML `home` when `land_on_exit = true`) |
 
-**Typical shutdown:** `Space` → `1` (descend if at hover) → `q`.
+**Typical session:** `1` ×4 to reach hover formation → `Space` for gestures → `Space` to disarm → `1` ×2 to descend to vertical then ground → `q`.
+
+**Useful flags:** `--prearm-takeoff-z`, `--prearm-hover-z`, `--axswarm-mpc-hz 8`, `--profile-frame`, `--sim-render-every 2`.
 
 Legacy scripts and unit tests are on the **`backup-archive`** git branch.
 
@@ -106,16 +125,17 @@ Legacy scripts and unit tests are on the **`backup-archive`** git branch.
 
 ```text
 src/
-  online_control_dual.py      # simulation entry
-  online_control_real_dual.py # real Crazyflie entry
-  online_control.py           # shared main loop
+  online_control_dual.py      # simulation entry (24 drones, axswarm @ 8 Hz)
+  online_control_real_dual.py # real Crazyflie entry (8 morph points)
+  online_control.py           # shared main loop (prearm phases, gestures, filter)
   functions/
-    display_sim/              # Orbbec hand pipeline, plots
-    real_swarm/               # Crazyflie bridge (cflib2 + mocap)
+    display_sim/              # Orbbec hand pipeline, Crazyflow step/render
+    real_swarm/               # executor + swarmGPT DroneSwarm wrapper (cflib2 + mocap)
+    swarm_motion/             # axswarm filter, prearm layouts, spacing
 config/
   drones.example.toml         # template
   2drones.toml / 5drones.toml # lab presets (swarmGPT-style URIs)
-  axswarm_settings.yaml       # axswarm MPC / collision defaults
+  axswarm_settings.yaml       # axswarm MPC / collision defaults (freq: 8 Hz)
 scripts/
   setup_orbbec.sh             # download Orbbec K4A Wrapper
   setup_mocap.sh              # clone/build motion_capture_tracking (deploy)

@@ -24,4 +24,5 @@ class PresentFrameInput:
     left_pose_dbg: str
     elapsed: float
     just_gesture_armed: bool = False
+    just_prearm_phase: bool = False
     section: Callable[[str], None] | None = None

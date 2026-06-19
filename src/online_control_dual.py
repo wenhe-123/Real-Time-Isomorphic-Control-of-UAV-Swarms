@@ -12,8 +12,8 @@ Run from ``iso_swarm`` (pixi)::
 With pixi tasks, keep the task separator: ``pixi run online-dual -- --mp-detect-every 1``.
 
 Defaults: Orbbec input, ``--planner axswarm``, ``--point-count 24``. Gesture targets
-flow through axswarm (if enabled) to ``cmd_target``; MuJoCo uses ``render_targets(sim, …)`` only
-(no ``sim.step``). Use ``--planner direct`` for raw gesture chasing without axswarm MPC.
+flow through axswarm (if enabled) to ``cmd_target``; Crazyflow tracks them via
+``state_control`` + ``sim.step`` (Mellinger), then ``sim.render``.
 
 ``--point-count`` / interactive ``n`` must be >= 8 (default 24).
 
@@ -110,6 +110,10 @@ def inject_axswarm_motion_argv(argv: list[str]) -> list[str]:
         out.extend(["--left-trans-rot-coupling", "0.50"])
     if not _argv_has_flag(out, "--left-rot-direct-follow"):
         out.append("--left-rot-direct-follow")
+    if not _argv_has_flag(out, "--axswarm-mpc-hz"):
+        from functions.runtime.online_defaults import _DEFAULT_AXSWARM_MPC_HZ
+
+        out.extend(["--axswarm-mpc-hz", f"{_DEFAULT_AXSWARM_MPC_HZ:g}"])
     return out
 
 

@@ -12,6 +12,20 @@ from functions.swarm_motion.spacing_guard import (
 )
 
 
+def vertical_takeoff_layout(
+    ground_layout: np.ndarray,
+    *,
+    takeoff_z: float,
+    min_separation_m: float,
+) -> np.ndarray:
+    """Keep ground XY; lift every drone vertically to ``takeoff_z``."""
+    layout = np.asarray(ground_layout, dtype=np.float32).copy()
+    layout[:, 2] = float(takeoff_z)
+    return enforce_min_separation(
+        layout, float(min_separation_m), iters=10
+    ).astype(np.float32)
+
+
 def complete_prearm_takeoff(
     morph_layout: np.ndarray,
     *,

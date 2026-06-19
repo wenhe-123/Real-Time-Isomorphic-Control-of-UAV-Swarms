@@ -9,15 +9,56 @@ import sys
 import termios
 import threading
 import tty
-from typing import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable
 
 from functions.mode_switch.modes_runtime import clear_mode_rotation_freeze_latch
+
+if TYPE_CHECKING:
+    from functions.runtime.online_boot import OnlineBoot
 
 # --- input keys ---
 _KEY_SPACE = ord(" ")
 _KEY_ENTER = 13
 _KEY_Q = ord("q")
 _warned_climb_while_gestured = False
+
+
+@dataclass
+class OnlineKeyContext:
+    """Mutable hotkey state boxes + scalars shared by key handlers."""
+
+    gesture_control_enabled: list
+    prearm_climb_enabled: list
+    prearm_phase_box: list
+    prearm_vertical_leg_box: list
+    prearm_has_flown_box: list
+    prearm_takeoff_z: float
+    prearm_hover_z: float
+    left_pose_reset_req: list
+    left_pose_runtime_armed: list
+    left_pose_state: object
+    mode_state: object | None
+    left_unwind_s: float
+    left_swarm_enabled: bool
+
+    @classmethod
+    def from_boot(cls, boot: OnlineBoot) -> OnlineKeyContext:
+        return cls(
+            gesture_control_enabled=boot.gesture_control_enabled_box,
+            prearm_climb_enabled=boot.prearm_climb_enabled_box,
+            prearm_phase_box=boot.prearm_phase_box,
+            prearm_vertical_leg_box=boot.prearm_vertical_leg_box,
+            prearm_has_flown_box=boot.prearm_has_flown_box,
+            prearm_takeoff_z=float(boot.prearm_takeoff_z),
+            prearm_hover_z=float(boot.prearm_hover_z),
+            left_pose_reset_req=boot.left_pose_reset_req_box,
+            left_pose_runtime_armed=boot.left_pose_runtime_armed_box,
+            left_pose_state=boot.left_pose_state,
+            mode_state=boot.mode_state,
+            left_unwind_s=float(boot.left_unwind_s),
+            left_swarm_enabled=bool(boot.left_pose_state.enabled),
+        )
 
 
 def probe_global_hotkey_backends() -> dict:
@@ -291,15 +332,8 @@ def process_online_control_keys(
     key_queue: OnlineKeyQueue | None,
     *,
     global_hotkeys: bool,
+    ctx: OnlineKeyContext,
     cv_key: int | None = None,
-    gesture_control_enabled: list,
-    prearm_climb_enabled: list,
-    left_pose_reset_req: list,
-    left_pose_runtime_armed: list,
-    left_pose_state,
-    mode_state=None,
-    left_unwind_s: float,
-    left_swarm_enabled: bool,
 ) -> bool:
     """Drain all pending keys; return True to quit the main loop."""
     keys: list[int] = []
@@ -315,17 +349,7 @@ def process_online_control_keys(
             keys = [ck]
 
     for k in keys:
-        if apply_online_control_key(
-            k,
-            gesture_control_enabled=gesture_control_enabled,
-            prearm_climb_enabled=prearm_climb_enabled,
-            left_pose_reset_req=left_pose_reset_req,
-            left_pose_runtime_armed=left_pose_runtime_armed,
-            left_pose_state=left_pose_state,
-            mode_state=mode_state,
-            left_unwind_s=left_unwind_s,
-            left_swarm_enabled=left_swarm_enabled,
-        ):
+        if apply_online_control_key(k, ctx=ctx):
             return True
     return False
 
@@ -333,14 +357,7 @@ def process_online_control_keys(
 def apply_online_control_key(
     key: int | None,
     *,
-    gesture_control_enabled: list,
-    prearm_climb_enabled: list,
-    left_pose_reset_req: list,
-    left_pose_runtime_armed: list,
-    left_pose_state,
-    mode_state=None,
-    left_unwind_s: float,
-    left_swarm_enabled: bool,
+    ctx: OnlineKeyContext,
 ) -> bool:
     """Handle one key press. Returns True to quit the main loop."""
     global _warned_climb_while_gestured
@@ -349,65 +366,84 @@ def apply_online_control_key(
     if key in (_KEY_Q, _KEY_ENTER):
         return True
     if key == ord("1"):
-        if gesture_control_enabled[0]:
+        if ctx.gesture_control_enabled[0]:
             if not _warned_climb_while_gestured:
                 print("Cannot toggle climb/ground: gesture control is armed (SPACE).")
                 _warned_climb_while_gestured = True
             return False
         _warned_climb_while_gestured = False
-        if prearm_climb_enabled[0]:
-            prearm_climb_enabled[0] = False
+        phase = str(ctx.prearm_phase_box[0])
+        if phase == "ground":
+            ctx.prearm_phase_box[0] = "vertical"
+            ctx.prearm_vertical_leg_box[0] = "climb"
+            ctx.prearm_climb_enabled[0] = True
+            ctx.prearm_has_flown_box[0] = True
             print(
-                "Returning to ground layout "
-                "(axswarm-filtered when enabled). Press 1 to climb again."
+                f"Vertical takeoff: axswarm-filtered climb to z={ctx.prearm_takeoff_z:.2f}m "
+                "(ground XY fixed). Press 1 again for hover formation."
             )
-        else:
-            prearm_climb_enabled[0] = True
+        elif phase == "vertical":
+            if str(ctx.prearm_vertical_leg_box[0]) == "climb":
+                ctx.prearm_phase_box[0] = "formation"
+                print(
+                    f"Hover formation: spread to z={ctx.prearm_hover_z:.2f}m "
+                    "(axswarm-filtered). Press 1 to shrink back to vertical."
+                )
+            else:
+                ctx.prearm_phase_box[0] = "ground"
+                ctx.prearm_climb_enabled[0] = False
+                print(
+                    f"Axswarm-filtered descent to ground layout "
+                    f"(from z≈{ctx.prearm_takeoff_z:.2f}m). Press 1 for next takeoff."
+                )
+        elif phase == "formation":
+            ctx.prearm_phase_box[0] = "vertical"
+            ctx.prearm_vertical_leg_box[0] = "descend"
             print(
-                "Prearm climb: ascending toward hover layout "
-                "(axswarm-filtered when enabled). Press 1 to return to ground."
+                f"Vertical descend: shrink to z={ctx.prearm_takeoff_z:.2f}m "
+                "(ground XY; axswarm-filtered). Press 1 again for ground."
             )
         return False
     if key == _KEY_SPACE:
-        if gesture_control_enabled[0]:
-            gesture_control_enabled[0] = False
+        if ctx.gesture_control_enabled[0]:
+            ctx.gesture_control_enabled[0] = False
             _warned_climb_while_gestured = False
             print(
-                "Gesture control disarmed. Press 1 to descend to ground layout "
-                "(toggle hover ↔ ground), then q to quit."
+                "Gesture control disarmed. Press 1 to descend: formation → vertical → ground, "
+                "then q to quit."
             )
             return False
-        gesture_control_enabled[0] = True
+        ctx.gesture_control_enabled[0] = True
         print("Gesture control armed: Crazyflow targets now follow mode/open recognition.")
         return False
-    if key == ord("z") and left_swarm_enabled and left_pose_runtime_armed[0]:
-        left_pose_reset_req[0] = True
+    if key == ord("z") and ctx.left_swarm_enabled and ctx.left_pose_runtime_armed[0]:
+        ctx.left_pose_reset_req[0] = True
         print("Left swarm move: will re-zero reference on next valid left hand.")
         return False
-    if key == ord("0") and left_swarm_enabled:
-        if left_pose_state.is_unwinding():
-            left_pose_state.cancel_unwind()
-            left_pose_runtime_armed[0] = True
-            left_pose_reset_req[0] = True
-            if mode_state is not None:
-                clear_mode_rotation_freeze_latch(mode_state)
+    if key == ord("0") and ctx.left_swarm_enabled:
+        if ctx.left_pose_state.is_unwinding():
+            ctx.left_pose_state.cancel_unwind()
+            ctx.left_pose_runtime_armed[0] = True
+            ctx.left_pose_reset_req[0] = True
+            if ctx.mode_state is not None:
+                clear_mode_rotation_freeze_latch(ctx.mode_state)
             print("Left swarm: restore cancelled — re-armed with current hand as baseline.")
-        elif not left_pose_runtime_armed[0]:
-            left_pose_runtime_armed[0] = True
-            left_pose_reset_req[0] = True
-            if mode_state is not None:
-                clear_mode_rotation_freeze_latch(mode_state)
+        elif not ctx.left_pose_runtime_armed[0]:
+            ctx.left_pose_runtime_armed[0] = True
+            ctx.left_pose_reset_req[0] = True
+            if ctx.mode_state is not None:
+                clear_mode_rotation_freeze_latch(ctx.mode_state)
             print(
                 "Left swarm move: ON — move hand to translate/rotate formation; "
                 "press 0 again to smoothly return to morph-only frame."
             )
         else:
-            left_pose_runtime_armed[0] = False
-            left_pose_state.begin_unwind(left_unwind_s)
-            if mode_state is not None:
-                clear_mode_rotation_freeze_latch(mode_state)
+            ctx.left_pose_runtime_armed[0] = False
+            ctx.left_pose_state.begin_unwind(ctx.left_unwind_s)
+            if ctx.mode_state is not None:
+                clear_mode_rotation_freeze_latch(ctx.mode_state)
             print(
-                f"Left swarm move: restoring morph frame over ~{left_unwind_s:.1f}s "
+                f"Left swarm move: restoring morph frame over ~{ctx.left_unwind_s:.1f}s "
                 "(press 0 during restore to cancel and re-arm)."
             )
         return False

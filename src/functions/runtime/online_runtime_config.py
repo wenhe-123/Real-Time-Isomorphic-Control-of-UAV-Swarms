@@ -33,6 +33,7 @@ class OnlineRuntimeConfig:
     axswarm_max_iters: int | None
     axswarm_max_solve_ms: float
     axswarm_max_deviation_m: float
+    axswarm_mpc_hz: float
     axswarm_pos_weight: float | None
     max_sim_substeps: int
     plot_every_n: int
@@ -150,6 +151,7 @@ def build_online_runtime_config(
         axswarm_max_iters=args.axswarm_max_iters,
         axswarm_max_solve_ms=float(args.axswarm_max_solve_ms),
         axswarm_max_deviation_m=float(args.axswarm_max_deviation_m),
+        axswarm_mpc_hz=args.axswarm_mpc_hz,
         axswarm_pos_weight=args.axswarm_pos_weight,
         max_sim_substeps=int(args.max_sim_substeps),
         plot_every_n=max(0, int(pipeline.plot_every_n)),

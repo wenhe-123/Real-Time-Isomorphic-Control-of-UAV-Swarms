@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
@@ -26,6 +26,10 @@ from functions.dual_cam.stream_runtime_utils import (
     safe_get_capture,
 )
 
+if TYPE_CHECKING:
+    from functions.runtime.online_boot import OnlineBoot
+    from functions.runtime.online_runtime_config import OnlineRuntimeConfig
+
 
 @dataclass
 class OrbbecCaptureFrame:
@@ -39,35 +43,38 @@ class OrbbecCaptureFrame:
     ema_3d: Any
 
 
+@dataclass
+class CaptureFrameInput:
+    """Per-frame Orbbec capture + MediaPipe detect inputs."""
+
+    boot: OnlineBoot
+    cfg: OnlineRuntimeConfig
+    landmarker: Any
+    frame_idx: int
+    t_ms: int
+    cached_mp_result: Any
+    cached_hands_3d_all: list
+    ema_3d: Any
+    section: Callable[[str], None] | None = None
+
+
 def grab_orbbec_mp_frame(
-    *,
-    k4a: Any,
-    landmarker: Any,
-    frame_idx: int,
-    t_ms: int,
-    fps: float,
-    mp_detect_every: int,
-    mp_input_scale: float,
-    orbbec_flip_horizontal: bool,
-    orbbec_use_transformed_depth: bool,
-    use_depth_fusion: bool,
-    pipe: Any,
-    calib: Any,
-    draw_hand_debug: bool,
-    cached_mp_result: Any,
-    cached_hands_3d_all: list,
-    ema_3d: Any,
-    orbbec_flip_depth_warned: bool,
-    section: Callable[[str], None] | None = None,
+    inp: CaptureFrameInput,
 ) -> tuple[OrbbecCaptureFrame | None, np.ndarray | None, bool]:
     """Return (payload, poll_frame, flip_depth_warned). poll_frame is set when MP detect fails."""
-    capture = safe_get_capture(k4a, warn_prefix="online_control get_capture")
+    boot = inp.boot
+    cfg = inp.cfg
+    section = inp.section
+    orbbec_flip_depth_warned = bool(boot.orbbec_flip_depth_warned)
+    capture = safe_get_capture(boot.k4a, warn_prefix="online_control get_capture")
     got = capture_orbbec_frame(capture)
     if got is None:
         return None, None, orbbec_flip_depth_warned
     frame, depth_raw, capture = got
-    depth_aligned = get_aligned_depth(capture, frame, bool(orbbec_use_transformed_depth))
-    if bool(orbbec_flip_horizontal):
+    depth_aligned = get_aligned_depth(
+        capture, frame, bool(cfg.orbbec_use_transformed_depth)
+    )
+    if bool(cfg.orbbec_flip_horizontal):
         fh, fw = int(frame.shape[0]), int(frame.shape[1])
         frame = cv2.flip(frame, 1)
         if depth_aligned is not None and depth_aligned.shape[:2] == (fh, fw):
@@ -81,6 +88,7 @@ def grab_orbbec_mp_frame(
             )
             orbbec_flip_depth_warned = True
     mp_frame = frame
+    mp_input_scale = float(cfg.mp_input_scale)
     if 0.0 < mp_input_scale < 1.0:
         h0, w0 = frame.shape[:2]
         sw = max(64, int(round(w0 * mp_input_scale)))
@@ -89,23 +97,25 @@ def grab_orbbec_mp_frame(
     if section is not None:
         section("capture")
 
-    run_mp = cached_mp_result is None or (frame_idx % mp_detect_every) == 0
+    run_mp = inp.cached_mp_result is None or (inp.frame_idx % cfg.mp_detect_every) == 0
     if run_mp:
         mp_image = make_mp_image_from_bgr(mp_frame)
         result = detect_for_video_safe(
-            landmarker,
+            inp.landmarker,
             mp_image,
-            t_ms,
+            inp.t_ms,
             warn_prefix="online_control detect_for_video",
         )
         if result is None:
             return None, frame, orbbec_flip_depth_warned
         if section is not None:
             section("mp_detect")
+        use_depth_fusion = bool(boot.use_depth_fusion)
         depth_raw_for_draw = depth_raw if use_depth_fusion else None
         depth_aligned_for_draw = depth_aligned if use_depth_fusion else None
-        calib_for_draw = calib if use_depth_fusion else None
-        fusion_w = float(pipe.depth_fusion_weight) if use_depth_fusion else 0.0
+        calib_for_draw = boot.calib if use_depth_fusion else None
+        fusion_w = float(boot.pipe.depth_fusion_weight) if use_depth_fusion else 0.0
+        ema_3d = inp.ema_3d
         frame, hands_3d_all, ema_3d = draw_hand(
             frame,
             result,
@@ -123,16 +133,17 @@ def grab_orbbec_mp_frame(
             depth_median_max_delta_mm=DEPTH_MEDIAN_MAX_DELTA_MM,
             hand_3d_source=HAND_3D_SOURCE_MP,
             depth_unproject_rigid_T=None,
-            draw_skeleton=bool(draw_hand_debug),
+            draw_skeleton=bool(cfg.draw_hand_debug),
         )
         if section is not None:
-            section("draw_hand_dbg" if draw_hand_debug else "hand_3d")
+            section("draw_hand_dbg" if cfg.draw_hand_debug else "hand_3d")
     else:
-        result = cached_mp_result
-        hands_3d_all = cached_hands_3d_all
+        result = inp.cached_mp_result
+        hands_3d_all = inp.cached_hands_3d_all
+        ema_3d = inp.ema_3d
         if section is not None:
             section("mp_detect")
-            section("draw_hand_dbg" if draw_hand_debug else "hand_3d")
+            section("draw_hand_dbg" if cfg.draw_hand_debug else "hand_3d")
 
     return (
         OrbbecCaptureFrame(

@@ -50,6 +50,7 @@ orbbec = [
 deploy = [
     "cflib2 @ git+https://github.com/bitcraze/crazyflie-lib-python-v2.git",
     "drone-estimators",
+    "swarmgpt @ git+https://github.com/utiasDSL/swarmGPT.git",
 ]
 
 [tool.setuptools.packages]
@@ -124,72 +125,3 @@ ros2-distro-mutex = "0.12.*"
 [tool.pixi.feature.kilted.activation]
 scripts = ["scripts/setup_mocap.sh"]
 
-
-########################
-# ruff Settings
-########################
-
-[tool.ruff]
-exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
-    ".git",
-    ".git-rewrite",
-    ".hg",
-    ".ipynb_checkpoints",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pyenv",
-    ".pytest_cache",
-    ".pytype",
-    ".ruff_cache",
-    ".svn",
-    ".tox",
-    ".venv",
-    ".vscode",
-    "__pypackages__",
-    "_build",
-    "buck-out",
-    "build",
-    "dist",
-    "node_modules",
-    "ros_ws",
-    "site-packages",
-    "venv",
-    "docs/conf.py",
-    "scripts/*",
-]
-
-line-length = 100
-indent-width = 4
-target-version = "py312"
-
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "D", "TCH", "ANN"]
-ignore = ["ANN401"]
-fixable = ["ALL"]
-unfixable = []
-
-[tool.ruff.lint.isort]
-split-on-trailing-comma = false
-
-[tool.ruff.lint.per-file-ignores]
-"scripts/*" = ["D", "ANN"]
-"src/backup/tests/*" = ["D100", "D103", "D104"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.ruff.lint.flake8-annotations]
-suppress-dummy-args = true
-suppress-none-returning = true
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = true
-line-ending = "auto"
-docstring-code-format = true
-docstring-code-line-length = "dynamic"
