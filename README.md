@@ -117,7 +117,7 @@ Then cycle repeats from ground. All prearm moves and exit landing use the same a
 | `0` | Arm / disarm left-hand whole-formation pose |
 | `q` or `Enter` | Quit (real: lands at TOML `home` when `land_on_exit = true`) |
 
-**Typical session:** `1` ×4 to reach hover formation → `Space` for gestures → `Space` to disarm → `1` ×2 to descend to vertical then ground → `q`.
+**Typical session:** `1` ×2 (climb → hover formation) → `Space` to arm gestures → `Space` to disarm → `1` ×2 (vertical shrink → ground) → `q`. (`1` is ignored while gesture is armed.)
 
 **Useful flags:** `--prearm-takeoff-z`, `--prearm-hover-z`, `--axswarm-mpc-hz 8`, `--profile-frame`, `--sim-render-every 2`.
 
