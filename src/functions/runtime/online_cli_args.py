@@ -11,7 +11,6 @@ from functions.runtime.online_defaults import (
     _DEFAULT_AXIS_ROT_ON_RAD,
     _DEFAULT_AXIS_TRANS_DEADZONE_M,
     _DEFAULT_AXIS_TRANS_ON_M,
-    _DEFAULT_AXSWARM_MPC_HZ,
     _DEFAULT_DRONE_MODEL,
     _DEFAULT_LEFT_CAM_PRESET,
     _DEFAULT_LEFT_CAM_Y_TO_WORLD_Z,
@@ -50,10 +49,6 @@ from functions.runtime.online_defaults import (
     _DEFAULT_PREARM_TAKEOFF_Z,
     _DEFAULT_RAW_TARGET_EMA,
     _DEFAULT_SIM_RENDER_EVERY,
-    _DEFAULT_SWARM_WORKSPACE_BOX_M,
-    _DEFAULT_SWARM_WORKSPACE_CLEAR_MARGIN_M,
-    _DEFAULT_SWARM_WORKSPACE_MODE,
-    _DEFAULT_SWARM_WORKSPACE_WALL_MARGIN_M,
     _DEFAULT_WEBCAM_ROT_STRIDE,
     _LED_APPLY_EVERY_FRAMES,
     _ONLINE_MAX_SIM_SUBSTEPS_PER_FRAME,
@@ -95,18 +90,15 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         "--min-separation-m",
         type=float,
         default=_DEFAULT_MIN_SEPARATION_M,
-        help="Minimum inter-drone spacing guard in meters.",
+        help="Minimum inter-drone spacing guard in meters (axswarm uses yaml collision_envelope).",
     )
     parser.add_argument("--xy-radius", type=float, default=3.00)
-    parser.add_argument("--z-center", type=float, default=1.40)
     parser.add_argument(
         "--z-amplitude",
         type=float,
         default=0.35,
-        help="Unused for mapping (kept for CLI compatibility); vertical extent uses --z-mm-scale.",
+        help="Max ±Z thickness around hover_z for morph mapping (m).",
     )
-    parser.add_argument("--z-min", type=float, default=1.05)
-    parser.add_argument("--z-max", type=float, default=2.25)
     parser.add_argument("--reference-xy-extent-mm", type=float, default=100.0)
     parser.add_argument(
         "--reference-z-extent-mm",
@@ -125,7 +117,19 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         metavar="N",
-        help="Print each drone target xyz every N frames (0=off); also prints sim positions as sim_pos.",
+        help="Print full target chain (morph/pre_filter/cmd/sim) every N frames (0=off).",
+    )
+    parser.add_argument(
+        "--debug-drone-pos-every",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Print each drone cmd_target + sim/real xyz every N frames (0=off).",
+    )
+    parser.add_argument(
+        "--debug-drone-pos",
+        action="store_true",
+        help="Shorthand for --debug-drone-pos-every 1.",
     )
     parser.add_argument(
         "--formation-rigid-3d-debug",
@@ -460,23 +464,14 @@ def build_online_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile-every", type=int, default=60)
     parser.add_argument("--open-vis-min", type=float, default=_DEFAULT_OPEN_VIS_MIN)
     parser.add_argument("--left-trans-rot-coupling", type=float, default=0.50)
-    parser.add_argument("--planner", choices=("direct", "axswarm"), default="direct")
     parser.add_argument("--axswarm-settings", type=str, default=None)
     parser.add_argument("--axswarm-project-root", type=str, default=None)
-    parser.add_argument("--axswarm-max-iters", type=int, default=None)
-    parser.add_argument("--axswarm-max-solve-ms", type=float, default=90.0)
-    parser.add_argument("--axswarm-max-deviation-m", type=float, default=0.2)
     parser.add_argument(
-        "--axswarm-mpc-hz",
+        "--axswarm-max-solve-ms",
         type=float,
-        default=_DEFAULT_AXSWARM_MPC_HZ,
-        help=f"Axswarm MPC replan rate (Hz). Default {_DEFAULT_AXSWARM_MPC_HZ:g} (matches axswarm_settings.yaml).",
+        default=90.0,
+        help="Wall-clock MPC solve budget per replan (not in yaml).",
     )
-    parser.add_argument("--axswarm-pos-weight", type=float, default=None)
-    parser.add_argument("--swarm-workspace-box-m", type=float, default=_DEFAULT_SWARM_WORKSPACE_BOX_M)
-    parser.add_argument("--swarm-workspace-wall-margin-m", type=float, default=_DEFAULT_SWARM_WORKSPACE_WALL_MARGIN_M)
-    parser.add_argument("--swarm-workspace-clear-margin-m", type=float, default=_DEFAULT_SWARM_WORKSPACE_CLEAR_MARGIN_M)
-    parser.add_argument("--swarm-workspace-mode", choices=("clip", "freeze"), default=_DEFAULT_SWARM_WORKSPACE_MODE)
     parser.add_argument("--left-palm-depth-outlier-z-mm", type=float, default=_DEFAULT_LEFT_PALM_DEPTH_OUTLIER_Z_MM)
     parser.add_argument("--left-palm-depth-outlier-lat-ratio", type=float, default=_DEFAULT_LEFT_PALM_DEPTH_OUTLIER_LAT_RATIO)
     parser.add_argument("--left-palm-center-depth-ema", type=float, default=_DEFAULT_LEFT_PALM_CENTER_DEPTH_EMA)

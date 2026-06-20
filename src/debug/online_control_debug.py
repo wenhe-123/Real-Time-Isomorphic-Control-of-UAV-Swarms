@@ -9,7 +9,7 @@ import numpy as np
 
 from functions.mode_switch.modes_runtime import ModeState, RightHandState
 from functions.swarm_motion.left_hand_swarm_pose import LeftSwarmPoseState
-from functions.swarm_motion.target_debug import debug_print_drone_targets
+from functions.swarm_motion.target_debug import debug_print_drone_targets, debug_print_drone_positions
 
 
 def draw_drone_target_debug_hud(
@@ -64,6 +64,72 @@ def draw_drone_target_debug_hud(
     )
 
 
+def print_drone_position_debug(
+    *,
+    frame_idx: int,
+    cmd_target: np.ndarray,
+    pre_axswarm: np.ndarray | None = None,
+    sim: Any | None = None,
+    real_pos: np.ndarray | None = None,
+    raw_target: np.ndarray | None = None,
+    hold_z: float | None = None,
+    axswarm_status: str | None = None,
+) -> None:
+    """Print morph input, axswarm in/out, and sim/real positions for every drone."""
+    if hold_z is not None or axswarm_status:
+        hz = "none" if hold_z is None else f"{float(hold_z):.3f}m"
+        st = f" {axswarm_status}" if axswarm_status else ""
+        print(f"[pos axswarm] frame={frame_idx} hold_z={hz}{st}", flush=True)
+    if raw_target is not None:
+        raw = np.asarray(raw_target, dtype=np.float64)
+        rc = raw.mean(axis=0)
+        print(
+            f"[pos morph_raw] frame={frame_idx} centroid="
+            f"({rc[0]:+.3f},{rc[1]:+.3f},{rc[2]:+.3f}) "
+            f"z∈[{float(raw[:, 2].min()):.3f},{float(raw[:, 2].max()):.3f}]",
+            flush=True,
+        )
+    pre: np.ndarray | None = None
+    if pre_axswarm is not None:
+        pre = np.asarray(pre_axswarm, dtype=np.float64)
+        pc = pre.mean(axis=0)
+        print(
+            f"[pos pre_axswarm] frame={frame_idx} centroid="
+            f"({pc[0]:+.3f},{pc[1]:+.3f},{pc[2]:+.3f}) "
+            f"z∈[{float(pre[:, 2].min()):.3f},{float(pre[:, 2].max()):.3f}]",
+            flush=True,
+        )
+        debug_print_drone_positions(pre, frame_idx=frame_idx, label="pre_axswarm")
+    cmd = np.asarray(cmd_target, dtype=np.float64)
+    cc = cmd.mean(axis=0)
+    post_hdr = (
+        f"[pos post_axswarm] frame={frame_idx} centroid="
+        f"({cc[0]:+.3f},{cc[1]:+.3f},{cc[2]:+.3f}) "
+        f"z∈[{float(cmd[:, 2].min()):.3f},{float(cmd[:, 2].max()):.3f}]"
+    )
+    if pre is not None:
+        post_hdr += f" Δz_centroid={cc[2] - pre.mean(axis=0)[2]:+.3f}m"
+    print(post_hdr, flush=True)
+    debug_print_drone_positions(
+        cmd, frame_idx=frame_idx, label="post_axswarm", compare_to=pre
+    )
+    if sim is not None:
+        try:
+            sim_pos = np.asarray(sim.data.states.pos[0], dtype=np.float64)
+            debug_print_drone_positions(
+                sim_pos, frame_idx=frame_idx, label="sim_pos", compare_to=cmd
+            )
+        except Exception as exc:
+            print(f"[pos sim_pos] frame={frame_idx} unavailable: {exc}", flush=True)
+    elif real_pos is not None:
+        debug_print_drone_positions(
+            np.asarray(real_pos, dtype=np.float64),
+            frame_idx=frame_idx,
+            label="real_pos",
+            compare_to=cmd,
+        )
+
+
 def print_center_trace(
     *,
     elapsed: float,
@@ -74,7 +140,6 @@ def print_center_trace(
     cmd_target: np.ndarray,
     safe_target: np.ndarray,
     left_pose_state: LeftSwarmPoseState,
-    swarm_workspace: Any,
 ) -> None:
     if frame_idx % max(1, int(center_trace_every)) != 0:
         return
@@ -107,15 +172,10 @@ def print_center_trace(
     center_trace_prev["raw_z"] = float(raw_center[2])
     center_trace_prev["safe_z"] = float(safe_center[2])
     center_trace_prev["smooth_z"] = float(smooth_center[2])
-    ws_tag = "ws=off"
-    if swarm_workspace.enabled and swarm_workspace.armed:
-        ws_tag = f"ws={swarm_workspace.mode}"
-        if swarm_workspace.blocked:
-            ws_tag += ",blocked"
     flag_s = (" " + " ".join(flags)) if flags else ""
     print(
         "[center-trace] "
-        f"t={float(elapsed):7.3f}s {ws_tag}{flag_s}\n"
+        f"t={float(elapsed):7.3f}s{flag_s}\n"
         f"  hand_cam_mm=({hand_cam_mm[0]:+7.1f},{hand_cam_mm[1]:+7.1f},{hand_cam_mm[2]:+7.1f}) "
         f"hand_rel_m=({hand_world_rel[0]:+6.3f},{hand_world_rel[1]:+6.3f},{hand_world_rel[2]:+6.3f})\n"
         f"  raw_center=({raw_center[0]:+6.3f},{raw_center[1]:+6.3f},{raw_center[2]:+6.3f}) "

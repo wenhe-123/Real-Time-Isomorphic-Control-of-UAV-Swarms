@@ -9,7 +9,6 @@ import numpy as np
 from swarm_gpt.core.drone_swarm import DroneSwarm
 
 from functions.real_swarm.swarm_config import RealFrameMapping, RealSwarmOptions, load_drones_config
-from functions.swarm_motion.spacing_guard import enforce_min_separation_xy
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +115,7 @@ class RealSwarmExecutor:
             xy_half_extent_m=xy_half,
         )
         layout[: self.n_physical] = sim_phys
-        out = enforce_min_separation_xy(
-            layout, float(min_separation_m), z_ground, iters=10
-        )
-        out[: self.n_physical] = sim_phys
-        return out
+        return layout
 
     def get_sim_track_positions(
         self, morph_fallback: np.ndarray, n_morph: int

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,7 +33,7 @@ from functions.display_sim.gesture_report_debug import (
 )
 from functions.mode_switch.modes_runtime import ModeState, RightHandState
 from functions.mode_switch.morph_shape_control import LpShapePipelineState
-from functions.open_close.morph_world import ScaleConfig
+from functions.open_close.morph_world import ScaleConfig, fixed_morph_points, normalize_morph_points_at_hover
 from functions.runtime.live_target import LiveTargetState
 from functions.runtime.online_runtime_config import OnlineRuntimeConfig
 from functions.runtime.online_defaults import (
@@ -42,12 +42,7 @@ from functions.runtime.online_defaults import (
     _TRAIL_BUFFER_MAXLEN,
 )
 from functions.runtime.pipeline_tuning import PipelineTuning
-from functions.swarm_motion.axswarm_runtime import (
-    AxswarmOnlineConfig,
-    AxswarmSafetyFilter,
-    per_substep_target_cap_m,
-)
-from functions.swarm_motion.formation_spacing import lift_morph_to_hover_z
+from functions.swarm_motion.axswarm_runtime import AxswarmOnlineConfig, AxswarmSafetyFilter, resolve_axswarm_settings_path
 from functions.swarm_motion.left_hand_swarm_pose import (
     LeftSwarmPoseState,
     left_cam_preset_rotation,
@@ -56,12 +51,10 @@ from functions.swarm_motion.left_hand_swarm_pose import (
 )
 from functions.swarm_motion.left_pose_tuning import LeftPoseTuning
 from functions.swarm_motion.prearm import (
-    complete_prearm_takeoff,
     sim_chessboard_ground_layout,
     vertical_takeoff_layout,
 )
-from functions.swarm_motion.spacing_guard import closest_pair, enforce_min_separation
-from functions.swarm_motion.swarm_workspace_box import SwarmWorkspaceBox
+from functions.swarm_motion.spacing_guard import closest_pair
 
 if TYPE_CHECKING:
     from crazyflow.sim import Sim
@@ -75,7 +68,7 @@ class OnlineBoot:
     sim: Sim | None
     real_executor: RealSwarmExecutor | None
     n_drones: int
-    axswarm_rt: AxswarmSafetyFilter | None
+    axswarm_rt: AxswarmSafetyFilter
     mode_state: ModeState
     right_state: RightHandState
     lp_shape: LpShapePipelineState
@@ -100,7 +93,6 @@ class OnlineBoot:
     ax_hand: Any
     ax_topo: Any
     left_pose_state: LeftSwarmPoseState
-    swarm_workspace: SwarmWorkspaceBox
     key_queue: OnlineKeyQueue
     gesture_control_enabled_box: list[bool]
     prearm_climb_enabled_box: list[bool]
@@ -159,7 +151,6 @@ def boot_online_control(
     *,
     live_target: LiveTargetState,
     cfg: OnlineRuntimeConfig,
-    morph_default_z_clip: float = 1.10,
 ) -> OnlineBoot:
     """Open Orbbec + sim or real swarm, run prearm, wire axswarm and hotkeys."""
     n_drones = int(cfg.point_count)
@@ -200,27 +191,6 @@ def boot_online_control(
         sim.reset()
         motion_freq_hz = float(sim.freq)
 
-    morph_default = np.asarray(live_target.get(), dtype=np.float32)
-    morph_default[:, 2] = np.maximum(morph_default[:, 2], morph_default_z_clip)
-    prearm_hover_z = float(np.clip(cfg.prearm_hover_z, float(scale.z_min) + 0.05, float(scale.z_max) - 0.05))
-    prearm_takeoff_z = float(
-        np.clip(
-            float(cfg.prearm_takeoff_z),
-            float(scale.z_min) + 0.02,
-            prearm_hover_z,
-        )
-    )
-    prearm_hold = enforce_min_separation(
-        lift_morph_to_hover_z(morph_default, prearm_hover_z),
-        float(cfg.min_separation_m),
-        iters=12,
-    )
-    d_hold, pi_h, pj_h = closest_pair(prearm_hold)
-    print(
-        f"Pre-SPACE: morph layout → hover z={prearm_hover_z:.2f}m, "
-        f"spacing=({pi_h},{pj_h}) {d_hold:.2f}m"
-    )
-
     center_trace_every = max(1, int(cfg.center_trace_every))
     center_trace_prev: dict[str, float | None] = {
         "hand_z": None,
@@ -236,39 +206,27 @@ def boot_online_control(
 
     zeros = jnp.zeros((n_drones, 3))
 
-    planner_key = str(cfg.planner).strip().lower()
-    axswarm_rt: AxswarmSafetyFilter | None = None
-    if planner_key == "axswarm":
-        axswarm_online = AxswarmOnlineConfig.from_runtime_config(cfg, scale)
-        axswarm_rt = AxswarmSafetyFilter.from_online_config(n_drones, axswarm_online)
-        synced_step = per_substep_target_cap_m(
-            vel_max_m_s=float(axswarm_rt.settings.vel_max),
-            sim_freq_hz=int(motion_freq_hz),
-            outer_fps=int(cfg.fps),
-            max_substeps=int(cfg.max_sim_substeps),
-        )
-        print(
-            f"Motion cap from axswarm yaml: vel_max={float(axswarm_rt.settings.vel_max):.2f} m/s "
-            f"→ ~{synced_step:.4f} m/substep (ctrl.freq={int(motion_freq_hz)}, fps={int(cfg.fps)})."
-        )
-        _ax_warm = float(axswarm_rt.arm_warmup_s)
-        _ax_after = (
-            f"MPC after {_ax_warm:.1f}s post-takeoff warmup"
-            if _ax_warm > 1e-6
-            else "MPC engages on first 1 (vertical takeoff)"
-        )
-        print(
-            f"Planner: gesture setpoints + axswarm safety filter @ {axswarm_rt.mpc_hz:.1f} Hz, "
-            f"n={n_drones} ({_ax_after})."
-        )
-    elif planner_key != "direct":
-        raise ValueError(f"unknown --planner {planner!r}; use 'direct' or 'axswarm'")
-
-    prearm_hover_layout = complete_prearm_takeoff(
-        morph_default,
-        hover_z=prearm_hover_z,
-        min_separation_m=float(cfg.min_separation_m),
+    axswarm_online = AxswarmOnlineConfig.from_runtime_config(cfg, scale)
+    axswarm_rt = AxswarmSafetyFilter.from_online_config(n_drones, axswarm_online)
+    yaml_path = resolve_axswarm_settings_path(
+        axswarm_online.settings_path,
+        axswarm_online.project_root,
     )
+    env = np.asarray(axswarm_rt.settings.collision_envelope, dtype=np.float64)
+    pos_lo = np.asarray(axswarm_rt._pos_lo, dtype=np.float64)
+    pos_hi = np.asarray(axswarm_rt._pos_hi, dtype=np.float64)
+    print(
+        f"Axswarm yaml ({yaml_path}): freq={axswarm_rt.mpc_hz:.1f} Hz, "
+        f"vel_max={float(axswarm_rt.settings.vel_max):.2f} m/s, "
+        f"acc_max={float(axswarm_rt.settings.acc_max):.2f} m/s², "
+        f"collision_env={env.tolist()}, min_sep={axswarm_rt.min_separation_m:.2f} m, "
+        f"pos=[{pos_lo.tolist()}, {pos_hi.tolist()}]."
+    )
+    print(
+        f"Planner: gesture setpoints + axswarm safety filter @ {axswarm_rt.mpc_hz:.1f} Hz, "
+        f"n={n_drones} (active from startup)."
+    )
+
     z_ground = float(_DEFAULT_GROUND_Z)
     if real_executor is not None:
         ground_layout = real_executor.get_sim_ground_layout(
@@ -292,6 +250,48 @@ def boot_online_control(
             f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
             "Press 1: vertical takeoff → formation → vertical descend → ground."
         )
+    prearm_hover_z = float(
+        np.clip(float(cfg.prearm_hover_z), float(z_ground) + 0.15, 10.0)
+    )
+    scale = replace(
+        scale,
+        hover_z=prearm_hover_z,
+        z_center=prearm_hover_z,
+        z_min=prearm_hover_z - float(scale.z_amplitude),
+        z_max=prearm_hover_z + float(scale.z_amplitude),
+    )
+    _hover_mm = fixed_morph_points(
+        n_drones,
+        float(cfg.morph_radius_mm),
+        int(live_target.mode),
+        float(live_target.open_alpha),
+        None,
+    )
+    prearm_hover_layout = normalize_morph_points_at_hover(
+        _hover_mm,
+        scale,
+    )
+    live_target.set(
+        prearm_hover_layout,
+        int(live_target.mode),
+        float(live_target.open_alpha),
+    )
+    d_hold, pi_h, pj_h = closest_pair(prearm_hover_layout)
+    _layout_c = prearm_hover_layout.mean(axis=0)
+    _mm_c = _hover_mm.mean(axis=0)
+    print(
+        f"Pre-SPACE: morph layout → hover z={prearm_hover_z:.2f}m, "
+        f"sim_centroid=({_layout_c[0]:+.2f},{_layout_c[1]:+.2f},{_layout_c[2]:+.2f})m "
+        f"z∈[{float(prearm_hover_layout[:, 2].min()):.2f},"
+        f"{float(prearm_hover_layout[:, 2].max()):.2f}]m "
+        f"(mm sample centroid=({_mm_c[0]:+.1f},{_mm_c[1]:+.1f},{_mm_c[2]:+.1f})mm), "
+        f"spacing=({pi_h},{pj_h}) {d_hold:.2f}m"
+    )
+    takeoff_z_lo = float(z_ground) + 0.02
+    takeoff_z_hi = max(takeoff_z_lo + 0.02, float(prearm_hover_z) - 0.02)
+    prearm_takeoff_z = float(
+        np.clip(float(cfg.prearm_takeoff_z), takeoff_z_lo, takeoff_z_hi)
+    )
     prearm_vertical_layout = vertical_takeoff_layout(
         ground_layout,
         takeoff_z=prearm_takeoff_z,
@@ -326,33 +326,17 @@ def boot_online_control(
                 ang_vel=zeros[None, :, :],
             )
         )
-    if axswarm_rt is not None:
-        axswarm_rt.reset(boot_cmd, np.zeros((n_drones, 3), dtype=np.float32))
+    axswarm_rt.reset(boot_cmd, np.zeros((n_drones, 3), dtype=np.float32))
     mode_label = "real Crazyflie" if real_executor is not None else "MuJoCo sim (cmd+step)"
     print(
-        f"Mode: gesture targets → axswarm filter (if enabled) → cmd_target; {mode_label}."
-        + (
-            f" Planner: {ax_note}."
-            if (ax_note := (
-                "Axswarm safety_filter"
-                if axswarm_rt is not None
-                else "direct (no axswarm)"
-            ))
-            else ""
-        )
+        f"Mode: gesture targets → axswarm filter → cmd_target; {mode_label}. "
+        "Planner: Axswarm safety_filter."
     )
-    if axswarm_rt is not None:
-        print(
-            "Axswarm safety filter engages on first 1 (vertical takeoff). "
-            f"1 → z={prearm_takeoff_z:.2f}m → formation z={prearm_hover_z:.2f}m "
-            f"→ z={prearm_takeoff_z:.2f}m → ground; SPACE → gesture control."
-        )
-    else:
-        print(
-            f"Press 1: vertical z={prearm_takeoff_z:.2f}m → formation z={prearm_hover_z:.2f}m "
-            f"→ vertical z={prearm_takeoff_z:.2f}m → ground; "
-            "SPACE to arm gestures."
-        )
+    print(
+        f"Axswarm safety filter active from startup (ground hold_z={z_ground:.2f}m). "
+        f"Press 1: z={prearm_takeoff_z:.2f}m → formation z={prearm_hover_z:.2f}m (before SPACE) "
+        f"→ z={prearm_takeoff_z:.2f}m → ground; SPACE → gesture control."
+    )
 
     left_cam_preset = str(cfg.left_cam_preset).strip().lower()
     left_cam_y_to_world_z = float(np.clip(cfg.left_cam_y_to_world_z, 0.0, 1.0))
@@ -421,12 +405,6 @@ def boot_online_control(
     )
 
     left_pose_state = LeftSwarmPoseState(enabled=bool(cfg.left_swarm_pose))
-    swarm_workspace = SwarmWorkspaceBox(
-        size_m=float(cfg.swarm_workspace_box_m),
-        wall_margin_m=float(cfg.swarm_workspace_wall_margin_m),
-        clear_margin_m=float(cfg.swarm_workspace_clear_margin_m),
-        mode=str(cfg.swarm_workspace_mode),
-    )
     left_rot_pivot_key = str(cfg.left_rot_pivot).strip().lower()
     if left_rot_pivot_key not in ("per_drone", "centroid"):
         left_rot_pivot_key = "per_drone"
@@ -446,27 +424,6 @@ def boot_online_control(
                 "Left rotation direct-follow: palm-local axes drive swarm axes "
                 "(palm normal twist -> world Z yaw); planar/tau damping disabled."
             )
-        if swarm_workspace.enabled:
-            half_box = 0.5 * float(swarm_workspace.size_m)
-            min_hover_for_box = float(swarm_workspace.floor_z) + half_box
-            print(
-                f"Swarm workspace box: {float(swarm_workspace.size_m):.2f} m cube centered on "
-                "swarm centroid at press-0 (XY); bottom clamped to "
-                f"z>={float(swarm_workspace.floor_z):.2f} m. "
-                f"Mode={swarm_workspace.mode!r}: "
-                + (
-                    "scale rigid motion at walls instead of freezing."
-                    if swarm_workspace.clip_mode
-                    else "freeze when any drone hits a wall until formation can move away."
-                )
-                + " Morph/open targets are clamped inside the box while armed."
-                + f" Wall margin {float(swarm_workspace.wall_margin_m):.3f} m"
-                f" (clear {float(swarm_workspace.clear_margin_m):.3f} m in freeze mode). "
-                f"Symmetric box needs hover mean z>={min_hover_for_box:.2f} m "
-                f"(current --prearm-hover-z={prearm_hover_z:.2f} m). "
-                "Use --swarm-workspace-box-m 0 to disable."
-            )
-
     gesture_control_enabled = False
     _hk_probe = (
         try_install_hotkey_dependencies()
@@ -527,7 +484,6 @@ def boot_online_control(
         ax_hand=ax_hand,
         ax_topo=ax_topo,
         left_pose_state=left_pose_state,
-        swarm_workspace=swarm_workspace,
         key_queue=key_queue,
         gesture_control_enabled_box=[gesture_control_enabled],
         prearm_climb_enabled_box=[False],

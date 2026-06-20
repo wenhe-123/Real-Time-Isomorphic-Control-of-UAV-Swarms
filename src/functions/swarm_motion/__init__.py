@@ -1,1 +1,1 @@
-"""Whole-swarm translation/rotation, spacing, workspace box, axswarm safety."""
+"""Whole-swarm translation/rotation, spacing, axswarm safety."""

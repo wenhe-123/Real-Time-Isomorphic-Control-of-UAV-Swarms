@@ -57,9 +57,9 @@ from functions.runtime.online_targets import make_initial_live_target, update_li
 from functions.runtime.pipeline_tuning import PipelineTuning, online_pipeline_defaults
 from functions.display_sim.online_present_input import PresentFrameInput
 from functions.swarm_motion.online_frame_filter import filter_online_targets
-from functions.swarm_motion.online_left_swarm_frame import apply_left_swarm_frame, clamp_workspace_targets
-from functions.swarm_motion.prearm import complete_prearm_takeoff
-from functions.swarm_motion.spacing_guard import closest_pair, enforce_min_separation, enforce_min_separation_xy
+from functions.swarm_motion.online_left_swarm_frame import apply_left_swarm_frame
+from functions.swarm_motion.prearm import sim_chessboard_ground_layout, vertical_takeoff_layout
+from functions.swarm_motion.spacing_guard import closest_pair
 
 try:
     from debug.pipeline_tuning import resolve_pipeline_tuning
@@ -191,6 +191,13 @@ def run_integrated_online_control(
                 if _poll_keys():
                     break
                 sync_armed_flags(boot)
+                just_gesture_armed = bool(boot.gesture_control_enabled) and not prev_gesture_armed
+                if just_gesture_armed:
+                    boot.live_target.set(
+                        np.asarray(boot.prearm_hover_layout, dtype=np.float32),
+                        int(boot.live_target.mode),
+                        float(boot.live_target.open_alpha),
+                    )
                 just_prearm_phase = boot.prearm_phase != boot.prev_prearm_phase
 
                 frame_prof.frame_start()
@@ -249,25 +256,11 @@ def run_integrated_online_control(
                     )
                     raw_target = np.asarray(boot.live_target.get(), dtype=np.float32)
                 elif boot.prearm_phase == "formation":
-                    raw_target = enforce_min_separation(
-                        boot.prearm_hover_layout.copy(),
-                        float(cfg.min_separation_m),
-                        iters=10,
-                    )
+                    raw_target = np.asarray(boot.prearm_hover_layout, dtype=np.float32).copy()
                 elif boot.prearm_phase == "vertical":
-                    raw_target = enforce_min_separation(
-                        boot.prearm_vertical_layout.copy(),
-                        float(cfg.min_separation_m),
-                        iters=10,
-                    )
+                    raw_target = np.asarray(boot.prearm_vertical_layout, dtype=np.float32).copy()
                 else:
-                    raw_target = enforce_min_separation_xy(
-                        boot.ground_layout.copy(),
-                        float(cfg.min_separation_m),
-                        float(boot.ground_z),
-                        iters=10,
-                    )
-                raw_target = clamp_workspace_targets(boot.swarm_workspace, raw_target)
+                    raw_target = np.asarray(boot.ground_layout, dtype=np.float32).copy()
                 frame_prof.section("live_target")
                 morph_targets_before_left_m = raw_target.copy()
                 ls = apply_left_swarm_frame(
@@ -280,6 +273,15 @@ def run_integrated_online_control(
                     section=frame_prof.section,
                 )
                 raw_target = ls.raw_target
+                if not boot.gesture_control_enabled:
+                    if boot.prearm_phase == "vertical":
+                        raw_target[:, 2] = float(boot.prearm_takeoff_z)
+                    elif boot.prearm_phase == "formation":
+                        raw_target[:, 2] = np.asarray(
+                            boot.prearm_hover_layout, dtype=np.float32
+                        )[:, 2]
+                    elif boot.prearm_phase == "ground":
+                        raw_target[:, 2] = float(boot.ground_z)
                 left_swarm_off = ls.left_swarm_off
                 left_swarm_R = ls.left_swarm_R
                 left_pose_dbg = ls.left_pose_dbg
@@ -299,23 +301,34 @@ def run_integrated_online_control(
                 frame_prof.section("plot3d")
 
                 axswarm_track_pos: np.ndarray | None = None
-                if boot.axswarm_rt is not None:
-                    if boot.real_executor is not None:
-                        axswarm_track_pos = boot.real_executor.get_sim_track_positions(
-                            boot.prev_cmd_target,
-                            boot.n_drones,
-                        )
-                    elif boot.sim is not None:
-                        axswarm_track_pos = np.asarray(
-                            boot.sim.data.states.pos[0], dtype=np.float32
-                        )
-
-                if just_prearm_phase and boot.axswarm_rt is not None:
-                    _layout_pos = (
-                        axswarm_track_pos
-                        if axswarm_track_pos is not None
-                        else boot.prev_cmd_target
+                if boot.real_executor is not None:
+                    axswarm_track_pos = boot.real_executor.get_sim_track_positions(
+                        boot.prev_cmd_target,
+                        boot.n_drones,
                     )
+                elif boot.sim is not None:
+                    axswarm_track_pos = np.asarray(
+                        boot.sim.data.states.pos[0], dtype=np.float32
+                    )
+
+                if just_prearm_phase:
+                    phase = str(boot.prearm_phase)
+                    if phase == "formation":
+                        _layout_pos = np.asarray(
+                            boot.prearm_hover_layout, dtype=np.float32
+                        )
+                    elif phase == "vertical":
+                        _layout_pos = np.asarray(
+                            boot.prearm_vertical_layout, dtype=np.float32
+                        )
+                    elif phase == "ground":
+                        _layout_pos = np.asarray(boot.ground_layout, dtype=np.float32)
+                    else:
+                        _layout_pos = (
+                            axswarm_track_pos
+                            if axswarm_track_pos is not None
+                            else boot.prev_cmd_target
+                        )
                     boot.axswarm_rt.sync_gesture(
                         np.asarray(_layout_pos, dtype=np.float32),
                         np.zeros((boot.n_drones, 3), dtype=np.float32),
@@ -361,7 +374,6 @@ def run_integrated_online_control(
                 boot.prev_cmd_target = boot.cmd_target.copy()
                 boot.prev_prearm_climb_enabled = bool(boot.prearm_climb_enabled)
                 boot.prev_prearm_phase = str(boot.prearm_phase)
-                just_gesture_armed = bool(boot.gesture_control_enabled) and not prev_gesture_armed
                 prev_gesture_armed = bool(boot.gesture_control_enabled)
 
                 if rigid_pose_recorder is not None and tick_rigid_pose_trace is not None:
@@ -426,6 +438,11 @@ def run_integrated_online_control(
             if webcam.cap is not None:
                 webcam.cap.release()
             boot.key_queue.stop()
+            try:
+                print("Stopping Orbbec camera...", flush=True)
+                boot.k4a.stop()
+            except Exception:
+                pass
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user, stopping online control...")
         if boot.real_executor is not None:
@@ -443,6 +460,7 @@ def run_integrated_online_control(
                 print(f"[rigid-pose-trace] save failed: {exc}", flush=True)
         boot.key_queue.stop()
         try:
+            print("Stopping Orbbec camera...", flush=True)
             boot.k4a.stop()
         except Exception:
             pass
@@ -483,7 +501,6 @@ __all__ = [
     "apply_online_control_key",
     "build_online_runtime_config",
     "closest_pair",
-    "complete_prearm_takeoff",
     "format_hotkey_install_hint",
     "init_3d_plot",
     "main",
@@ -520,20 +537,14 @@ def main() -> None:
             )
         else:
             print(f"Fixed surface samples initialized (non-interactive): n={point_count}")
-    box_m = float(args.swarm_workspace_box_m)
-    wall_m = float(args.swarm_workspace_wall_margin_m)
-    formation_cap_m = box_m - 2.0 * wall_m if box_m > 0.0 else None
     scale = ScaleConfig(
         xy_radius=float(args.xy_radius),
-        z_center=float(args.z_center),
+        hover_z=float(args.prearm_hover_z),
         z_amplitude=float(args.z_amplitude),
-        z_min=float(args.z_min),
-        z_max=float(args.z_max),
         reference_xy_extent_mm=float(args.reference_xy_extent_mm),
         reference_z_extent_mm=float(args.reference_z_extent_mm),
         z_mm_scale=float(args.z_mm_scale),
         morph_world_scale=float(args.morph_world_scale),
-        formation_max_extent_m=formation_cap_m,
     )
     live_target = make_initial_live_target(
         point_count=point_count,

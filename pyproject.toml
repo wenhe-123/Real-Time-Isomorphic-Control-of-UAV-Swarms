@@ -70,7 +70,7 @@ channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64"]
 
 [tool.pixi.activation]
-env = { PYTHONPATH = "src" }
+env = { PYTHONPATH = "src:." }
 scripts = ["scripts/activate_orbbec.sh"]
 
 # environments

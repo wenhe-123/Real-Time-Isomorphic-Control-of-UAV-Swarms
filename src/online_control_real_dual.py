@@ -21,29 +21,26 @@ import sys
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parent
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+_REPO = _SRC.parent
+for _path in (_REPO, _SRC):
+    _ps = str(_path)
+    if _ps not in sys.path:
+        sys.path.insert(0, _ps)
 
 from functions.dual_cam.online_input_keys import try_install_hotkey_dependencies
 from online_control import main as _online_main
 from online_control_dual import (
     _argv_has_flag,
     _strip_argv_separator,
-    inject_axswarm_motion_argv,
+    inject_dual_gesture_argv,
 )
 
 
 def inject_real_dual_default_argv(argv: list[str]) -> list[str]:
-    """Real entry: axswarm + morph point-count 8 (not 24); physical count from drones.toml."""
-    from functions.runtime.online_defaults import _DEFAULT_AXSWARM_MPC_HZ
-
+    """Real entry: morph point-count 8 (not 24); physical count from drones.toml."""
     out = list(argv)
-    if not _argv_has_flag(out, "--planner"):
-        out.extend(["--planner", "axswarm"])
     if not _argv_has_flag(out, "--point-count"):
         out.extend(["--point-count", "8"])
-    if not _argv_has_flag(out, "--axswarm-mpc-hz"):
-        out.extend(["--axswarm-mpc-hz", f"{_DEFAULT_AXSWARM_MPC_HZ:g}"])
     return out
 
 
@@ -90,7 +87,7 @@ def main() -> None:
     elif "--install-hotkey-deps" not in sys.argv:
         sys.argv = [sys.argv[0], "--install-hotkey-deps", *sys.argv[1:]]
     sys.argv = inject_real_dual_default_argv(sys.argv)
-    sys.argv = inject_axswarm_motion_argv(sys.argv)
+    sys.argv = inject_dual_gesture_argv(sys.argv)
     sys.argv = _require_drones_config(sys.argv)
     _online_main()
 

@@ -6,11 +6,14 @@ import cv2
 import numpy as np
 
 from crazyflow.sim.visualize import draw_line
-from debug.online_control_debug import draw_drone_target_debug_hud, print_center_trace
+from debug.online_control_debug import (
+    draw_drone_target_debug_hud,
+    print_center_trace,
+    print_drone_position_debug,
+)
 from functions.display_sim.crazyflow_render import render_sim, step_sim_to_cmd
 from functions.display_sim.morph_led_materials import apply_morph_led_theme
 from functions.display_sim.online_present_input import PresentFrameInput
-from functions.swarm_motion.swarm_workspace_box import draw_swarm_workspace_box_in_sim
 
 
 def _draw_online_hud_overlay(inp: PresentFrameInput, *, label: str, color: tuple[int, int, int]) -> None:
@@ -26,7 +29,7 @@ def _draw_online_hud_overlay(inp: PresentFrameInput, *, label: str, color: tuple
             pose_hint = " | L-move:[0]"
     else:
         pose_hint = ""
-    ax_hint = f" | {boot.axswarm_rt.status_line()}" if boot.axswarm_rt is not None else ""
+    ax_hint = f" | {boot.axswarm_rt.status_line()}"
     if boot.gesture_control_enabled_box[0]:
         phase = "ARMED (Space disarm)"
     elif boot.prearm_phase_box[0] == "formation":
@@ -65,7 +68,6 @@ def _maybe_print_center_trace(inp: PresentFrameInput) -> None:
         cmd_target=inp.filt.cmd_target,
         safe_target=inp.filt.safe_target,
         left_pose_state=inp.boot.left_pose_state,
-        swarm_workspace=inp.boot.swarm_workspace,
     )
 
 
@@ -134,6 +136,22 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
             render_enabled = False
             print(f"[WARN] Disabled Crazyflow sim step after error: {exc}")
     _sec("sim_step")
+    if cfg.debug_drone_pos_every > 0 and (frame_idx % cfg.debug_drone_pos_every) == 0:
+        _hold_z: float | None = None
+        if not boot.gesture_control_enabled:
+            if boot.prearm_phase == "ground":
+                _hold_z = float(boot.ground_z)
+            elif boot.prearm_phase == "vertical":
+                _hold_z = float(boot.prearm_takeoff_z)
+        print_drone_position_debug(
+            frame_idx=frame_idx,
+            cmd_target=filt.cmd_target,
+            pre_axswarm=filt.filter_src,
+            sim=boot.sim,
+            raw_target=inp.raw_target,
+            hold_z=_hold_z,
+            axswarm_status=boot.axswarm_rt.status_line(),
+        )
     if (
         render_enabled
         and cfg.sim_render_every > 0
@@ -141,8 +159,6 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
         and boot.sim is not None
     ):
         try:
-            if boot.swarm_workspace.enabled and boot.swarm_workspace.armed:
-                draw_swarm_workspace_box_in_sim(boot.sim, boot.swarm_workspace)
             render_sim(boot.sim)
         except Exception as exc:
             render_enabled = False

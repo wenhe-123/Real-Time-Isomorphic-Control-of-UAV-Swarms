@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import numpy as np
-
-from debug.online_control_debug import draw_drone_target_debug_hud
+from debug.online_control_debug import draw_drone_target_debug_hud, print_drone_position_debug
 from functions.display_sim.online_frame_present import _draw_online_hud_overlay, _maybe_print_center_trace
 from functions.display_sim.online_present_input import PresentFrameInput
 
@@ -36,10 +34,10 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
             sim=None,
         )
         if real_pos is not None:
-            print(
-                f"[debug real_pos] frame={frame_idx} "
-                f"centroid_z={float(np.mean(real_pos[:, 2])):.3f}m",
-                flush=True,
+            print_drone_position_debug(
+                frame_idx=frame_idx,
+                cmd_target=filt.cmd_target,
+                real_pos=real_pos,
             )
     _sec("debug_hud")
 
@@ -57,6 +55,24 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
             prearm_vertical_layout=boot.prearm_vertical_layout,
         )
     _sec("real_cmd")
+
+    if cfg.debug_drone_pos_every > 0 and (frame_idx % cfg.debug_drone_pos_every) == 0:
+        real_pos = boot.real_executor.get_positions_for_debug() if boot.real_executor else None
+        _hold_z: float | None = None
+        if not boot.gesture_control_enabled:
+            if boot.prearm_phase == "ground":
+                _hold_z = float(boot.ground_z)
+            elif boot.prearm_phase == "vertical":
+                _hold_z = float(boot.prearm_takeoff_z)
+        print_drone_position_debug(
+            frame_idx=frame_idx,
+            cmd_target=filt.cmd_target,
+            pre_axswarm=filt.filter_src,
+            real_pos=real_pos,
+            raw_target=inp.raw_target,
+            hold_z=_hold_z,
+            axswarm_status=boot.axswarm_rt.status_line(),
+        )
 
     _maybe_print_center_trace(inp)
     _draw_online_hud_overlay(inp, label="REAL", color=(0, 200, 255))

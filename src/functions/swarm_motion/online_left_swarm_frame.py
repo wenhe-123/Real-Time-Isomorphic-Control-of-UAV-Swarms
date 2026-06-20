@@ -24,11 +24,9 @@ from functions.swarm_motion.left_hand_swarm_pose import (
     print_left_swarm_pose_debug,
     rotvec_to_R,
     swarm_base_targets,
-    sync_left_swarm_pose_output,
     update_left_swarm_pose,
 )
 from functions.swarm_motion.left_pose_tuning import LeftPoseSensorInput
-from functions.swarm_motion.swarm_workspace_box import SwarmWorkspaceBox
 
 
 @dataclass
@@ -40,12 +38,6 @@ class LeftSwarmFrameResult:
     viz_B_rot: Any
     webcam_frame_idx: int
     armed_this_frame: bool = False
-
-
-def clamp_workspace_targets(swarm_workspace: SwarmWorkspaceBox, raw_target: np.ndarray) -> np.ndarray:
-    if swarm_workspace.enabled and swarm_workspace.armed:
-        return swarm_workspace.clamp_targets(raw_target).astype(np.float32, copy=False)
-    return raw_target
 
 
 def apply_left_swarm_frame(
@@ -178,52 +170,16 @@ def apply_left_swarm_frame(
                 "Left swarm armed: depth-camera palm-center translation + palm basis rotation; "
                 f"frozen cam→sim preset={left_pose_state.frozen_cam_preset!r}."
             )
-        if (
-            _do_arm
-            and boot.swarm_workspace.enabled
-            and boot.left_pose_runtime_armed
-            and not left_pose_state.is_unwinding()
-        ):
-            boot.swarm_workspace.arm(
-                morph_targets_before_left_m,
-                sim_xyz=np.asarray(boot.prev_cmd_target, dtype=np.float64),
-                fit_contains=False,
-            )
-            print(f"Swarm workspace armed: {boot.swarm_workspace.format_bounds()}")
-        if left_pose_state.is_unwinding() and boot.swarm_workspace.armed:
-            boot.swarm_workspace.disarm()
         boot.left_pose_reset_req_box[0] = False
         _base_targets = swarm_base_targets(left_pose_state, morph_targets_before_left_m)
-        if (
-            boot.swarm_workspace.enabled
-            and boot.swarm_workspace.armed
-            and boot.left_pose_runtime_armed
-            and not left_pose_state.is_unwinding()
-        ):
-            off, R_pose, raw_target, _box_blocked, _box_msg = boot.swarm_workspace.guard_rigid_motion(
-                _base_targets,
-                off,
-                R_pose,
-                ref_drone_xyz=left_pose_state.ref_drone_xyz,
-                pivot=boot.left_rot_pivot_key,
-            )
-            if _box_msg:
-                print(f"[swarm workspace] {_box_msg}")
-            sync_left_swarm_pose_output(left_pose_state, off, R_pose)
-        else:
-            raw_target = apply_rigid_to_targets(
-                _base_targets,
-                off,
-                R_pose,
-                ref_drone_xyz=left_pose_state.ref_drone_xyz,
-                pivot=boot.left_rot_pivot_key,
-            )
+        raw_target = apply_rigid_to_targets(
+            _base_targets,
+            off,
+            R_pose,
+            ref_drone_xyz=left_pose_state.ref_drone_xyz,
+            pivot=boot.left_rot_pivot_key,
+        )
         _sec("left_apply_rigid")
-        if boot.swarm_workspace.enabled and boot.swarm_workspace.armed:
-            raw_target = boot.swarm_workspace.clamp_targets(raw_target).astype(
-                np.float32, copy=False
-            )
-            _sec("left_workspace_clamp")
         left_swarm_off = np.asarray(off, dtype=np.float64).copy()
         left_swarm_R = np.asarray(R_pose, dtype=np.float64).copy()
         _dc = getattr(left_pose_state, "last_delta_cam_mm", None)

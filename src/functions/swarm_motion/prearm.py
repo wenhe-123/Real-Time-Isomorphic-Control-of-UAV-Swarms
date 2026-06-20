@@ -4,12 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from functions.swarm_motion.formation_spacing import lift_morph_to_hover_z
-from functions.swarm_motion.spacing_guard import (
-    closest_pair,
-    enforce_min_separation,
-    enforce_min_separation_xy,
-)
+from functions.swarm_motion.spacing_guard import closest_pair
 
 
 def vertical_takeoff_layout(
@@ -19,26 +14,10 @@ def vertical_takeoff_layout(
     min_separation_m: float,
 ) -> np.ndarray:
     """Keep ground XY; lift every drone vertically to ``takeoff_z``."""
+    del min_separation_m
     layout = np.asarray(ground_layout, dtype=np.float32).copy()
     layout[:, 2] = float(takeoff_z)
-    return enforce_min_separation(
-        layout, float(min_separation_m), iters=10
-    ).astype(np.float32)
-
-
-def complete_prearm_takeoff(
-    morph_layout: np.ndarray,
-    *,
-    hover_z: float,
-    min_separation_m: float,
-) -> np.ndarray:
-    """Lift morph layout to hover_z with spacing guard."""
-    layout = np.asarray(morph_layout, dtype=np.float32)
-    return enforce_min_separation(
-        lift_morph_to_hover_z(layout, float(hover_z)),
-        float(min_separation_m),
-        iters=12,
-    ).astype(np.float32)
+    return layout
 
 
 def sim_chessboard_ground_layout(
@@ -78,11 +57,10 @@ def sim_chessboard_ground_layout(
         x = x0 + col * pitch + (stagger if (row % 2) == 1 else 0.0)
         y = y0 + row * pitch
         pts[i] = (x, y, z)
-    out = enforce_min_separation_xy(pts, sep, z, iters=12)
-    d, pi, pj = closest_pair(out)
+    d, pi, pj = closest_pair(pts)
     if d < sep * 0.98:
         raise ValueError(
             f"chessboard layout spacing {d:.3f}m < min_separation {sep:.3f}m "
             f"(pair {pi},{pj}); reduce n_drones or increase workspace"
         )
-    return out
+    return pts

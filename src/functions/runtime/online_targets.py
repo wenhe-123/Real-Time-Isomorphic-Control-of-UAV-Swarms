@@ -11,45 +11,12 @@ from functions.open_close.morph_renderers import mapped_fixed_surface_points
 from functions.open_close.morph_world import (
     ScaleConfig,
     fixed_morph_points,
-    normalize_morph_points,
+    normalize_morph_points_at_hover,
     summarize_target_workspace,
 )
 from functions.runtime.live_target import LiveTargetState
 from functions.runtime.online_defaults import _DEFAULT_MIN_SEPARATION_M
-from functions.swarm_motion.formation_spacing import audit_formation_spacing
 from functions.swarm_motion.spacing_guard import closest_pair
-
-def _spacing_audit_startup(
-    *,
-    point_count: int,
-    morph_mode: int,
-    open_alpha: float,
-    radius_mm: float,
-    shape_t: float | None,
-    scale: ScaleConfig,
-    min_separation_m: float,
-) -> None:
-    env_m = float(min_separation_m)
-    for oa, tag in ((0.0, "open0_pre_filter"), (float(open_alpha), "startup")):
-        if tag == "startup" and oa > 0.34:
-            continue
-        mm = fixed_morph_points(point_count, radius_mm, morph_mode, oa, shape_t)
-        raw = normalize_morph_points(
-            mm,
-            scale,
-            n_drones=point_count,
-            open_alpha=oa,
-            min_separation_m=min_separation_m,
-        )
-        audit_formation_spacing(
-            mm,
-            raw,
-            label=tag,
-            n_drones=point_count,
-            open_alpha=oa,
-            min_separation_m=min_separation_m,
-            collision_envelope_m=env_m,
-        )
 
 
 def _bootstrap_initial_target(
@@ -62,14 +29,9 @@ def _bootstrap_initial_target(
     scale: ScaleConfig,
     min_separation_m: float,
 ) -> np.ndarray:
+    del min_separation_m
     points_mm = fixed_morph_points(point_count, radius_mm, morph_mode, open_alpha, shape_t)
-    target = normalize_morph_points(
-        points_mm,
-        scale,
-        n_drones=point_count,
-        open_alpha=open_alpha,
-        min_separation_m=min_separation_m,
-    )
+    target = normalize_morph_points_at_hover(points_mm, scale)
     dist, i, j = closest_pair(target)
     print(
         f"Initial target: mode={morph_mode}, open={open_alpha:.2f}, n={point_count}, "
@@ -84,15 +46,6 @@ def _bootstrap_initial_target(
         f"z[{xyz_min[2]:.1f},{xyz_max[2]:.1f}]"
     )
     print(f"Closest initial target spacing: pair=({i},{j}), dist={dist:.2f}m")
-    _spacing_audit_startup(
-        point_count=point_count,
-        morph_mode=morph_mode,
-        open_alpha=open_alpha,
-        radius_mm=radius_mm,
-        shape_t=shape_t,
-        scale=scale,
-        min_separation_m=min_separation_m,
-    )
     return target
 
 
@@ -138,6 +91,7 @@ def update_live_target_from_state(
     open_out: float | None,
     min_separation_m: float = _DEFAULT_MIN_SEPARATION_M,
 ) -> None:
+    del min_separation_m
     open_v = float(
         open_out
         if open_out is not None
@@ -157,13 +111,7 @@ def update_live_target_from_state(
         plane_radius_b=MORPH_PLANE_RADIUS_B,
         morph_mode=int(mode_state.morph_mode),
     )
-    target = normalize_morph_points(
-        points_mm,
-        scale,
-        n_drones=int(points_mm.shape[0]),
-        open_alpha=open_v,
-        min_separation_m=float(min_separation_m),
-    )
+    target = normalize_morph_points_at_hover(points_mm, scale)
     xy_r_max, _xyz_min, _xyz_max = summarize_target_workspace(target)
     if not np.isfinite(xy_r_max) or xy_r_max < 0.35:
         return

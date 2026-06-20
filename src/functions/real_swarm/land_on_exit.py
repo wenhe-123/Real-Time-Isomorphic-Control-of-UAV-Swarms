@@ -10,7 +10,6 @@ from functions.mode_switch.online_frame_gesture import GestureFrameResult
 from functions.runtime.online_boot import OnlineBoot, sync_armed_flags
 from functions.runtime.online_runtime_config import OnlineRuntimeConfig
 from functions.swarm_motion.online_frame_filter import filter_online_targets
-from functions.swarm_motion.spacing_guard import enforce_min_separation_xy
 
 
 def _idle_gesture_result(*, frame_idx: int = 0) -> GestureFrameResult:
@@ -58,14 +57,13 @@ def stream_real_swarm_land_on_exit(
     sync_armed_flags(boot)
 
     elapsed0 = time.monotonic() - boot.start_time
-    if boot.axswarm_rt is not None:
-        boot.axswarm_rt.enter_recover(elapsed0, hold_s=10.0)
-        track0 = ex.get_sim_track_positions(boot.prev_cmd_target, boot.n_drones)
-        pos0 = track0 if track0 is not None else boot.prev_cmd_target
-        boot.axswarm_rt.sync_gesture(
-            np.asarray(pos0, dtype=np.float32),
-            np.zeros((boot.n_drones, 3), dtype=np.float32),
-        )
+    boot.axswarm_rt.enter_recover(elapsed0, hold_s=10.0)
+    track0 = ex.get_sim_track_positions(boot.prev_cmd_target, boot.n_drones)
+    pos0 = track0 if track0 is not None else boot.prev_cmd_target
+    boot.axswarm_rt.sync_gesture(
+        np.asarray(pos0, dtype=np.float32),
+        np.zeros((boot.n_drones, 3), dtype=np.float32),
+    )
 
     gest = _idle_gesture_result(frame_idx=boot.frame_idx)
     land_tol = float(ex.opts.max_pos_error_m)
@@ -78,12 +76,7 @@ def stream_real_swarm_land_on_exit(
             continue
 
         elapsed = time.monotonic() - boot.start_time
-        raw_target = enforce_min_separation_xy(
-            boot.ground_layout.copy(),
-            float(cfg.min_separation_m),
-            float(boot.ground_z),
-            iters=10,
-        )
+        raw_target = np.asarray(boot.ground_layout, dtype=np.float32).copy()
         track_pos = ex.get_sim_track_positions(boot.prev_cmd_target, boot.n_drones)
         filt, boot.raw_target_filt, boot.prev_open_for_snap, boot.prev_gesture_control_enabled = (
             filter_online_targets(

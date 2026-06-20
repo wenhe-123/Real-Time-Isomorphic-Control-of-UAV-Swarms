@@ -1,7 +1,8 @@
-"""Realtime axswarm **safety filter** for iso_swarm (does not modify the axswarm package).
+"""Realtime axswarm safety filter for iso_swarm (does not modify the axswarm package).
 
-Gesture supplies desired setpoints; axswarm MPC (soft position + collision constraints)
-returns a feasible, collision-aware correction. Crazyflow still tracks the filtered targets.
+Gesture supplies position/velocity/acceleration setpoints; axswarm MPC returns
+collision-feasible plans per ``config/axswarm_settings.yaml``. Crazyflow tracks
+the filtered targets.
 
 Same API entry points as ``simulate.py``: ``SolverData``, ``SolverSettings``, ``solve``.
 """
@@ -21,7 +22,6 @@ from functions.swarm_motion.spacing_guard import (
     closest_pair,
     clamp_targets_step,
     conservative_degraded_target,
-    enforce_min_separation,
 )
 
 if TYPE_CHECKING:
@@ -46,13 +46,13 @@ def resolve_axswarm_settings_path(
 ) -> Path:
     if settings_path is not None:
         return Path(settings_path)
+    bundled = default_axswarm_settings_path()
+    if bundled.is_file():
+        return bundled
     root = ensure_axswarm_import(project_root)
     legacy = root / "params" / "settings.yaml"
     if legacy.is_file():
         return legacy
-    bundled = default_axswarm_settings_path()
-    if bundled.is_file():
-        return bundled
     raise FileNotFoundError(
         "axswarm settings not found. Pass --axswarm-settings PATH or install sim deps: "
         "pip install -e \".[sim]\""
@@ -97,7 +97,7 @@ def ensure_axswarm_import(project_root: Path | None = None) -> Path:
     )
 
 
-def load_axswarm_yaml(settings_path: Path) -> tuple[Any, dict[str, np.ndarray]]:
+def load_axswarm_yaml(settings_path: Path) -> tuple[dict, dict[str, np.ndarray]]:
     with open(settings_path) as f:
         config = yaml.safe_load(f)
     settings_dict = dict(config["SolverSettings"])
@@ -108,150 +108,43 @@ def load_axswarm_yaml(settings_path: Path) -> tuple[Any, dict[str, np.ndarray]]:
     return settings_dict, dynamics
 
 
-def adapt_settings_dict_for_online(
-    settings_dict: dict,
-    *,
-    n_drones: int,
-    min_separation_m: float,
-    xy_radius_m: float,
-    z_min_m: float,
-    z_max_m: float,
-    pad_m: float = 0.4,
-    max_iters: int | None = None,
-    pos_weight: float | None = None,
-) -> dict:
-    """Online safety filter: track gesture (soft), enforce collisions (hard/soft)."""
-    r = float(max(xy_radius_m, 1.0))
-    z0 = float(z_min_m)
-    z1 = float(max(z_max_m, z0 + 0.5))
-    settings_dict = dict(settings_dict)
-    settings_dict["pos_min"] = np.array([-r - pad_m, -r - pad_m, max(0.05, z0 - pad_m)])
-    settings_dict["pos_max"] = np.array([r + pad_m, r + pad_m, z1 + pad_m])
-    settings_dict["vel_max"] = float(settings_dict.get("vel_max", 1.73))
-    half_sep = max(0.08, 0.5 * float(min_separation_m))
-    settings_dict["collision_envelope"] = np.array([half_sep, half_sep, half_sep])
-    settings_dict["max_collisions"] = int(max(1, n_drones - 1))
-    settings_dict["pos_constraints"] = "soft"
-    if pos_weight is not None:
-        settings_dict["pos_weight"] = float(pos_weight)
-    else:
-        settings_dict["pos_weight"] = float(max(100.0, settings_dict.get("pos_weight", 100.0)))
-    if max_iters is not None:
-        settings_dict["max_iters"] = int(max(5, max_iters))
-    else:
-        settings_dict["max_iters"] = int(min(40, max(12, 80 - 2 * n_drones)))
-    return settings_dict
+def min_separation_from_envelope(collision_envelope: np.ndarray) -> float:
+    env = np.asarray(collision_envelope, dtype=np.float64)
+    return float(2.0 * np.max(env))
 
 
-@dataclass(frozen=True)
-class AxswarmMotionLimits:
-    """Motion caps aligned with teacher ``params/settings.yaml``."""
-
-    vel_max_m_s: float
-    acc_max_m_s2: float
-    mpc_freq_hz: float
-    min_separation_m: float
-    per_substep_cap_m: float
-    per_outer_frame_cap_m: float
-    target_alpha: float
-
-
-def per_substep_target_cap_m(
-    *,
-    vel_max_m_s: float,
-    sim_freq_hz: int,
-    outer_fps: int,
-    max_substeps: int,
-) -> float:
-    """Cap per physics substep so blended targets respect axswarm ``vel_max`` (m/s)."""
-    del outer_fps, max_substeps  # Cap is per physics step, independent of camera frame grouping.
-    return float(vel_max_m_s) / max(float(sim_freq_hz), 1.0)
-
-
-def load_axswarm_motion_limits(
+def load_axswarm_yaml_limits(
     *,
     settings_path: Path | None = None,
     project_root: Path | None = None,
-    sim_freq_hz: int = 500,
-    outer_fps: int = 30,
-    max_substeps: int = 160,
-    min_separation_m: float | None = None,
-) -> AxswarmMotionLimits:
-    """Read yaml limits and derive online Crazyflow caps (dual / integrated defaults)."""
-    settings_path = resolve_axswarm_settings_path(settings_path, project_root)
-    settings_dict, _ = load_axswarm_yaml(settings_path)
-    vel = float(settings_dict.get("vel_max", 1.73))
-    acc = float(settings_dict.get("acc_max", 1.0))
-    freq = float(settings_dict.get("freq", 8.0))
-    env = np.asarray(settings_dict.get("collision_envelope", [0.15, 0.15, 0.15]), dtype=np.float64)
-    sep = float(min_separation_m) if min_separation_m is not None else float(2.0 * np.max(env))
-    per_step = per_substep_target_cap_m(
-        vel_max_m_s=vel,
-        sim_freq_hz=sim_freq_hz,
-        outer_fps=outer_fps,
-        max_substeps=max_substeps,
-    )
-    per_frame = vel / max(float(outer_fps), 1.0)
-    # In axswarm mode the safety filter already returns per-frame, velocity-limited
-    # targets, so the outer loop should track them closely instead of adding a
-    # second slow EMA.
-    alpha = 0.99
-    return AxswarmMotionLimits(
-        vel_max_m_s=vel,
-        acc_max_m_s2=acc,
-        mpc_freq_hz=freq,
-        min_separation_m=sep,
-        per_substep_cap_m=per_step,
-        per_outer_frame_cap_m=per_frame,
-        target_alpha=alpha,
-    )
-
-
-def clamp_plan_toward_gesture(
-    planned: np.ndarray, gesture: np.ndarray, *, max_deviation_m: float
-) -> np.ndarray:
-    """Limit per-drone deviation from gesture so the filter does not override the hand."""
-    p = np.asarray(planned, dtype=np.float32)
-    g = np.asarray(gesture, dtype=np.float32)
-    delta = p - g
-    dist = np.linalg.norm(delta, axis=-1, keepdims=True)
-    cap = float(max(0.01, max_deviation_m))
-    scale = np.minimum(1.0, cap / np.maximum(dist, 1e-6))
-    return (g + delta * scale).astype(np.float32)
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """Read ``collision_envelope`` and ``pos_min``/``pos_max`` from yaml (authoritative)."""
+    path = resolve_axswarm_settings_path(settings_path, project_root)
+    settings_dict, _ = load_axswarm_yaml(path)
+    env = np.asarray(settings_dict.get("collision_envelope", [0.15, 0.15, 0.15]))
+    min_sep = min_separation_from_envelope(env)
+    pos_lo = np.asarray(settings_dict["pos_min"], dtype=np.float64)
+    pos_hi = np.asarray(settings_dict["pos_max"], dtype=np.float64)
+    return min_sep, pos_lo, pos_hi
 
 
 @dataclass(frozen=True)
 class AxswarmOnlineConfig:
-    """CLI/runtime fields mapped once for ``AxswarmSafetyFilter`` construction."""
+    """Runtime fields for ``AxswarmSafetyFilter`` (yaml is authoritative for MPC limits)."""
 
-    min_separation_m: float
-    xy_radius_m: float
-    z_min_m: float
-    z_max_m: float
     settings_path: Path | None
     project_root: Path | None
-    max_iters: int | None
-    pos_weight: float | None
-    max_deviation_m: float
     max_solve_ms: float
     outer_fps: int
-    mpc_hz_override: float | None
 
     @classmethod
     def from_runtime_config(cls, cfg: Any, scale: Any) -> AxswarmOnlineConfig:
+        del scale
         return cls(
-            min_separation_m=float(cfg.min_separation_m),
-            xy_radius_m=float(scale.xy_radius),
-            z_min_m=float(scale.z_min),
-            z_max_m=float(scale.z_max),
             settings_path=Path(cfg.axswarm_settings) if cfg.axswarm_settings else None,
             project_root=Path(cfg.axswarm_project_root) if cfg.axswarm_project_root else None,
-            max_iters=cfg.axswarm_max_iters,
-            pos_weight=cfg.axswarm_pos_weight,
-            max_deviation_m=float(cfg.axswarm_max_deviation_m),
             max_solve_ms=float(cfg.axswarm_max_solve_ms),
             outer_fps=int(cfg.fps),
-            mpc_hz_override=cfg.axswarm_mpc_hz,
         )
 
 
@@ -264,9 +157,9 @@ class AxswarmSafetyFilter:
     solver_data: Any
     n_drones: int
     mpc_hz: float
-    max_deviation_m: float
     max_solve_ms: float
     min_separation_m: float
+    outer_fps: float
     fail_sep_mult: float
     fail_gesture_blend: float
     fail_gesture_blend_recover: float
@@ -285,24 +178,21 @@ class AxswarmSafetyFilter:
     _armed_at: float
     _recover_until_s: float
     arm_warmup_s: float
+    _prev_gesture_sp: np.ndarray | None
+    _prev_gesture_vel: np.ndarray | None
+    _prev_gesture_t: float | None
+    _pos_lo: np.ndarray
+    _pos_hi: np.ndarray
 
     @classmethod
     def create(
         cls,
         n_drones: int,
         *,
-        min_separation_m: float,
-        xy_radius_m: float,
-        z_min_m: float,
-        z_max_m: float,
         settings_path: Path | None = None,
         project_root: Path | None = None,
-        max_iters: int | None = None,
-        pos_weight: float | None = None,
-        max_deviation_m: float = 0.2,
         max_solve_ms: float = 90.0,
         outer_fps: int = 30,
-        mpc_hz_override: float | None = None,
         fail_sep_mult: float = 1.3,
         fail_gesture_blend: float = 0.2,
         fail_gesture_blend_recover: float = 0.12,
@@ -319,35 +209,27 @@ class AxswarmSafetyFilter:
         ensure_axswarm_import(project_root)
         from axswarm import SolverData, SolverSettings, solve  # noqa: WPS433
 
-        settings_path = resolve_axswarm_settings_path(settings_path, project_root)
-        settings_dict, dynamics = load_axswarm_yaml(settings_path)
-        settings_dict = adapt_settings_dict_for_online(
-            settings_dict,
-            n_drones=n_drones,
-            min_separation_m=min_separation_m,
-            xy_radius_m=xy_radius_m,
-            z_min_m=z_min_m,
-            z_max_m=z_max_m,
-            max_iters=max_iters,
-            pos_weight=pos_weight,
-        )
+        resolved = resolve_axswarm_settings_path(settings_path, project_root)
+        settings_dict, dynamics = load_axswarm_yaml(resolved)
+        pos_lo = np.asarray(settings_dict["pos_min"], dtype=np.float64)
+        pos_hi = np.asarray(settings_dict["pos_max"], dtype=np.float64)
         settings = SolverSettings(**settings_dict)
-        yaml_hz = float(settings.freq)
-        mpc_hz = float(max(0.5, mpc_hz_override if mpc_hz_override is not None else yaml_hz))
-        vel_max = float(settings_dict["vel_max"])
+        mpc_hz = float(max(0.5, float(settings.freq)))
+        vel_max = float(settings.vel_max)
+        min_sep = min_separation_from_envelope(np.asarray(settings.collision_envelope))
         filt = cls(
             settings=settings,
             dynamics=dynamics,
             solver_data=None,
             n_drones=n_drones,
             mpc_hz=mpc_hz,
-            max_deviation_m=float(max(0.02, max_deviation_m)),
             max_solve_ms=float(max(10.0, max_solve_ms)),
-            min_separation_m=float(min_separation_m),
+            min_separation_m=min_sep,
+            outer_fps=float(max(1, outer_fps)),
             fail_sep_mult=float(max(1.0, fail_sep_mult)),
             fail_gesture_blend=float(np.clip(fail_gesture_blend, 0.0, 1.0)),
             fail_gesture_blend_recover=float(np.clip(fail_gesture_blend_recover, 0.0, 1.0)),
-            fail_frame_step_m=8.0 * vel_max / max(float(outer_fps), 1.0),
+            fail_frame_step_m=vel_max / float(max(1, outer_fps)),
             recover_hold_s=float(max(0.5, recover_hold_s)),
             recover_step_frac=float(np.clip(recover_step_frac, 0.08, 1.0)),
             gesture_creep_blend=float(np.clip(gesture_creep_blend, 0.02, 0.95)),
@@ -362,6 +244,11 @@ class AxswarmSafetyFilter:
             _armed_at=-1e9,
             _recover_until_s=-1e9,
             arm_warmup_s=float(max(0.0, arm_warmup_s)),
+            _prev_gesture_sp=None,
+            _prev_gesture_vel=None,
+            _prev_gesture_t=None,
+            _pos_lo=np.asarray(pos_lo, dtype=np.float32),
+            _pos_hi=np.asarray(pos_hi, dtype=np.float32),
         )
         filt._solve_fn = solve
         filt._SolverData = SolverData
@@ -375,19 +262,16 @@ class AxswarmSafetyFilter:
     ) -> AxswarmSafetyFilter:
         return cls.create(
             n_drones,
-            min_separation_m=online.min_separation_m,
-            xy_radius_m=online.xy_radius_m,
-            z_min_m=online.z_min_m,
-            z_max_m=online.z_max_m,
             settings_path=online.settings_path,
             project_root=online.project_root,
-            max_iters=online.max_iters,
-            pos_weight=online.pos_weight,
-            max_deviation_m=online.max_deviation_m,
             max_solve_ms=online.max_solve_ms,
             outer_fps=online.outer_fps,
-            mpc_hz_override=online.mpc_hz_override,
         )
+
+    def _clamp_pos(self, pts: np.ndarray) -> np.ndarray:
+        lo = np.asarray(self._pos_lo, dtype=np.float32)
+        hi = np.asarray(self._pos_hi, dtype=np.float32)
+        return np.clip(np.asarray(pts, dtype=np.float32), lo, hi).astype(np.float32)
 
     @property
     def mpc_period_s(self) -> float:
@@ -397,17 +281,20 @@ class AxswarmSafetyFilter:
         """Start post-SPACE window; first MPC tick runs on the same frame when warmup is 0."""
         el = float(elapsed_s)
         self._armed_at = el
-        # Otherwise ``due`` stays false until one full ``mpc_period_s`` after SPACE.
         self._last_mpc_time = el - self.mpc_period_s
 
     def enter_recover(self, elapsed_s: float, *, hold_s: float | None = None) -> None:
         """Slow creep + keep re-planning after MPC fail, tight sim spacing, or morph jump."""
         el = float(elapsed_s)
         hold = float(self.recover_hold_s if hold_s is None else hold_s)
-        # Extend only when not already in recover — avoid per-frame renew that locks slow mode.
         if el >= float(self._recover_until_s):
             self._recover_until_s = el + hold
         self._last_ok = False
+
+    def clear_recover(self) -> None:
+        """Leave recover/slow-creep mode (e.g. entering hover formation)."""
+        self._recover_until_s = -1e9
+        self._last_ok = True
 
     def in_recover_at(self, elapsed_s: float) -> bool:
         return float(elapsed_s) < float(self._recover_until_s)
@@ -415,10 +302,68 @@ class AxswarmSafetyFilter:
     def _slow_creep_at(self, elapsed_s: float) -> bool:
         return self.in_recover_at(elapsed_s)
 
-    def _gesture_enforced(self, gesture: np.ndarray) -> np.ndarray:
-        return enforce_min_separation(
-            gesture, float(self.min_separation_m) * 1.15, iters=10
+    def _reset_gesture_kinematics(self) -> None:
+        self._prev_gesture_sp = None
+        self._prev_gesture_vel = None
+        self._prev_gesture_t = None
+
+    def _gesture_setpoint_kinematics(
+        self, sp: np.ndarray, elapsed_s: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        sp = np.asarray(sp, dtype=np.float32)
+        z = np.zeros((self.n_drones, 3), dtype=np.float32)
+        if self._prev_gesture_sp is None or self._prev_gesture_t is None:
+            self._prev_gesture_sp = sp.copy()
+            self._prev_gesture_vel = z.copy()
+            self._prev_gesture_t = float(elapsed_s)
+            return z.copy(), z.copy()
+        dt = max(float(elapsed_s) - float(self._prev_gesture_t), 1.0 / self.outer_fps)
+        vel = ((sp - self._prev_gesture_sp) / dt).astype(np.float32)
+        prev_vel = (
+            self._prev_gesture_vel
+            if self._prev_gesture_vel is not None
+            else z
         )
+        acc = ((vel - prev_vel) / dt).astype(np.float32)
+        vmax = float(self.settings.vel_max)
+        amax = float(self.settings.acc_max)
+        vnorm = np.linalg.norm(vel, axis=-1, keepdims=True)
+        vel = vel * np.minimum(1.0, vmax / np.maximum(vnorm, 1e-6))
+        anorm = np.linalg.norm(acc, axis=-1, keepdims=True)
+        acc = acc * np.minimum(1.0, amax / np.maximum(anorm, 1e-6))
+        self._prev_gesture_sp = sp.copy()
+        self._prev_gesture_vel = vel.copy()
+        self._prev_gesture_t = float(elapsed_s)
+        return vel, acc
+
+    def _gesture_enforced(
+        self, gesture: np.ndarray, *, hold_z: float | None = None
+    ) -> np.ndarray:
+        return self._lock_vertical_z(np.asarray(gesture, dtype=np.float32), hold_z)
+
+    @staticmethod
+    def _mpc_blocks_hover_descent(
+        pos: np.ndarray,
+        cand: np.ndarray,
+        gesture_enf: np.ndarray,
+        *,
+        hold_z: float | None,
+    ) -> bool:
+        """True when MPC keeps Z high though the gesture setpoint is lower (hover_z descent)."""
+        if hold_z is not None:
+            return False
+        gz = float(np.mean(gesture_enf[:, 2]))
+        pz = float(np.mean(pos[:, 2]))
+        cz = float(np.mean(cand[:, 2]))
+        return pz > gz + 0.06 and cz > gz + 0.04
+
+    @staticmethod
+    def _lock_vertical_z(pts: np.ndarray, hold_z: float | None) -> np.ndarray:
+        if hold_z is None:
+            return np.asarray(pts, dtype=np.float32)
+        out = np.asarray(pts, dtype=np.float32).copy()
+        out[:, 2] = float(hold_z)
+        return out
 
     def _frame_step_m(self, elapsed_s: float, *, warmup: bool) -> float:
         base = float(self.fail_frame_step_m)
@@ -451,10 +396,7 @@ class AxswarmSafetyFilter:
         tgt = ((1.0 - gb) * anchor + gb * gesture_enf).astype(np.float32)
         step = self._frame_step_m(elapsed_s, warmup=warmup)
         out = clamp_targets_step(sim_pos, tgt, step)
-        sep_mult = float(self.fail_sep_mult) if self._slow_creep_at(elapsed_s) else 1.15
-        return enforce_min_separation(
-            out, float(self.min_separation_m) * sep_mult, iters=10
-        )
+        return out
 
     def reset(self, initial_pos: np.ndarray, initial_vel: np.ndarray | None = None) -> None:
         pos = np.asarray(initial_pos, dtype=np.float32)
@@ -468,7 +410,7 @@ class AxswarmSafetyFilter:
         states = np.concatenate([pos, vel], axis=-1)
         z = np.zeros((self.n_drones, 3), dtype=np.float32)
         self.solver_data = self._SolverData.init(
-            setpoints={"pos": pos.copy(), "vel": z.copy(), "acc": z.copy()},
+            setpoints={"pos": pos.copy(), "vel": vel.copy(), "acc": z.copy()},
             initial_states=states,
             K=self.settings.K,
             N=self.settings.N,
@@ -484,27 +426,23 @@ class AxswarmSafetyFilter:
         self._last_safe = pos.copy()
         self._last_mpc_time = -1e9
         self._last_ok = True
+        self._reset_gesture_kinematics()
 
     def sync_gesture(self, gesture: np.ndarray, sim_vel: np.ndarray | None = None) -> None:
         """Re-init MPC state from current gesture (e.g. SPACE armed)."""
         self.reset(gesture, sim_vel)
 
-    def _clip_states_velocity(self, states: np.ndarray) -> np.ndarray:
-        states = np.asarray(states, dtype=np.float32).copy()
-        speed = np.linalg.norm(states[:, 3:], axis=-1, keepdims=True)
-        vmax = float(self.settings.vel_max)
-        states[:, 3:] *= np.minimum(1.0, vmax / np.maximum(speed, 1e-6))
-        return states
-
-    def _run_mpc(self, states: np.ndarray, gesture_setpoint: np.ndarray) -> bool:
+    def _run_mpc(
+        self, states: np.ndarray, gesture_setpoint: np.ndarray, elapsed_s: float
+    ) -> bool:
         sp = np.asarray(gesture_setpoint, dtype=np.float32)
-        z = np.zeros((self.n_drones, 3), dtype=np.float32)
+        vel_sp, acc_sp = self._gesture_setpoint_kinematics(sp, elapsed_s)
         self.solver_data = self.solver_data.replace(
-            setpoints={"pos": sp, "vel": z, "acc": z},
+            setpoints={"pos": sp, "vel": vel_sp, "acc": acc_sp},
         )
         t0 = time.perf_counter()
         success, _, self.solver_data = self._solve_fn(
-            self._clip_states_velocity(states), self.solver_data, self.settings
+            states, self.solver_data, self.settings
         )
         self._last_solve_ms = (time.perf_counter() - t0) * 1000.0
         self._solve_count += 1
@@ -518,11 +456,7 @@ class AxswarmSafetyFilter:
             self._fail_count += 1
             self._last_ok = False
             return False
-        safe = clamp_plan_toward_gesture(
-            planned, sp, max_deviation_m=self.max_deviation_m
-        )
-        safe = enforce_min_separation(safe, self.min_separation_m, iters=8)
-        self._last_safe = safe
+        self._last_safe = planned
         self.solver_data = self.solver_data.step(self.solver_data)
         return True
 
@@ -534,12 +468,12 @@ class AxswarmSafetyFilter:
         *,
         track_pos: np.ndarray | None = None,
         track_vel: np.ndarray | None = None,
+        hold_z: float | None = None,
     ) -> np.ndarray:
         """Track spacing-safe gesture targets; use MPC ticks as collision corrections."""
         el = float(elapsed_s)
-        sp = np.asarray(gesture_setpoint, dtype=np.float32)
-        sep_out = float(self.min_separation_m) * 1.15
-        g_enf = self._gesture_enforced(sp)
+        sp = self._lock_vertical_z(self._clamp_pos(gesture_setpoint), hold_z)
+        g_enf = self._gesture_enforced(sp, hold_z=hold_z)
 
         if track_pos is not None:
             pos = np.asarray(track_pos, dtype=np.float32)
@@ -569,7 +503,7 @@ class AxswarmSafetyFilter:
             else pos.copy()
         )
         if warmup:
-            return enforce_min_separation(g_enf, sep_out, iters=6)
+            return self._lock_vertical_z(g_enf, hold_z)
 
         step = self._frame_step_m(el, warmup=False)
         out: np.ndarray | None = None
@@ -579,18 +513,24 @@ class AxswarmSafetyFilter:
         if due:
             self._last_mpc_time = el
             if not overloaded:
-                if self._run_mpc(states, sp) and self._last_safe is not None:
-                    cand = enforce_min_separation(self._last_safe, sep_out, iters=12)
+                if self._run_mpc(states, sp, el) and self._last_safe is not None:
+                    cand = self._last_safe
                     plan_min, _, _ = closest_pair(cand)
                     if plan_min >= float(self.min_separation_m) * 0.97:
-                        out = cand
-                        gest_err = float(np.max(np.linalg.norm(g_enf - pos, axis=1)))
-                        if (
-                            sim_min >= float(self.min_separation_m)
-                            and gest_err < step * 1.5
+                        if self._mpc_blocks_hover_descent(
+                            pos, cand, g_enf, hold_z=hold_z
                         ):
-                            self._last_ok = True
-                            self._recover_until_s = -1e9
+                            self.enter_recover(el)
+                            self._last_ok = False
+                        else:
+                            out = cand
+                            gest_err = float(np.max(np.linalg.norm(g_enf - pos, axis=1)))
+                            if (
+                                sim_min >= float(self.min_separation_m)
+                                and gest_err < step * 1.5
+                            ):
+                                self._last_ok = True
+                                self._recover_until_s = -1e9
                     else:
                         self.enter_recover(el)
                         self._last_ok = False
@@ -627,13 +567,16 @@ class AxswarmSafetyFilter:
                 anchor, g_enf, pos, elapsed_s=el, warmup=False
             )
 
-        # Never emit a full gesture jump in one frame (MPC runs at mpc_hz << fps).
         out = clamp_targets_step(pos, out, step)
 
         if self._last_ok and sim_min >= float(self.min_separation_m) and el >= self._recover_until_s:
             self._recover_until_s = -1e9
 
-        return enforce_min_separation(out, sep_out, iters=6)
+        out = self._lock_vertical_z(self._clamp_pos(out), hold_z)
+        if hold_z is None:
+            # XY: spacing-safe MPC/creep; Z: follow hover/morph setpoint (not sim altitude).
+            out[:, 2] = g_enf[:, 2]
+        return out
 
     def track_target_for(
         self,
@@ -667,5 +610,4 @@ class AxswarmSafetyFilter:
         )
 
 
-# Backward-compatible name used during integration.
 AxswarmRealtimePlanner = AxswarmSafetyFilter

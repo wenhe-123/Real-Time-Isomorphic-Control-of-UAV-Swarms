@@ -152,11 +152,10 @@ class OnlineKeyQueue:
     def mode(self) -> str:
         return self._mode
 
-    @staticmethod
-    def _enqueue_char(q: queue.Queue[int], ch: str | None) -> None:
+    def _enqueue_char(self, ch: str | None) -> None:
         if not ch:
             return
-        q.put(ord(ch))
+        self._q.put(ord(ch))
 
     def start(self, *, use_global: bool = True, use_stdin: bool = True) -> None:
         if self._running:
@@ -179,6 +178,8 @@ class OnlineKeyQueue:
                             vk = int(key.vk)
                             if vk in (48, 96):
                                 self._q.put(ord("0"))
+                            elif vk == ord("Q"):
+                                self._q.put(_KEY_Q)
                     except Exception:
                         pass
 
@@ -287,6 +288,9 @@ class OnlineKeyQueue:
             except Exception:
                 pass
             self._keyboard_hook = None
+        if self._stdin_thread is not None and self._stdin_thread.is_alive():
+            self._stdin_thread.join(timeout=0.5)
+        self._stdin_thread = None
         if self._stdin_owned_tty and self._stdin_fd is not None:
             try:
                 os.close(self._stdin_fd)
@@ -364,6 +368,7 @@ def apply_online_control_key(
     if key is None:
         return False
     if key in (_KEY_Q, _KEY_ENTER):
+        print("Quitting online control...", flush=True)
         return True
     if key == ord("1"):
         if ctx.gesture_control_enabled[0]:
@@ -414,7 +419,9 @@ def apply_online_control_key(
             )
             return False
         ctx.gesture_control_enabled[0] = True
-        print("Gesture control armed: Crazyflow targets now follow mode/open recognition.")
+        print(
+            f"Gesture control armed: morph follows mode/open at hover z={ctx.prearm_hover_z:.2f}m."
+        )
         return False
     if key == ord("z") and ctx.left_swarm_enabled and ctx.left_pose_runtime_armed[0]:
         ctx.left_pose_reset_req[0] = True

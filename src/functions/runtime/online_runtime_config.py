@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -15,6 +16,7 @@ from functions.runtime.online_defaults import (
     _ONLINE_MP_INPUT_SCALE,
 )
 from functions.runtime.pipeline_tuning import PipelineTuning
+from functions.swarm_motion.axswarm_runtime import load_axswarm_yaml_limits
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,14 +29,9 @@ class OnlineRuntimeConfig:
     drone_model: str
     prearm_hover_z: float
     prearm_takeoff_z: float
-    planner: str
     axswarm_settings: str | None
     axswarm_project_root: str | None
-    axswarm_max_iters: int | None
     axswarm_max_solve_ms: float
-    axswarm_max_deviation_m: float
-    axswarm_mpc_hz: float
-    axswarm_pos_weight: float | None
     max_sim_substeps: int
     plot_every_n: int
     report_panels: ReportDebugPanels | None
@@ -58,10 +55,6 @@ class OnlineRuntimeConfig:
     orbbec_flip_horizontal: bool
     orbbec_use_transformed_depth: bool
     orbbec_hand_swap: str
-    swarm_workspace_box_m: float
-    swarm_workspace_wall_margin_m: float
-    swarm_workspace_clear_margin_m: float
-    swarm_workspace_mode: str
     center_trace: bool
     center_trace_every: int
     install_hotkey_deps: bool
@@ -82,6 +75,7 @@ class OnlineRuntimeConfig:
     left_axis_sign: tuple[float, float, float]
     left_lost_decay: float
     debug_drone_targets_every: int
+    debug_drone_pos_every: int
     spacing_audit_every: int
     open_jump_reset: float
     left_axis_trans_deadzone_m: float
@@ -136,23 +130,27 @@ def build_online_runtime_config(
         -1.0 if args.left_flip_y else 1.0,
         -1.0 if args.left_flip_z else 1.0,
     )
+    debug_drone_pos_every = max(0, int(args.debug_drone_pos_every))
+    if bool(args.debug_drone_pos) and debug_drone_pos_every == 0:
+        debug_drone_pos_every = 1
+    settings_path = Path(args.axswarm_settings) if args.axswarm_settings else None
+    project_root = Path(args.axswarm_project_root) if args.axswarm_project_root else None
+    min_separation_m, _, _ = load_axswarm_yaml_limits(
+        settings_path=settings_path,
+        project_root=project_root,
+    )
     return OnlineRuntimeConfig(
         point_count=int(point_count),
         fps=int(args.fps),
-        min_separation_m=float(args.min_separation_m),
+        min_separation_m=min_separation_m,
         scale=scale,
         pipe=pipeline,
         drone_model=str(args.drone_model),
         prearm_hover_z=float(args.prearm_hover_z),
         prearm_takeoff_z=float(args.prearm_takeoff_z),
-        planner=str(args.planner),
         axswarm_settings=args.axswarm_settings,
         axswarm_project_root=args.axswarm_project_root,
-        axswarm_max_iters=args.axswarm_max_iters,
         axswarm_max_solve_ms=float(args.axswarm_max_solve_ms),
-        axswarm_max_deviation_m=float(args.axswarm_max_deviation_m),
-        axswarm_mpc_hz=args.axswarm_mpc_hz,
-        axswarm_pos_weight=args.axswarm_pos_weight,
         max_sim_substeps=int(args.max_sim_substeps),
         plot_every_n=max(0, int(pipeline.plot_every_n)),
         report_panels=panels if panels.any_enabled() else None,
@@ -176,10 +174,6 @@ def build_online_runtime_config(
         orbbec_flip_horizontal=bool(args.orbbec_flip_horizontal),
         orbbec_use_transformed_depth=bool(args.orbbec_use_transformed_depth),
         orbbec_hand_swap=str(args.orbbec_hand_swap).strip().lower(),
-        swarm_workspace_box_m=float(args.swarm_workspace_box_m),
-        swarm_workspace_wall_margin_m=float(args.swarm_workspace_wall_margin_m),
-        swarm_workspace_clear_margin_m=float(args.swarm_workspace_clear_margin_m),
-        swarm_workspace_mode=str(args.swarm_workspace_mode),
         center_trace=bool(args.center_trace),
         center_trace_every=max(1, int(args.center_trace_every)),
         install_hotkey_deps=bool(args.install_hotkey_deps),
@@ -200,6 +194,7 @@ def build_online_runtime_config(
         left_axis_sign=left_axis_sign,
         left_lost_decay=float(args.left_lost_decay),
         debug_drone_targets_every=max(0, int(args.debug_drone_targets_every)),
+        debug_drone_pos_every=debug_drone_pos_every,
         spacing_audit_every=int(args.spacing_audit_every),
         open_jump_reset=float(args.open_jump_reset),
         left_axis_trans_deadzone_m=float(args.left_axis_trans_deadzone_m),

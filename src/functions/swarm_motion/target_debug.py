@@ -47,3 +47,33 @@ def debug_print_drone_targets(
             flush=True,
         )
     return d_min, pi, pj
+
+
+def debug_print_drone_positions(
+    pts_m: np.ndarray,
+    *,
+    frame_idx: int,
+    label: str,
+    compare_to: np.ndarray | None = None,
+) -> None:
+    """Print each drone xyz (compact; for --debug-drone-pos-every)."""
+    p = np.asarray(pts_m, dtype=np.float64)
+    if p.ndim != 2 or p.shape[1] < 3:
+        print(f"[pos {label}] f={frame_idx} invalid shape {getattr(p, 'shape', None)}", flush=True)
+        return
+    d_min, pi, pj = closest_pair(p)
+    line = (
+        f"[pos {label}] frame={frame_idx} n={p.shape[0]} "
+        f"min_pair=({pi},{pj}) d={d_min:.4f}m"
+    )
+    if compare_to is not None:
+        c = np.asarray(compare_to, dtype=np.float64)
+        if c.shape == p.shape:
+            err = np.linalg.norm(p - c, axis=1)
+            line += f" | track_err mean={float(np.mean(err)):.4f}m max={float(np.max(err)):.4f}m"
+    print(line, flush=True)
+    for i in range(p.shape[0]):
+        print(
+            f"  drone {i:2d}: x={p[i, 0]:8.4f} y={p[i, 1]:8.4f} z={p[i, 2]:8.4f}",
+            flush=True,
+        )
