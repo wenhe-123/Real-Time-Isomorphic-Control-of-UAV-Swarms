@@ -23,7 +23,6 @@ import numpy as np
 if TYPE_CHECKING:
     from functions.swarm_motion.left_pose_tuning import LeftPoseSensorInput, LeftPoseTuning
 from functions.mode_switch.hand_constants import (
-    HAND_SPAN_LANDMARK_IDS,
     INDEX_MCP_ID,
     INDEX_TIP_ID,
     MCP_IDS,
@@ -36,8 +35,6 @@ from functions.mode_switch.hand_constants import (
     THUMB_TIP_ID,
     WRIST_ID,
 )
-
-_MIN_FINGERTIP_REL_MM = 8.0
 
 # Palm local rotation axes → simulation world axes.
 # x=thumb/lateral, y=fingertip, z=palm normal. Map palm-normal twist to world Z yaw.
@@ -63,9 +60,6 @@ def palm_basis_pair_indices(preset: str) -> tuple[int, int]:
     a, b = LEFT_PALM_BASIS_PRESETS[key]
     return int(a), int(b)
 
-
-# Prefer tip−wrist if segment length exceeds this (mm); else MCP−wrist.
-_MIN_TIP_EDGE_MM = 12.0
 
 # --- Depth camera (mm) → simulation world (m) for left-swarm rigid -----------------
 # Femto Bolt / K4A depth camera: +X right, +Y down, +Z forward (Orbbec documentation).
@@ -172,11 +166,6 @@ def palm_frame_origin_mm(h: np.ndarray) -> np.ndarray | None:
     if c is None:
         return None
     return _project_point_onto_plane(c, n, hp)
-
-
-def palm_center_mm(h: np.ndarray) -> np.ndarray | None:
-    """Palm frame origin in depth camera mm (wrist + five MCPs on palm plane)."""
-    return palm_frame_origin_mm(h)
 
 
 def _is_depth_measurement_reliable(
@@ -711,40 +700,6 @@ def palm_center_components_mm(h: np.ndarray) -> tuple[np.ndarray | None, np.ndar
     return wrist, roots_mean, len(root_pts)
 
 
-def hand_palm_span_mm(h: np.ndarray, wrist: np.ndarray | None = None) -> float:
-    """Mean wrist→landmark distance (mm); grows when the hand moves closer (appears larger)."""
-    w = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3) if wrist is None else np.asarray(wrist).reshape(3)
-    dists: list[float] = []
-    for idx in HAND_SPAN_LANDMARK_IDS:
-        v = np.asarray(h[int(idx), :3], dtype=np.float64).reshape(3) - w
-        n = float(np.linalg.norm(v))
-        if n >= 8.0:
-            dists.append(n)
-    if not dists:
-        return 0.0
-    return float(np.mean(dists))
-
-
-
-
-
-
-
-
-def world_rotvec_from_palm_delta(
-    Mc_rot: np.ndarray,
-    B_current: np.ndarray,
-    B_arm: np.ndarray,
-) -> np.ndarray:
-    """World rotation from palm basis change: ``ω = R_to_rotvec(M @ (B B_arm^T) @ M.T)``."""
-    M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
-    R_cam = np.asarray(B_current, dtype=np.float64).reshape(3, 3) @ np.asarray(
-        B_arm, dtype=np.float64
-    ).reshape(3, 3).T
-    R_world = M @ R_cam @ M.T
-    return np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
-
-
 def palm_world_rotvec_from_basis_delta(
     Mc_rot: np.ndarray | None,
     B_current: np.ndarray,
@@ -800,23 +755,6 @@ def palm_world_rotvec_from_local_intrinsic(rv_local: np.ndarray) -> np.ndarray:
     return out
 
 
-def palm_world_rotvec_from_cam_intrinsic(
-    Mc_rot: np.ndarray | None,
-    rv_cam: np.ndarray,
-) -> np.ndarray:
-    """Map camera-frame palm twist to world; identity when ``rv_cam`` is zero."""
-    rv_c = np.asarray(rv_cam, dtype=np.float64).reshape(3)
-    if float(np.linalg.norm(rv_c)) < 1e-12:
-        return np.zeros(3, dtype=np.float64)
-    R_cam = rotvec_to_R(rv_c)
-    if Mc_rot is not None:
-        M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
-        R_world = M @ R_cam @ M.T
-    else:
-        R_world = R_cam
-    return np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
-
-
 def sanitize_palm_rotvec_apply(
     rv_world: np.ndarray,
     rv_cam: np.ndarray,
@@ -847,28 +785,6 @@ def sanitize_palm_rotvec_apply(
             return np.zeros(3, dtype=np.float64)
 
     return rv_w
-
-
-def rate_limit_rotvec_toward(
-    current: np.ndarray,
-    target: np.ndarray,
-    *,
-    max_step_rad: float,
-) -> np.ndarray:
-    """Slew accumulated palm orientation toward absolute target (≤ ``max_step_rad`` per frame)."""
-    cur = np.asarray(current, dtype=np.float64).reshape(3)
-    tgt = np.asarray(target, dtype=np.float64).reshape(3)
-    if float(np.linalg.norm(tgt)) < 1e-12:
-        return cur.copy()
-    cap = float(max(max_step_rad, 1e-9))
-    R_cur = rotvec_to_R(cur)
-    R_tgt = rotvec_to_R(tgt)
-    rv_step = R_to_rotvec(R_tgt @ R_cur.T)
-    sn = float(np.linalg.norm(rv_step))
-    if sn > cap:
-        rv_step = rv_step * (cap / sn)
-    return R_to_rotvec(rotvec_to_R(rv_step) @ R_cur)
-
 
 
 def axis_locked_trans_rot_blend_weights(
@@ -1097,10 +1013,13 @@ def quat_slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
 
 
 def scale_rotation_matrix(R: np.ndarray, *, scale: float, gain: float = 1.0) -> np.ndarray:
-    """Scale a proper rotation about identity: ``slerp(I, R, scale*gain)``."""
-    s = float(np.clip(scale * max(0.0, gain), 0.0, 1.0))
+    """Scale a proper rotation about identity, allowing modest gain above 1."""
+    s = float(np.clip(scale * max(0.0, gain), 0.0, 2.0))
     if s <= 1e-12:
         return np.eye(3, dtype=np.float64)
+    if s > 1.0 + 1e-12:
+        rv = np.asarray(R_to_rotvec(R), dtype=np.float64).reshape(3)
+        return rotvec_to_R(rv * s)
     if s >= 1.0 - 1e-12:
         return np.asarray(R, dtype=np.float64).reshape(3, 3).copy()
     q_id = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
@@ -1143,7 +1062,6 @@ def _resolve_cam_world_mats(
 
 
 def _rigid_target_from_hand(
-    state: "LeftSwarmPoseState",
     *,
     delta_cam_arm: np.ndarray,
     B: np.ndarray,
@@ -1232,12 +1150,8 @@ def _smooth_rigid_pose(
 def _reject_noisy_pose_frame(
     state: "LeftSwarmPoseState",
     *,
-    palm_center: np.ndarray,
-    B_depth: np.ndarray,
     delta_cam: np.ndarray,
-    delta_cam_arm: np.ndarray,
     mcp_valid: int,
-    wrist_mm: np.ndarray | None,
     depth_hold: bool = False,
 ) -> tuple[bool, str]:
     """True → soft-reject (partial blend). Only obvious tracking loss (too few MCPs)."""
@@ -1249,7 +1163,7 @@ def _reject_noisy_pose_frame(
     depth_recover = bool(depth_hold or getattr(state, "last_depth_outlier_prev", False))
     if depth_recover:
         return False, ""
-    if dn_xy > 120.0 or dn > 220.0:
+    if dn_xy > 180.0 or dn > 320.0:
         return True, "jump"
     return False, ""
 
@@ -1660,14 +1574,8 @@ class LeftSwarmPoseState:
     unwind_duration: float = 0.0
     unwind_off0: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float64))
     unwind_rv0: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float64))
-    #: Previous wrist (camera mm), used for debug / glitch checks.
-    prev_wrist: np.ndarray | None = None
     #: Previous palm center (camera mm), used for frame-to-frame translation delta.
     prev_palm_mm: np.ndarray | None = None
-    #: Palm basis at previous frame (3×3), kept for legacy/full incremental helpers.
-    prev_basis: np.ndarray | None = None
-    #: Hand span (mm) at previous frame for incremental push/pull scale.
-    prev_hand_span_mm: float = 0.0
     #: When set (``camera_at_arm``), maps gated camera mm → sim m; frozen at press-0, not updated per frame.
     frozen_M_rot: np.ndarray | None = None
     frozen_M_trans: np.ndarray | None = None
@@ -1678,8 +1586,6 @@ class LeftSwarmPoseState:
     ref_drone_xyz: np.ndarray | None = None
     #: 2D/webcam palm basis at arm when dual-rotation fallback is enabled.
     ref_basis_image: np.ndarray | None = None
-    #: Mean wrist→landmark span (mm) at arm; detects push/pull via apparent hand size.
-    ref_hand_span_mm: float = 0.0
     #: Wrist (camera mm) at arm — debug / overlay only.
     ref_wrist_mm: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float64))
     #: Palm centroid (camera mm) at arm — translation origin.
@@ -1704,7 +1610,6 @@ class LeftSwarmPoseState:
     last_palm_color_v: float | None = None
     last_delta_trans_palm_mm: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float64))
     last_rv_cam_world: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float64))
-    last_trans_cam_gated: bool = False
     #: Previous Orbbec MP min visibility (dual-rot); used to hold morph mode when occluded.
     last_orbbec_vis_min: float = 1.0
     last_dual_rot_source: str = "depth"
@@ -1712,8 +1617,6 @@ class LeftSwarmPoseState:
     last_dual_vis_thresh: float = 0.0
     last_pose_rejected: bool = False
     last_reject_reason: str = ""
-    #: Previous palm basis (always updated) for frame-to-frame rot_jump checks only.
-    basis_step_prev: np.ndarray | None = None
     #: Previous basis from the rotation source actually used (depth vs image/webcam).
     prev_rot_basis: np.ndarray | None = None
     prev_rot_source: str = "depth"
@@ -1758,14 +1661,10 @@ class LeftSwarmPoseState:
         self.initialized = True
         self.ema_offset[:] = 0.0
         self.ema_rotvec[:] = 0.0
-        self.prev_wrist = wrist_mm.copy()
         self.prev_palm_mm = pc.copy()
-        self.prev_basis = B.copy()
-        self.basis_step_prev = B.copy()
         self.prev_rot_basis = B.copy()
         self.prev_rot_source = "depth"
         self.last_rot_source = "depth"
-        self.prev_hand_span_mm = float(self.ref_hand_span_mm)
         self.last_palm_center_mm = pc.copy()
         self.last_delta_cam_mm[:] = 0.0
         self.last_delta_cam_arm_mm[:] = 0.0
@@ -1801,7 +1700,6 @@ class LeftSwarmPoseState:
             self.ref_basis_image = np.asarray(ref_basis_image, dtype=np.float64).reshape(3, 3).copy()
         else:
             self.ref_basis_image = None
-        self.ref_hand_span_mm = float(hand_palm_span_mm(h, wrist_mm))
         self.filtered_palm_mm = np.asarray(pc, dtype=np.float64).reshape(3).copy()
         self.last_depth_outlier = False
         return True
@@ -1826,13 +1724,9 @@ class LeftSwarmPoseState:
         self.initialized = False
         self.ema_offset[:] = 0.0
         self.ema_rotvec[:] = 0.0
-        self.prev_wrist = None
         self.prev_palm_mm = None
-        self.prev_basis = None
-        self.basis_step_prev = None
         self.prev_rot_basis = None
         self.prev_rot_source = "depth"
-        self.prev_hand_span_mm = 0.0
         self.last_axis_motion = "none"
         self.last_rot_source = "depth"
         self.last_dual_rot_source = "depth"
@@ -1860,39 +1754,6 @@ def _clear_frozen_cam_to_sim(state: LeftSwarmPoseState) -> None:
 def swarm_base_targets(state: LeftSwarmPoseState, morph_fallback: np.ndarray) -> np.ndarray:
     """Live morph/open targets each frame; rigid transform applies on top when armed."""
     return np.asarray(morph_fallback, dtype=np.float32)
-
-
-
-
-
-
-
-
-
-def disarm_left_swarm_pose(state: LeftSwarmPoseState) -> None:
-    """Exit move mode: drop reference so the next arm captures a fresh baseline."""
-    state.unwind_end_t = 0.0
-    state.unwind_duration = 0.0
-    state.unwind_off0[:] = 0.0
-    state.unwind_rv0[:] = 0.0
-    state.initialized = False
-    state.ema_offset[:] = 0.0
-    state.ema_rotvec[:] = 0.0
-    state.prev_wrist = None
-    state.prev_palm_mm = None
-    state.prev_basis = None
-    state.basis_step_prev = None
-    state.prev_rot_basis = None
-    state.prev_rot_source = "depth"
-    state.prev_hand_span_mm = 0.0
-    state.last_axis_motion = "none"
-    state.last_rot_source = "depth"
-    state.last_dual_rot_source = "depth"
-    state.last_dual_vis_min = 1.0
-    state.last_dual_vis_thresh = 0.0
-    state.last_rot_blend_w = 0.0
-    state.last_trans_blend_w = 0.0
-    _clear_frozen_cam_to_sim(state)
 
 
 def update_left_swarm_pose(
@@ -1955,13 +1816,9 @@ def update_left_swarm_pose(
             state.initialized = False
             state.ema_offset[:] = 0.0
             state.ema_rotvec[:] = 0.0
-            state.prev_wrist = None
             state.prev_palm_mm = None
-            state.prev_basis = None
-            state.basis_step_prev = None
             state.prev_rot_basis = None
             state.prev_rot_source = "depth"
-            state.prev_hand_span_mm = 0.0
             _clear_frozen_cam_to_sim(state)
             return np.zeros(3, dtype=np.float64), np.eye(3, dtype=np.float64)
         u = float(
@@ -1982,13 +1839,9 @@ def update_left_swarm_pose(
     sign = np.asarray(axis_sign, dtype=np.float64).reshape(3)
 
     if h is None:
-        state.prev_wrist = None
         state.prev_palm_mm = None
-        state.prev_basis = None
-        state.basis_step_prev = None
         state.prev_rot_basis = None
         state.prev_rot_source = "depth"
-        state.prev_hand_span_mm = 0.0
         ld = float(np.clip(hand_lost_decay, 0.0, 1.0))
         if state.initialized:
             ld = 1.0
@@ -2013,13 +1866,9 @@ def update_left_swarm_pose(
     if palm_center_color_px is not None:
         state.last_palm_center_color_px = palm_center_color_px
     if out is None:
-        state.prev_wrist = None
         state.prev_palm_mm = None
-        state.prev_basis = None
-        state.basis_step_prev = None
         state.prev_rot_basis = None
         state.prev_rot_source = "depth"
-        state.prev_hand_span_mm = 0.0
         ld = float(np.clip(hand_lost_decay, 0.0, 1.0))
         if state.initialized:
             ld = 1.0
@@ -2053,13 +1902,9 @@ def update_left_swarm_pose(
         ema_alpha=float(palm_center_depth_ema),
     )
     if not np.all(np.isfinite(wrist_mm)):
-        state.prev_wrist = None
         state.prev_palm_mm = None
-        state.prev_basis = None
-        state.basis_step_prev = None
         state.prev_rot_basis = None
         state.prev_rot_source = "depth"
-        state.prev_hand_span_mm = 0.0
         ld = float(np.clip(hand_lost_decay, 0.0, 1.0))
         if state.initialized:
             ld = 1.0
@@ -2080,13 +1925,9 @@ def update_left_swarm_pose(
             ref_basis_image=ref_basis_image if force_reset else None,
             palm_center_override=palm_center,
         ):
-            state.prev_wrist = None
             state.prev_palm_mm = None
-            state.prev_basis = None
-            state.basis_step_prev = None
             state.prev_rot_basis = None
             state.prev_rot_source = "depth"
-            state.prev_hand_span_mm = 0.0
             ld = float(np.clip(hand_lost_decay, 0.0, 1.0))
             if state.initialized:
                 ld = 1.0
@@ -2121,16 +1962,11 @@ def update_left_swarm_pose(
     state.last_delta_cam_mm = np.asarray(delta_cam, dtype=np.float64).reshape(3).copy()
     state.last_delta_cam_arm_mm = np.asarray(delta_cam_arm, dtype=np.float64).reshape(3).copy()
     state.last_delta_trans_palm_mm = np.asarray(delta_cam_arm, dtype=np.float64).reshape(3).copy()
-    state.last_trans_cam_gated = True
 
     rejected, _reject_reason = _reject_noisy_pose_frame(
         state,
-        palm_center=palm_center,
-        B_depth=B_depth,
         delta_cam=delta_cam,
-        delta_cam_arm=delta_cam_arm,
         mcp_valid=int(mcp_n),
-        wrist_mm=w_now,
         depth_hold=bool(getattr(state, "last_depth_outlier", False)),
     )
 
@@ -2163,7 +1999,6 @@ def update_left_swarm_pose(
             rot_source = "hybrid"
 
     off_tgt, R_tgt, off_raw, rv_world = _rigid_target_from_hand(
-        state,
         delta_cam_arm=delta_cam_arm,
         B=B,
         ref_b_rot=ref_b_rot,
@@ -2275,15 +2110,11 @@ def update_left_swarm_pose(
     )
     sync_left_swarm_pose_output(state, off_out, R_out)
 
-    state.basis_step_prev = np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
     state.last_depth_outlier_prev = bool(getattr(state, "last_depth_outlier", False))
     if not rejected or _reject_reason not in ("jump",):
-        state.prev_wrist = wrist_mm.copy()
         state.prev_palm_mm = np.asarray(palm_center, dtype=np.float64).reshape(3).copy()
-        state.prev_basis = B.copy()
         state.prev_rot_basis = B.copy()
         state.prev_rot_source = str(rot_source)
-        state.prev_hand_span_mm = float(hand_palm_span_mm(h, wrist_mm))
 
     return state.ema_offset.astype(np.float64), rotvec_to_R(state.ema_rotvec)
 

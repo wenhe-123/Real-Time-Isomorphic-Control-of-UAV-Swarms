@@ -38,7 +38,7 @@ prearm_takeoff_z: 0.20
 # fwd_y: dz→sim Y (in/out). Flip Y so hand-toward-camera matches expected swarm direction.
 # middle_thumb palm embed: +palm Z (optical forward when palm faces cam) → world +Y; use +1 on Y.
 # palm X→world X (lateral), palm Z→world Y (fwd/back), palm Y→world Z (up). Default Z=+1: fingertip → altitude.
-left_axis_sign: [1.0, 1.0, 1.0]
+left_axis_sign: [-1.0, 1.0, 1.0]
 # Palm/camera mm → world meters (× on palm components before axis_sign). ~15 mm ≈ 0.11 m.
 left_trans_scale_mm: 0.0075
 left_rot_scale: 1.0
@@ -51,11 +51,11 @@ left_max_rot_rad: 3.14
 left_unwind_s: 2.6
 left_palm_depth_outlier_z_mm: 105.0
 left_palm_depth_outlier_lat_ratio: 2.6
-left_palm_center_depth_ema: 0.42
+left_palm_center_depth_ema: 0.75
 # Ignore |rotation vector| below this (rad axis-angle) after rot_scale*rot_gain — higher = calmer tilt.
-left_rot_gate_rad: 0.014
+left_rot_gate_rad: 0.008
 left_yaw_min_horiz: 0.17
-left_rot_gain: 1.0
+left_rot_gain: 1.35
 # While wrist moves: rotation cmd *= exp(-Δmm / tau). Larger tau = less suppression during pans.
 left_rot_trans_tau_mm: 0.0
 # Damp world-up component of axis–angle (formation spin about global Z).
@@ -68,9 +68,9 @@ left_cam_preset: fwd_y
 # ``camera_at_arm``: press 0 locks depth-camera → sim map; baseline wrist + palm = origin.
 left_world_frame: camera_at_arm
 axis_trans_deadzone_m: 0.004
-axis_rot_deadzone_rad: 0.014
+axis_rot_deadzone_rad: 0.008
 axis_trans_on_m: 0.004
-axis_rot_on_rad: 0.020
+axis_rot_on_rad: 0.012
 left_palm_basis: middle_thumb
 left_plane_rot_scale_mul: 1.0
 # centroid: whole formation rotates about its centroid. per_drone: each slot pivots separately.

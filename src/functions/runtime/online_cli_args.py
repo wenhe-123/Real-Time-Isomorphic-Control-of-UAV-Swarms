@@ -483,7 +483,7 @@ def build_online_control_parser() -> argparse.ArgumentParser:
 
 
 def report_debug_panels_from_args(args) -> ReportDebugPanels:
-    from functions.display_sim.gesture_report_debug import ReportDebugPanels
+    from debug.gesture_report_debug import ReportDebugPanels
 
     return ReportDebugPanels.from_cli(
         all_viz=bool(getattr(args, "debug_report_viz", False)),

@@ -25,7 +25,7 @@ from functions.dual_cam.online_input_keys import (
 )
 from functions.dual_cam.mp_hand_utils import orbbec_resolve_swap_mp_hands
 from functions.display_sim.online_plot import init_3d_plot
-from functions.display_sim.gesture_report_debug import (
+from debug.gesture_report_debug import (
     ReportDebugFigures,
     ReportDebugPanels,
     close_report_debug_figures,

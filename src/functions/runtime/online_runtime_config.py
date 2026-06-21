@@ -9,9 +9,10 @@ from typing import Any
 
 import numpy as np
 
-from functions.display_sim.gesture_report_debug import ReportDebugPanels
+from debug.gesture_report_debug import ReportDebugPanels
 from functions.open_close.morph_world import ScaleConfig
 from functions.runtime.online_defaults import (
+    _DEFAULT_LEFT_AXIS_SIGN,
     _DEFAULT_LEFT_TRANS_SCALE_MM,
     _ONLINE_MP_INPUT_SCALE,
 )
@@ -121,10 +122,11 @@ def build_online_runtime_config(
     left_trans_scale = args.left_trans_scale
     if left_trans_scale is None:
         left_trans_scale = _DEFAULT_LEFT_TRANS_SCALE_MM
+    base_axis_sign = tuple(float(v) for v in _DEFAULT_LEFT_AXIS_SIGN)
     left_axis_sign = (
-        -1.0 if args.left_flip_x else 1.0,
-        -1.0 if args.left_flip_y else 1.0,
-        -1.0 if args.left_flip_z else 1.0,
+        base_axis_sign[0] * (-1.0 if args.left_flip_x else 1.0),
+        base_axis_sign[1] * (-1.0 if args.left_flip_y else 1.0),
+        base_axis_sign[2] * (-1.0 if args.left_flip_z else 1.0),
     )
     debug_drone_pos_every = max(0, int(args.debug_drone_pos_every))
     if bool(args.debug_drone_pos) and debug_drone_pos_every == 0:

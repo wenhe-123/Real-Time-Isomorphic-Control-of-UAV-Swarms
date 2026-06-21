@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from functions.display_sim.gesture_report_debug import (
+from debug.gesture_report_debug import (
     ReportDebugPanels,
     update_report_debug_figures,
 )

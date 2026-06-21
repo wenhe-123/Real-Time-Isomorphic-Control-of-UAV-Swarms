@@ -17,7 +17,7 @@ import numpy as np
 from functions.display_sim.common_utils import resolve_model_path
 from functions.display_sim.frame_profiler import FrameSectionProfiler
 from functions.display_sim.online_frame_present import present_online_frame
-from functions.display_sim.gesture_report_debug import close_report_debug_figures
+from debug.gesture_report_debug import close_report_debug_figures
 from functions.display_sim.online_plot import close_3d_plot, init_3d_plot
 from functions.display_sim.online_plot_frame import update_online_plot_frame
 from functions.display_sim.orbbec_hand import create_hand_landmarker

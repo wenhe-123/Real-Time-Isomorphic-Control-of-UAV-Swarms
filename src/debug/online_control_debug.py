@@ -9,7 +9,7 @@ import numpy as np
 
 from functions.mode_switch.modes_runtime import ModeState, RightHandState
 from functions.swarm_motion.left_hand_swarm_pose import LeftSwarmPoseState
-from functions.swarm_motion.target_debug import debug_print_drone_targets, debug_print_drone_positions
+from debug.target_debug import debug_print_drone_targets, debug_print_drone_positions
 
 
 def draw_drone_target_debug_hud(
