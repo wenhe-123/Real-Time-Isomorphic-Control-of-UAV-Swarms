@@ -349,28 +349,6 @@ def run_integrated_online_control(
                         np.asarray(_sync_pos, dtype=np.float32),
                         np.zeros((boot.n_drones, 3), dtype=np.float32),
                     )
-                    if (
-                        boot.prearm_phase == "vertical"
-                        and boot.prev_prearm_phase == "ground"
-                    ):
-                        boot.axswarm_rt.mark_armed(float(elapsed))
-                    elif (
-                        boot.prearm_phase == "ground"
-                        and boot.prev_prearm_phase == "vertical"
-                    ):
-                        pass
-                    elif (
-                        boot.prearm_phase == "formation"
-                        and boot.prev_prearm_phase == "vertical"
-                    ):
-                        pass
-                    elif (
-                        boot.prearm_phase == "vertical"
-                        and boot.prev_prearm_phase == "formation"
-                    ):
-                        pass
-                    else:
-                        pass
 
                 filt, boot.prev_gesture_control_enabled = filter_online_targets(
                     boot=boot,

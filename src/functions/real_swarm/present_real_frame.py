@@ -29,7 +29,7 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
             open_out=gest.open_out,
             min_separation_m=float(cfg.min_separation_m),
             raw_target=inp.raw_target,
-            filter_src=filt.filter_src,
+            axswarm_input=filt.axswarm_input,
             cmd_target=filt.cmd_target,
             sim=None,
         )
@@ -67,7 +67,7 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
         print_drone_position_debug(
             frame_idx=frame_idx,
             cmd_target=filt.cmd_target,
-            pre_axswarm=filt.filter_src,
+            pre_axswarm=filt.axswarm_input,
             real_pos=real_pos,
             raw_target=inp.raw_target,
             hold_z=_hold_z,

@@ -17,7 +17,7 @@ camera input
 → hand geometry processing
 → superellipsoid-based formation generation
 → global translation and rotation
-→ safety filtering
+→ axswarm planning
 → UAV target positions
 ```
 
@@ -102,7 +102,7 @@ Edit `config/2drones.toml` (or copy from `config/drones.example.toml`) for your 
 
 ### Prearm sequence (press `1` four times per cycle)
 
-Axswarm safety filter **engages on the first `1`** (not at idle on ground). Default MPC replan rate is **8 Hz** (`--axswarm-mpc-hz`, matches `config/axswarm_settings.yaml`).
+Axswarm plans from startup using `config/axswarm_settings.yaml`. Default MPC replan rate is **8 Hz** (`SolverSettings.freq`).
 
 | Press `1` | Phase | Target |
 |-----------|--------|--------|
@@ -111,9 +111,9 @@ Axswarm safety filter **engages on the first `1`** (not at idle on ground). Defa
 | 3 | **Vertical descend** | Shrink back to takeoff height (ground XY) |
 | 4 | **Ground** | Return to startup layout |
 
-Then cycle repeats from ground. All prearm moves and exit landing use the same axswarm-filtered `swarm.setpoint` stream as gesture control.
+Then cycle repeats from ground. All prearm moves and exit landing use the same axswarm-planned setpoint stream as gesture control.
 
-**Real swarm:** same key sequence and the same axswarm-filtered setpoint stream (no separate blocking `goto`).
+**Real swarm:** same key sequence and the same axswarm-planned setpoint stream (no separate blocking `goto`).
 
 ### Controls
 
@@ -126,7 +126,7 @@ Then cycle repeats from ground. All prearm moves and exit landing use the same a
 
 **Typical session:** `1` ×2 (climb → hover formation) → `Space` to arm gestures → `Space` to disarm → `1` ×2 (vertical shrink → ground) → `q`. (`1` is ignored while gesture is armed.)
 
-**Useful flags:** `--prearm-takeoff-z`, `--prearm-hover-z`, `--axswarm-mpc-hz 8`, `--profile-frame`, `--sim-render-every 2`.
+**Useful flags:** `--prearm-takeoff-z`, `--prearm-hover-z`, `--axswarm-settings`, `--profile-frame`, `--sim-render-every 2`.
 
 Legacy scripts and unit tests are on the **`backup-archive`** git branch.
 

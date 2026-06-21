@@ -25,7 +25,7 @@ mode_vis_min: 0.55
 open_vis_min: 0.55
 # History length for MuJoCo trail polylines (smaller = shorter tail on screen).
 trail_buffer_maxlen: 6
-# Legacy cap for max physics substeps (axswarm yaml cap sync only; no sim.step).
+# Cap for Crazyflow physics substeps per camera/update frame.
 max_sim_substeps_per_frame: 160
 # Sim / spawn: physical ground plane in Crazyflow sim frame (m), not gesture workspace z_min.
 ground_z: 0.0

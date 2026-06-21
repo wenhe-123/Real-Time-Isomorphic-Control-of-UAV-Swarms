@@ -43,7 +43,7 @@ class FormationSpacingReport:
         print(
             f"[spacing {self.label}] n={self.n_drones} open={self.open_alpha:.2f} "
             f"mm_min={self.min_mm:.1f}mm | "
-            f"pre_filter raw={self.min_raw_m:.3f}m pair={self.pair_raw} "
+            f"raw={self.min_raw_m:.3f}m pair={self.pair_raw} "
             f"(Δvs min_sep={gap_raw:+.3f}m, vs axswarm_env={self.min_raw_m - env:+.3f}m)"
         )
         if self.min_raw_m < env - 0.02:

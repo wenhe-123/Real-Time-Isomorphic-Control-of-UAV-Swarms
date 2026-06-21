@@ -4137,7 +4137,7 @@ packages:
 - pypi: ./
   name: iso-swarm
   version: 0.1.0
-  sha256: fe13c7e1c573d625f953252a60c9c18fe4ce36f7cf018a5a3f56c3df7a622a30
+  sha256: c929346d9d1d1311844191d0847e2505fcf6fba9c3b5b8bcae403a3c900f676a
   requires_dist:
   - numpy>=2.0.0,<2.5.0
   - scipy>=1.17.0,<1.18.0

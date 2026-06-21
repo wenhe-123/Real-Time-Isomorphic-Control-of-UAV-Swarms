@@ -115,7 +115,7 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         metavar="N",
-        help="Print full target chain (morph/pre_filter/cmd/sim) every N frames (0=off).",
+        help="Print full target chain (morph/pre_axswarm/cmd/sim) every N frames (0=off).",
     )
     parser.add_argument(
         "--debug-drone-pos-every",
@@ -450,13 +450,6 @@ def build_online_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--open-vis-min", type=float, default=_DEFAULT_OPEN_VIS_MIN)
     parser.add_argument("--left-trans-rot-coupling", type=float, default=0.50)
     parser.add_argument("--axswarm-settings", type=str, default=None)
-    parser.add_argument("--axswarm-project-root", type=str, default=None)
-    parser.add_argument(
-        "--axswarm-max-solve-ms",
-        type=float,
-        default=90.0,
-        help="Wall-clock MPC solve budget per replan (not in yaml).",
-    )
     parser.add_argument("--left-palm-depth-outlier-z-mm", type=float, default=_DEFAULT_LEFT_PALM_DEPTH_OUTLIER_Z_MM)
     parser.add_argument("--left-palm-depth-outlier-lat-ratio", type=float, default=_DEFAULT_LEFT_PALM_DEPTH_OUTLIER_LAT_RATIO)
     parser.add_argument("--left-palm-center-depth-ema", type=float, default=_DEFAULT_LEFT_PALM_CENTER_DEPTH_EMA)

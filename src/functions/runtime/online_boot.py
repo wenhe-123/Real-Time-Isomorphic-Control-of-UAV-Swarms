@@ -42,7 +42,7 @@ from functions.runtime.online_defaults import (
     _TRAIL_BUFFER_MAXLEN,
 )
 from functions.runtime.pipeline_tuning import PipelineTuning
-from functions.swarm_motion.axswarm_runtime import AxswarmOnlineConfig, AxswarmSafetyFilter, resolve_axswarm_settings_path
+from functions.swarm_motion.axswarm_runtime import AxswarmPlanner, resolve_axswarm_settings_path
 from functions.swarm_motion.left_hand_swarm_pose import (
     LeftSwarmPoseState,
     left_cam_preset_rotation,
@@ -68,7 +68,7 @@ class OnlineBoot:
     sim: Sim | None
     real_executor: RealSwarmExecutor | None
     n_drones: int
-    axswarm_rt: AxswarmSafetyFilter
+    axswarm_rt: AxswarmPlanner
     mode_state: ModeState
     right_state: RightHandState
     lp_shape: LpShapePipelineState
@@ -204,15 +204,13 @@ def boot_online_control(
 
     zeros = jnp.zeros((n_drones, 3))
 
-    axswarm_online = AxswarmOnlineConfig.from_runtime_config(cfg, scale)
-    axswarm_rt = AxswarmSafetyFilter.from_online_config(n_drones, axswarm_online)
+    axswarm_rt = AxswarmPlanner.from_runtime_config(n_drones, cfg)
     yaml_path = resolve_axswarm_settings_path(
-        axswarm_online.settings_path,
-        axswarm_online.project_root,
+        Path(cfg.axswarm_settings) if cfg.axswarm_settings else None
     )
     env = np.asarray(axswarm_rt.settings.collision_envelope, dtype=np.float64)
-    pos_lo = np.asarray(axswarm_rt._pos_lo, dtype=np.float64)
-    pos_hi = np.asarray(axswarm_rt._pos_hi, dtype=np.float64)
+    pos_lo = np.asarray(axswarm_rt.settings.pos_min, dtype=np.float64)
+    pos_hi = np.asarray(axswarm_rt.settings.pos_max, dtype=np.float64)
     print(
         f"Axswarm yaml ({yaml_path}): freq={axswarm_rt.mpc_hz:.1f} Hz, "
         f"vel_max={float(axswarm_rt.settings.vel_max):.2f} m/s, "
@@ -221,7 +219,7 @@ def boot_online_control(
         f"pos=[{pos_lo.tolist()}, {pos_hi.tolist()}]."
     )
     print(
-        f"Planner: gesture setpoints + axswarm safety filter @ {axswarm_rt.mpc_hz:.1f} Hz, "
+        f"Planner: gesture setpoints + axswarm @ {axswarm_rt.mpc_hz:.1f} Hz, "
         f"n={n_drones} (active from startup)."
     )
 
@@ -327,11 +325,11 @@ def boot_online_control(
     axswarm_rt.reset(boot_cmd, np.zeros((n_drones, 3), dtype=np.float32))
     mode_label = "real Crazyflie" if real_executor is not None else "MuJoCo sim (cmd+step)"
     print(
-        f"Mode: gesture targets → axswarm filter → cmd_target; {mode_label}. "
-        "Planner: Axswarm safety_filter."
+        f"Mode: gesture targets → axswarm → cmd_target; {mode_label}. "
+        "Planner: axswarm."
     )
     print(
-        f"Axswarm safety filter active from startup (ground hold_z={z_ground:.2f}m). "
+        f"Axswarm active from startup (ground hold_z={z_ground:.2f}m). "
         f"Press 1: z={prearm_takeoff_z:.2f}m → formation z={prearm_hover_z:.2f}m (before SPACE) "
         f"→ z={prearm_takeoff_z:.2f}m → ground; SPACE → gesture control."
     )

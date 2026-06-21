@@ -21,7 +21,7 @@ def draw_drone_target_debug_hud(
     open_out: float | None,
     min_separation_m: float,
     raw_target: np.ndarray,
-    filter_src: np.ndarray,
+    axswarm_input: np.ndarray,
     cmd_target: np.ndarray,
     sim: Any,
 ) -> None:
@@ -36,8 +36,8 @@ def draw_drone_target_debug_hud(
     )
     morph_snap = np.asarray(raw_target, dtype=np.float64).copy()
     debug_print_drone_targets(morph_snap, label="morph_raw", **dbg_kw)
-    pre_snap = np.asarray(filter_src, dtype=np.float64).copy()
-    debug_print_drone_targets(pre_snap, label="pre_filter", compare_to=morph_snap, **dbg_kw)
+    pre_snap = np.asarray(axswarm_input, dtype=np.float64).copy()
+    debug_print_drone_targets(pre_snap, label="pre_axswarm", compare_to=morph_snap, **dbg_kw)
     cmd_snapshot = np.asarray(cmd_target, dtype=np.float64).copy()
     d_cmd, pi_cmd, pj_cmd = debug_print_drone_targets(
         cmd_snapshot, label="cmd_target", compare_to=pre_snap, **dbg_kw
@@ -138,14 +138,12 @@ def print_center_trace(
     center_trace_prev: dict[str, float | None],
     raw_target: np.ndarray,
     cmd_target: np.ndarray,
-    safe_target: np.ndarray,
     left_pose_state: LeftSwarmPoseState,
 ) -> None:
     if frame_idx % max(1, int(center_trace_every)) != 0:
         return
     raw_center = np.mean(np.asarray(raw_target, dtype=np.float64), axis=0)
     smooth_center = np.mean(np.asarray(cmd_target, dtype=np.float64), axis=0)
-    safe_center = np.mean(np.asarray(safe_target, dtype=np.float64), axis=0)
     track_world = np.asarray(cmd_target, dtype=np.float64)
     swarm_track_center = np.mean(track_world[:, :3], axis=0)
     track_smooth_err = swarm_track_center - smooth_center
@@ -170,7 +168,6 @@ def print_center_trace(
         flags.append("DEPTH→TARGET")
     center_trace_prev["hand_z"] = float(hand_cam_mm[2])
     center_trace_prev["raw_z"] = float(raw_center[2])
-    center_trace_prev["safe_z"] = float(safe_center[2])
     center_trace_prev["smooth_z"] = float(smooth_center[2])
     flag_s = (" " + " ".join(flags)) if flags else ""
     print(
@@ -179,7 +176,6 @@ def print_center_trace(
         f"  hand_cam_mm=({hand_cam_mm[0]:+7.1f},{hand_cam_mm[1]:+7.1f},{hand_cam_mm[2]:+7.1f}) "
         f"hand_rel_m=({hand_world_rel[0]:+6.3f},{hand_world_rel[1]:+6.3f},{hand_world_rel[2]:+6.3f})\n"
         f"  raw_center=({raw_center[0]:+6.3f},{raw_center[1]:+6.3f},{raw_center[2]:+6.3f}) "
-        f"safe_center=({safe_center[0]:+6.3f},{safe_center[1]:+6.3f},{safe_center[2]:+6.3f}) "
         f"smooth_center=({smooth_center[0]:+6.3f},{smooth_center[1]:+6.3f},{smooth_center[2]:+6.3f})\n"
         f"  track_center=({swarm_track_center[0]:+6.3f},{swarm_track_center[1]:+6.3f},{swarm_track_center[2]:+6.3f}) "
         f"track-smooth=({track_smooth_err[0]:+6.3f},{track_smooth_err[1]:+6.3f},{track_smooth_err[2]:+6.3f})"

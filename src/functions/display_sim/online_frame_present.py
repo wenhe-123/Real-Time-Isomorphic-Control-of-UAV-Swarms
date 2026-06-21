@@ -66,7 +66,6 @@ def _maybe_print_center_trace(inp: PresentFrameInput) -> None:
         center_trace_prev=inp.boot.center_trace_prev,
         raw_target=inp.raw_target,
         cmd_target=inp.filt.cmd_target,
-        safe_target=inp.filt.safe_target,
         left_pose_state=inp.boot.left_pose_state,
     )
 
@@ -93,7 +92,7 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
             open_out=gest.open_out,
             min_separation_m=float(cfg.min_separation_m),
             raw_target=inp.raw_target,
-            filter_src=filt.filter_src,
+            axswarm_input=filt.axswarm_input,
             cmd_target=filt.cmd_target,
             sim=boot.sim,
         )
@@ -147,7 +146,7 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
         print_drone_position_debug(
             frame_idx=frame_idx,
             cmd_target=filt.cmd_target,
-            pre_axswarm=filt.filter_src,
+            pre_axswarm=filt.axswarm_input,
             sim=boot.sim,
             raw_target=inp.raw_target,
             hold_z=_hold_z,

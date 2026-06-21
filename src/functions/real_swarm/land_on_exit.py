@@ -1,4 +1,4 @@
-"""Axswarm-filtered exit landing for physical Crazyflies (no high-level goto)."""
+"""Axswarm-planned exit landing for physical Crazyflies (no high-level goto)."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def stream_real_swarm_land_on_exit(
     if not ex.opts.land_on_exit or not ex.physical_armed:
         return
 
-    print("Real swarm axswarm-filtered exit landing to ground ...")
+    print("Real swarm axswarm-planned exit landing to ground ...")
     boot.prearm_phase_box[0] = "ground"
     boot.prearm_has_flown_box[0] = True
     sync_armed_flags(boot)

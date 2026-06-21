@@ -384,7 +384,7 @@ def apply_online_control_key(
             ctx.prearm_climb_enabled[0] = True
             ctx.prearm_has_flown_box[0] = True
             print(
-                f"Vertical takeoff: axswarm-filtered climb to z={ctx.prearm_takeoff_z:.2f}m "
+                f"Vertical takeoff: axswarm-planned climb to z={ctx.prearm_takeoff_z:.2f}m "
                 "(ground XY fixed). Press 1 again for hover formation."
             )
         elif phase == "vertical":
@@ -392,14 +392,14 @@ def apply_online_control_key(
                 ctx.prearm_phase_box[0] = "formation"
                 print(
                     f"Hover formation: direct 3D move to hover layout "
-                    f"(z≈{ctx.prearm_hover_z:.2f}m, axswarm-filtered). "
+                    f"(z≈{ctx.prearm_hover_z:.2f}m, axswarm-planned). "
                     "Press 1 to shrink back to vertical."
                 )
             else:
                 ctx.prearm_phase_box[0] = "ground"
                 ctx.prearm_climb_enabled[0] = False
                 print(
-                    f"Axswarm-filtered descent to ground layout "
+                    f"Axswarm-planned descent to ground layout "
                     f"(from z≈{ctx.prearm_takeoff_z:.2f}m). Press 1 for next takeoff."
                 )
         elif phase == "formation":
@@ -407,7 +407,7 @@ def apply_online_control_key(
             ctx.prearm_vertical_leg_box[0] = "descend"
             print(
                 f"Hover formation: direct 3D return to vertical layout "
-                f"(z≈{ctx.prearm_takeoff_z:.2f}m, axswarm-filtered). "
+                f"(z≈{ctx.prearm_takeoff_z:.2f}m, axswarm-planned). "
                 "Press 1 again for ground."
             )
         return False

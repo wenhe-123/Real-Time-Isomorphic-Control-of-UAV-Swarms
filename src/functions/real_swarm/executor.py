@@ -206,17 +206,17 @@ class RealSwarmExecutor:
                 if str(prearm_vertical_leg) == "climb":
                     print(
                         f"Real vertical takeoff → z={z_takeoff:.2f}m "
-                        "(axswarm-filtered stream, same as sim)."
+                        "(axswarm-planned stream, same as sim)."
                     )
                 else:
                     print(
                         f"Real direct 3D return to vertical layout z≈{z_takeoff:.2f}m "
-                        "(axswarm-filtered stream). Press 1 for ground."
+                        "(axswarm-planned stream). Press 1 for ground."
                     )
             elif phase == "formation":
                 print(
                     "Real hover formation: direct 3D move to hover layout "
-                    "(axswarm-filtered stream; press 1 to shrink to vertical)."
+                    "(axswarm-planned stream; press 1 to shrink to vertical)."
                 )
             elif phase == "ground":
                 z_from = (
@@ -225,7 +225,7 @@ class RealSwarmExecutor:
                     else float(np.median(cmd[: self.n_physical, 2]))
                 )
                 print(
-                    f"Real axswarm-filtered descent to ground (from z≈{z_from:.2f}m)."
+                    f"Real axswarm-planned descent to ground (from z≈{z_from:.2f}m)."
                 )
 
         if gesture_enabled and just_armed:

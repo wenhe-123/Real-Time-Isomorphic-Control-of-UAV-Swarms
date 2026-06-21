@@ -16,7 +16,7 @@ from functions.runtime.online_defaults import (
     _ONLINE_MP_INPUT_SCALE,
 )
 from functions.runtime.pipeline_tuning import PipelineTuning
-from functions.swarm_motion.axswarm_runtime import load_axswarm_yaml_limits
+from functions.swarm_motion.axswarm_runtime import load_axswarm_min_separation
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +30,6 @@ class OnlineRuntimeConfig:
     prearm_hover_z: float
     prearm_takeoff_z: float
     axswarm_settings: str | None
-    axswarm_project_root: str | None
-    axswarm_max_solve_ms: float
     max_sim_substeps: int
     plot_every_n: int
     report_panels: ReportDebugPanels | None
@@ -132,10 +130,8 @@ def build_online_runtime_config(
     if bool(args.debug_drone_pos) and debug_drone_pos_every == 0:
         debug_drone_pos_every = 1
     settings_path = Path(args.axswarm_settings) if args.axswarm_settings else None
-    project_root = Path(args.axswarm_project_root) if args.axswarm_project_root else None
-    min_separation_m, _, _ = load_axswarm_yaml_limits(
+    min_separation_m = load_axswarm_min_separation(
         settings_path=settings_path,
-        project_root=project_root,
     )
     return OnlineRuntimeConfig(
         point_count=int(point_count),
@@ -147,8 +143,6 @@ def build_online_runtime_config(
         prearm_hover_z=float(args.prearm_hover_z),
         prearm_takeoff_z=float(args.prearm_takeoff_z),
         axswarm_settings=args.axswarm_settings,
-        axswarm_project_root=args.axswarm_project_root,
-        axswarm_max_solve_ms=float(args.axswarm_max_solve_ms),
         max_sim_substeps=int(args.max_sim_substeps),
         plot_every_n=max(0, int(pipeline.plot_every_n)),
         report_panels=panels if panels.any_enabled() else None,

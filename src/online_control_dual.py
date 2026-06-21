@@ -12,7 +12,7 @@ Run from ``iso_swarm`` (pixi)::
 
 With pixi tasks, keep the task separator: ``pixi run online-dual -- --mp-detect-every 1``.
 
-Defaults: Orbbec input, axswarm safety filter, ``--point-count 24``. Gesture targets
+Defaults: Orbbec input, axswarm planner, ``--point-count 24``. Gesture targets
 flow through axswarm to ``cmd_target``; Crazyflow tracks them via
 ``state_control`` + ``sim.step`` (Mellinger), then ``sim.render``.
 
