@@ -275,8 +275,6 @@ def tick_rigid_pose_trace(
     if armed_this_frame and left_pose_state.initialized:
         ref_c = _centroid_m(morph_targets_before_left_m)
         ref_wrist = np.asarray(left_pose_state.ref_wrist_mm, dtype=np.float64).reshape(3)
-        if not np.all(np.isfinite(ref_wrist)):
-            ref_wrist = np.asarray(left_pose_state.ref_wrist, dtype=np.float64).reshape(3)
         ref_palm = np.asarray(left_pose_state.ref_palm_center, dtype=np.float64).reshape(3)
         ref_swarm = getattr(left_pose_state, "ref_swarm_targets", None)
         recorder.on_arm(

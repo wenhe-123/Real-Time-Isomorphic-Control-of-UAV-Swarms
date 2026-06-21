@@ -1,88 +1,83 @@
 # Production defaults for online Orbbec control.
 # Loaded by functions/runtime/online_defaults.py
 
-# Matplotlib 3D: production off (shared); debug cadence in debug.pipeline_tuning.
-left_pose_frame_viz_every: 10
-webcam_rot_stride: 6
-trail_draw_every_frames: 0
-led_apply_every_frames: 3
-sim_render_every: 2
-orbbec_fps: "30"
-# draw_hand: MP world only by default; enable depth fusion with --debug-webcam-pipeline.
-mp_input_scale: 0.5
-# Run HandLandmarker every N camera frames; reuse last result on skip (depth pose still updates).
-mp_detect_every: 2
-online_imshow_every: 4
-target_alpha: 0.44
-drone_model: cf21B_500
-min_separation_m: 0.32
-# Lower than 1.2 so open≈1 plane shell fits the default morph workspace.
-morph_world_scale: 0.55
-# Morph mode debounce: see online_pipeline_defaults (production: 1 frame).
-mode_rot_freeze_latch: 18
-# Left-hand MP visibility min before morph mode (M1..M5) may change; blocks occlusion false counts.
-mode_vis_min: 0.55
-open_vis_min: 0.55
-# History length for MuJoCo trail polylines (smaller = shorter tail on screen).
-trail_buffer_maxlen: 6
-# Cap for Crazyflow physics substeps per camera/update frame.
-max_sim_substeps_per_frame: 160
-# Sim / spawn: physical ground plane in Crazyflow sim frame (m), not gesture workspace z_min.
-ground_z: 0.0
-# Before SPACE: morph layout hover altitude (m).
-prearm_hover_z: 1.30
-# Vertical prearm: 1st / 3rd ``1`` leg height (m); 4th ``1`` descends from here to ground.
-prearm_takeoff_z: 0.20
-# Left hand: rigid motion of whole swarm (translation + rotation about formation centroid)
-# Pose uses MediaPipe world landmarks in mm (wrist is not fixed at origin unlike HAND_FRAME_SCALED).
-# fwd_y: dz→sim Y (in/out). Flip Y so hand-toward-camera matches expected swarm direction.
-# middle_thumb palm embed: +palm Z (optical forward when palm faces cam) → world +Y; use +1 on Y.
-# palm X→world X (lateral), palm Z→world Y (fwd/back), palm Y→world Z (up). Default Z=+1: fingertip → altitude.
-left_axis_sign: [-1.0, 1.0, 1.0]
-# Palm/camera mm → world meters (× on palm components before axis_sign). ~15 mm ≈ 0.11 m.
-left_trans_scale_mm: 0.0075
-left_rot_scale: 1.0
-left_trans_ema: 1.0
-left_rot_ema: 1.0
-left_max_offset_m: 1.35
-# While armed: hold last rigid pose when the hand is briefly lost (1.0 = no decay).
-left_lost_decay: 1.0
-left_max_rot_rad: 3.14
-left_unwind_s: 2.6
-left_palm_depth_outlier_z_mm: 105.0
-left_palm_depth_outlier_lat_ratio: 2.6
-left_palm_center_depth_ema: 0.75
-# Ignore |rotation vector| below this (rad axis-angle) after rot_scale*rot_gain — higher = calmer tilt.
-left_rot_gate_rad: 0.008
-left_yaw_min_horiz: 0.17
-left_rot_gain: 1.35
-# While wrist moves: rotation cmd *= exp(-Δmm / tau). Larger tau = less suppression during pans.
-left_rot_trans_tau_mm: 0.0
-# Damp world-up component of axis–angle (formation spin about global Z).
-# 1.0: do not damp ω_world Z (0.12 made palm twist ≈ dead with ``camera`` / fwd_y).
-left_rot_world_z_scale: 1.0
-# Image dy → sim altitude (fwd_y third row). 1.0 = full −cam Y → sim Z.
-left_cam_y_to_world_z: 1.0
-# Z-up sim embedding: X=lateral, Y=in-out, Z=altitude. ``camera`` (identity) maps dy→sim Y (wrong).
-left_cam_preset: fwd_y
-# ``camera_at_arm``: press 0 locks depth-camera → sim map; baseline wrist + palm = origin.
-left_world_frame: camera_at_arm
-axis_trans_deadzone_m: 0.004
-axis_rot_deadzone_rad: 0.008
-axis_trans_on_m: 0.004
-axis_rot_on_rad: 0.012
-left_palm_basis: middle_thumb
-left_plane_rot_scale_mul: 1.0
-# centroid: whole formation rotates about its centroid. per_drone: each slot pivots separately.
-left_rot_pivot: centroid
-# When Orbbec MP visibility min drops below threshold, estimate palm rotation from USB webcam 2D.
-left_dual_webcam_rot: true
-left_rot_webcam_vis_thresh: 0.42
-left_rot_webcam_index: -1
-wcam_preview_window: "Online Control Webcam (dual rotation)"
-# Orbbec: optional horizontal BGR flip before MediaPipe (default off = same as pre-mirror pipeline).
-orbbec_flip_horizontal: false
-# Orbbec: depth→color transformed_depth (K4A API). Off by default — Femto Bolt / pyk4a wrapper can
-# abort (descriptor mismatch) when enabled; use raw depth + map_color_pixel instead.
-orbbec_use_transformed_depth: false
-orbbec_hand_swap: auto
+Display:
+  left_pose_frame_viz_every: 10  # Palm axis overlay cadence (debug)
+  webcam_rot_stride: 6  # Dual-rotation USB webcam read stride
+  trail_draw_every_frames: 0  # Trail polyline draw cadence (0 = off)
+  led_apply_every_frames: 3  # LED material refresh stride
+  sim_render_every: 2  # Crazyflow render window stride (0 = off)
+  online_imshow_every: 4  # OpenCV Orbbec window refresh stride
+  trail_buffer_maxlen: 6  # MuJoCo trail history length
+  wcam_preview_window: "Online Control Webcam (dual rotation)"
+
+Camera:
+  orbbec_fps: "30"  # Nominal outer-loop / Orbbec rate (Hz)
+  mp_input_scale: 0.5  # HandLandmarker input downscale
+  mp_detect_every: 1  # Run HandLandmarker every N frames
+  orbbec_flip_horizontal: false  # Mirror BGR before MediaPipe
+  orbbec_use_transformed_depth: false  # K4A color-aligned depth (Femto Bolt: often crashes)
+  orbbec_hand_swap: auto  # Swap MP left/right for mode vs open (auto | on | off)
+
+Morph:
+  target_alpha: 0.44  # Live target low-pass toward morph goals
+  morph_world_scale: 0.55  # Gesture mm → sim m workspace scale
+  mode_rot_freeze_latch: 18  # Morph mode debounce frames (see pipeline defaults)
+  mode_vis_min: 0.55  # Min left-hand MP visibility to change morph mode M1..M5
+  open_vis_min: 0.55  # Min right-hand MP visibility for open gesture
+
+Sim:
+  drone_model: cf21B_500  # Crazyflow drone model name
+  min_separation_m: 0.32  # Spacing guard fallback (axswarm yaml is authoritative)
+  max_sim_substeps_per_frame: 160  # Physics substeps cap per camera frame
+  ground_z: 0.0  # Physical ground plane in sim frame (m)
+
+Prearm:
+  prearm_hover_z: 1.00  # Formation hover altitude before SPACE (m)
+  prearm_takeoff_z: 0.20  # Vertical prearm climb / descent leg height (m)
+
+LeftHandPose:
+  # Feature toggles (press 0 = arm rigid follow)
+  left_swarm_pose: true
+  left_rot_direct_follow: true
+  left_swarm_depth_frame_motion: true
+  left_pose_debug: true
+  left_pose_debug_every: 15
+  left_pose_frame_viz: false
+  left_unwind_s: 2.6  # Seconds to ease back to morph frame on second press 0
+
+  # Cam → sim embedding (fwd_y: depth Z → sim Y in/out)
+  left_cam_preset: fwd_y  # camera | legacy | fwd_y | flip_depth
+  left_world_frame: camera_at_arm  # camera_at_arm | sim
+  left_cam_y_to_world_z: 1.0  # Image dy → world altitude scale [0, 1]
+  left_palm_basis: middle_thumb  # Palm rotation frame MCP pair
+
+  # Translation / rotation gains
+  left_axis_sign: [-1.0, 1.0, 1.0]  # Per-axis sign on palm components → world
+  left_trans_scale_mm: 0.0075  # Palm mm delta → world meters
+  left_max_offset_m: 1.35
+  left_lost_decay: 1.0  # Hold last pose when hand lost (1.0 = no decay)
+  left_rot_scale: 1.0
+  left_rot_gain: 1.35
+  left_rot_gate_rad: 0.008  # Min |rotvec| before applying formation rotation
+  left_max_rot_rad: 3.14
+  left_rot_trans_tau_mm: 0.0  # Rotation suppression during pans (0 = off)
+  left_rot_world_z_scale: 1.0  # Damp world-Z component of axis-angle
+  left_plane_rot_scale_mul: 1.0  # Extra rot scale when open snap is plane
+
+  # Depth / palm center filtering
+  left_palm_depth_outlier_z_mm: 105.0
+  left_palm_depth_outlier_lat_ratio: 2.6
+  left_palm_center_depth_ema: 0.75
+
+  # Axis-locked translate vs rotate blend
+  axis_trans_deadzone_m: 0.004
+  axis_rot_deadzone_rad: 0.008
+  axis_trans_on_m: 0.004
+  axis_rot_on_rad: 0.012
+  axis_trans_rot_coupling: 0.50
+
+  # Dual USB webcam rotation fallback when Orbbec visibility is low
+  left_dual_webcam_rot: true
+  left_rot_webcam_vis_thresh: 0.42
+  left_rot_webcam_index: -1  # OpenCV device index (-1 = auto)

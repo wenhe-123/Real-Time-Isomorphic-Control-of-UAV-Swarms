@@ -49,5 +49,5 @@ class FormationSpacingReport:
         if self.min_raw_m < env - 0.02:
             print(
                 f"  WARN: morph→world spacing tighter than axswarm collision_envelope ({env:.2f}m); "
-                f"raise --morph-world-scale or --min-separation-m."
+                f"raise morph_world_scale in online_defaults.yaml or axswarm collision_envelope."
             )

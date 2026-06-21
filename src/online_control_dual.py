@@ -6,11 +6,11 @@ Run from ``iso_swarm`` (pixi)::
 
     cd /path/to/iso_swarm
     pixi shell
-    python src/online_control_dual.py --mp-detect-every 1 --profile-frame
+    python src/online_control_dual.py --profile-frame
     python src/online_control_dual.py --debug-drone-pos
     python src/online_control_dual.py --debug-drone-pos-every 15
 
-With pixi tasks, keep the task separator: ``pixi run online-dual -- --mp-detect-every 1``.
+With pixi tasks, keep the task separator: ``pixi run online-dual -- --profile-frame``.
 
 Defaults: Orbbec input, axswarm planner, ``--point-count 24``. Gesture targets
 flow through axswarm to ``cmd_target``; Crazyflow tracks them via
@@ -58,27 +58,8 @@ def inject_dual_default_argv(argv: list[str]) -> list[str]:
 
 
 def inject_dual_gesture_argv(argv: list[str]) -> list[str]:
-    """Left-hand gesture tuning defaults for dual entry (not axswarm yaml)."""
-    out = list(argv)
-    if not _argv_has_flag(out, "--left-trans-scale"):
-        out.extend(["--left-trans-scale", "0.0075"])
-    if not _argv_has_flag(out, "--left-trans-ema"):
-        out.extend(["--left-trans-ema", "0.65"])
-    if not _argv_has_flag(out, "--left-rot-ema"):
-        out.extend(["--left-rot-ema", "0.55"])
-    if not _argv_has_flag(out, "--left-axis-trans-deadzone-m"):
-        out.extend(["--left-axis-trans-deadzone-m", "0.0015"])
-    if not _argv_has_flag(out, "--left-axis-rot-deadzone-deg"):
-        out.extend(["--left-axis-rot-deadzone-deg", "0.25"])
-    if not _argv_has_flag(out, "--left-axis-trans-on-m"):
-        out.extend(["--left-axis-trans-on-m", "0.004"])
-    if not _argv_has_flag(out, "--left-axis-rot-on-deg"):
-        out.extend(["--left-axis-rot-on-deg", "1.15"])
-    if not _argv_has_flag(out, "--left-trans-rot-coupling"):
-        out.extend(["--left-trans-rot-coupling", "0.50"])
-    if not _argv_has_flag(out, "--left-rot-direct-follow"):
-        out.append("--left-rot-direct-follow")
-    return out
+    """Left-hand tuning is in ``config/online_defaults.yaml``; no CLI injection."""
+    return list(argv)
 
 
 def main() -> None:

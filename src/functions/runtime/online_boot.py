@@ -36,11 +36,7 @@ from functions.mode_switch.morph_shape_control import LpShapePipelineState
 from functions.open_close.morph_world import ScaleConfig, fixed_morph_points, normalize_morph_points_at_hover
 from functions.runtime.live_target import LiveTargetState
 from functions.runtime.online_runtime_config import OnlineRuntimeConfig
-from functions.runtime.online_defaults import (
-    _DEFAULT_GROUND_Z,
-    _ONLINE_ORBBEC_FPS,
-    _TRAIL_BUFFER_MAXLEN,
-)
+from functions.runtime.online_defaults import ONLINE_DEFAULTS
 from functions.runtime.pipeline_tuning import PipelineTuning
 from functions.swarm_motion.axswarm_runtime import AxswarmPlanner, resolve_axswarm_settings_path
 from functions.swarm_motion.left_hand_swarm_pose import (
@@ -106,7 +102,6 @@ class OnlineBoot:
     left_M_trans: np.ndarray | None
     left_cam_preset: str
     left_palm_basis: str
-    left_rot_pivot_key: str
     left_dual_webcam_rot_eff: bool
     left_rot_webcam_vis_thresh: float
     left_unwind_s: float
@@ -153,7 +148,7 @@ def boot_online_control(
     """Open Orbbec + sim or real swarm, run prearm, wire axswarm and hotkeys."""
     n_drones = int(cfg.point_count)
     scale = cfg.scale
-    orbbec_fps = FPS.FPS_15 if _ONLINE_ORBBEC_FPS == "15" else FPS.FPS_30
+    orbbec_fps = FPS.FPS_15 if ONLINE_DEFAULTS.camera.orbbec_fps == "15" else FPS.FPS_30
     k4a = PyK4A(
         Config(
             color_resolution=1,
@@ -223,7 +218,7 @@ def boot_online_control(
         f"n={n_drones} (active from startup)."
     )
 
-    z_ground = float(_DEFAULT_GROUND_Z)
+    z_ground = float(ONLINE_DEFAULTS.sim.ground_z)
     if real_executor is not None:
         ground_layout = real_executor.get_sim_ground_layout(
             n_drones, min_separation_m=float(cfg.min_separation_m)
@@ -334,12 +329,12 @@ def boot_online_control(
         f"→ z={prearm_takeoff_z:.2f}m → ground; SPACE → gesture control."
     )
 
-    left_cam_preset = str(cfg.left_cam_preset).strip().lower()
-    left_cam_y_to_world_z = float(np.clip(cfg.left_cam_y_to_world_z, 0.0, 1.0))
-    left_palm_basis = str(cfg.left_palm_basis).strip().lower()
+    left_cam_preset = str(cfg.left.cam_preset)
+    left_cam_y_to_world_z = float(np.clip(cfg.left.cam_y_to_world_z, 0.0, 1.0))
+    left_palm_basis = str(cfg.left.palm_basis)
     palm_basis_pair_indices(left_palm_basis)
-    left_cam_motion = bool(cfg.left_swarm_depth_frame_motion) and calib is not None
-    left_world_frame_key = str(cfg.left_world_frame).strip().lower()
+    left_cam_motion = bool(cfg.left.depth_frame_motion) and calib is not None
+    left_world_frame_key = str(cfg.left.world_frame)
     left_use_camera_at_arm = left_world_frame_key == "camera_at_arm" and left_cam_motion
     left_M_rot = left_cam_preset_rotation(left_cam_preset) if left_cam_motion else None
     left_M_trans = (
@@ -371,18 +366,18 @@ def boot_online_control(
     if cfg.orbbec_flip_horizontal:
         print(
             "Orbbec horizontal flip is ON (ego view vs mirror). "
-            "Use --no-orbbec-flip-horizontal if depth/3D looks wrong."
+            "Set orbbec_flip_horizontal: false in config/online_defaults.yaml if depth/3D looks wrong."
         )
     if cfg.orbbec_use_transformed_depth:
         print(
-            "Orbbec transformed_depth is ON (K4A alignment). If the process aborts, use "
-            "--no-orbbec-use-transformed-depth (default off for Femto Bolt)."
+            "Orbbec transformed_depth is ON (K4A alignment). If the process aborts, set "
+            "orbbec_use_transformed_depth: false in config/online_defaults.yaml."
         )
     if orbbec_swap_mp_hands:
         print(
             "Orbbec: swapping MediaPipe left/right for mode vs open hand "
             f"(policy {str(cfg.orbbec_hand_swap).strip().lower()!r}; auto follows horizontal flip). "
-            "Override: --orbbec-hand-swap off | on | auto."
+            "Edit orbbec_hand_swap in config/online_defaults.yaml to override."
         )
     if left_cam_motion:
         wf = (
@@ -400,22 +395,17 @@ def boot_online_control(
         "SPACE arms/disarms gesture control."
     )
 
-    left_pose_state = LeftSwarmPoseState(enabled=bool(cfg.left_swarm_pose))
-    left_rot_pivot_key = str(cfg.left_rot_pivot).strip().lower()
-    if left_rot_pivot_key not in ("per_drone", "centroid"):
-        left_rot_pivot_key = "per_drone"
-    left_dual_webcam_rot_eff = bool(cfg.left_dual_webcam_rot)
-    left_rot_webcam_vis_thresh = float(np.clip(cfg.left_rot_webcam_vis_thresh, 0.05, 0.99))
-    left_pose_tuning = LeftPoseTuning.from_config(
-        cfg, direct_follow=bool(cfg.left_rot_direct_follow)
-    )
+    left_pose_state = LeftSwarmPoseState(enabled=bool(cfg.left.enabled))
+    left_dual_webcam_rot_eff = bool(cfg.left.dual_webcam_rot)
+    left_rot_webcam_vis_thresh = float(np.clip(cfg.left.rot_webcam_vis_thresh, 0.05, 0.99))
+    left_pose_tuning = cfg.left.tuning
     if left_pose_state.enabled:
         print(
             "Left-hand whole formation: press 0 to START (zero pose = current hand; "
             "current palm center + pose are tracked relative to press-0), "
-            f"0 again to restore morph frame (~{float(cfg.left_unwind_s):.1f}s)."
+            f"0 again to restore morph frame (~{float(cfg.left.unwind_s):.1f}s)."
         )
-        if bool(cfg.left_rot_direct_follow):
+        if bool(cfg.left.direct_follow):
             print(
                 "Left rotation direct-follow: palm-local axes drive swarm axes "
                 "(palm normal twist -> world Z yaw); planar/tau damping disabled."
@@ -472,7 +462,7 @@ def boot_online_control(
         prearm_vertical_layout=prearm_vertical_layout.copy(),
         prearm_takeoff_z=prearm_takeoff_z,
         trail_rgba=trail_rgba,
-        pos_buffer=deque(maxlen=_TRAIL_BUFFER_MAXLEN),
+        pos_buffer=deque(maxlen=ONLINE_DEFAULTS.display.trail_buffer_maxlen),
         center_trace_prev=center_trace_prev,
         plot_enabled=plot_enabled,
         fig=fig,
@@ -493,10 +483,9 @@ def boot_online_control(
         left_M_trans=left_M_trans,
         left_cam_preset=left_cam_preset,
         left_palm_basis=left_palm_basis,
-        left_rot_pivot_key=left_rot_pivot_key,
         left_dual_webcam_rot_eff=left_dual_webcam_rot_eff,
         left_rot_webcam_vis_thresh=left_rot_webcam_vis_thresh,
-        left_unwind_s=float(cfg.left_unwind_s),
+        left_unwind_s=float(cfg.left.unwind_s),
         left_pose_tuning=left_pose_tuning,
         start_time=time.monotonic(),
         extras={

@@ -431,7 +431,7 @@ def apply_online_control_key(
         return False
     if key == ord("0"):
         if not ctx.left_swarm_enabled:
-            print("Left swarm move ignored: --left-swarm-pose is disabled.")
+            print("Left swarm move ignored: left swarm pose disabled (yaml or --no-left-swarm-pose).")
             return False
         if ctx.left_pose_state.is_unwinding():
             ctx.left_pose_state.cancel_unwind()

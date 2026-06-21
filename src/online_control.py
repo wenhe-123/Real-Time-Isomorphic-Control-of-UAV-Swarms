@@ -52,7 +52,7 @@ from functions.runtime.online_runtime_config import (
     build_online_runtime_config,
 )
 from functions.runtime.online_cli_args import build_online_control_parser, report_debug_panels_from_args
-from functions.runtime.online_defaults import _WCAM_PREVIEW_WINDOW
+from functions.runtime.online_defaults import ONLINE_DEFAULTS
 from functions.runtime.online_targets import make_initial_live_target, update_live_target_from_state
 from functions.runtime.pipeline_tuning import PipelineTuning, online_pipeline_defaults
 from functions.display_sim.online_present_input import PresentFrameInput
@@ -107,9 +107,9 @@ def run_integrated_online_control(
             out_path=trace_out,
             sample_every=max(1, int(rigid_pose_trace_every)),
             meta={
-                "left_cam_preset": cfg.left_cam_preset,
-                "left_world_frame": cfg.left_world_frame,
-                "left_trans_scale": float(cfg.left_trans_scale),
+                "left_cam_preset": cfg.left.cam_preset,
+                "left_world_frame": cfg.left.world_frame,
+                "left_trans_scale": float(cfg.left.tuning.trans_scale),
             },
         )
         print(
@@ -125,7 +125,7 @@ def run_integrated_online_control(
             if boot.left_dual_webcam_rot_eff:
                 try:
                     webcam.cap, _widx, _wb = open_webcam_capture(
-                        cfg.left_rot_webcam_index, 0, 0, 8
+                        cfg.left.rot_webcam_index, 0, 0, 8
                     )
                     webcam.landmarker = create_hand_landmarker(
                         resolved_model, delegate=mp_delegate_key
@@ -151,7 +151,7 @@ def run_integrated_online_control(
                 pass
             if cfg.show_webcam_preview and boot.left_dual_webcam_rot_eff:
                 try:
-                    cv2.namedWindow(_WCAM_PREVIEW_WINDOW, cv2.WINDOW_NORMAL)
+                    cv2.namedWindow(ONLINE_DEFAULTS.display.wcam_preview_window, cv2.WINDOW_NORMAL)
                 except Exception:
                     pass
             frame_prof = FrameSectionProfiler(
@@ -529,12 +529,12 @@ def main() -> None:
             print(f"Fixed surface samples initialized (non-interactive): n={point_count}")
     scale = ScaleConfig(
         xy_radius=float(args.xy_radius),
-        hover_z=float(args.prearm_hover_z),
+        hover_z=float(ONLINE_DEFAULTS.prearm.prearm_hover_z),
         z_amplitude=float(args.z_amplitude),
         reference_xy_extent_mm=float(args.reference_xy_extent_mm),
         reference_z_extent_mm=float(args.reference_z_extent_mm),
         z_mm_scale=float(args.z_mm_scale),
-        morph_world_scale=float(args.morph_world_scale),
+        morph_world_scale=float(ONLINE_DEFAULTS.morph.morph_world_scale),
     )
     live_target = make_initial_live_target(
         point_count=point_count,

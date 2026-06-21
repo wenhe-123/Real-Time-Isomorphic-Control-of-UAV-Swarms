@@ -15,15 +15,14 @@ from functions.dual_cam.left_hand_rotation_dual import resolve_dual_left_rotatio
 from functions.dual_cam.online_frame_capture import OrbbecCaptureFrame
 from functions.mode_switch.online_frame_gesture import GestureFrameResult
 from functions.runtime.online_boot import OnlineBoot
-from functions.runtime.online_defaults import _WCAM_PREVIEW_WINDOW
+from functions.runtime.online_defaults import ONLINE_DEFAULTS
 from functions.runtime.online_runtime_config import OnlineWebcamState
+from debug.left_swarm_pose_debug import print_left_swarm_pose_debug
 from functions.swarm_motion.left_hand_swarm_pose import (
     apply_rigid_to_targets,
     build_sim_from_cam_matrices,
     mp_hand_visibility_scores,
-    print_left_swarm_pose_debug,
     rotvec_to_R,
-    swarm_base_targets,
     update_left_swarm_pose,
 )
 from functions.swarm_motion.left_pose_tuning import LeftPoseSensorInput
@@ -81,9 +80,6 @@ def apply_left_swarm_frame(
                 boot.left_cam_preset,
                 image_y_to_world_z=float(tuning.cam_y_to_world_z),
             )
-        _arm_ref_drone = (
-            np.asarray(morph_targets_before_left_m[:, :3], dtype=np.float64) if _do_arm else None
-        )
         _dual_rot, webcam_frame_idx = resolve_dual_left_rotation(
             enabled=bool(boot.left_dual_webcam_rot_eff),
             orbbec_result=cap.result,
@@ -127,7 +123,7 @@ def apply_left_swarm_frame(
                 2,
                 cv2.LINE_AA,
             )
-            cv2.imshow(_WCAM_PREVIEW_WINDOW, _wdisp)
+            cv2.imshow(ONLINE_DEFAULTS.display.wcam_preview_window, _wdisp)
         _left_pose_hold = gest.idx_l is None or (
             gest.orbbec_vis_min_now is not None
             and float(gest.orbbec_vis_min_now) < float(tuning.mode_vis_min)
@@ -155,7 +151,6 @@ def apply_left_swarm_frame(
                     arm_sim_from_cam=_arm_M_rot,
                     arm_sim_trans_from_cam=_arm_M_trans,
                     arm_cam_preset_label=str(boot.left_cam_preset) if _arm_M_rot is not None else "",
-                    ref_drone_xyz=_arm_ref_drone,
                     ref_swarm_xyz=morph_targets_before_left_m if _do_arm else None,
                     ref_basis_image=_arm_ref_img,
                     palm_basis=boot.left_palm_basis,
@@ -171,13 +166,10 @@ def apply_left_swarm_frame(
                 f"frozen cam→sim preset={left_pose_state.frozen_cam_preset!r}."
             )
         boot.left_pose_reset_req_box[0] = False
-        _base_targets = swarm_base_targets(left_pose_state, morph_targets_before_left_m)
         raw_target = apply_rigid_to_targets(
-            _base_targets,
+            morph_targets_before_left_m,
             off,
             R_pose,
-            ref_drone_xyz=left_pose_state.ref_drone_xyz,
-            pivot=boot.left_rot_pivot_key,
         )
         _sec("left_apply_rigid")
         left_swarm_off = np.asarray(off, dtype=np.float64).copy()
