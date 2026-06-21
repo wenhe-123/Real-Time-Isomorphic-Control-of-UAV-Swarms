@@ -56,8 +56,6 @@ def stream_real_swarm_land_on_exit(
     boot.prearm_has_flown_box[0] = True
     sync_armed_flags(boot)
 
-    elapsed0 = time.monotonic() - boot.start_time
-    boot.axswarm_rt.enter_recover(elapsed0, hold_s=10.0)
     track0 = ex.get_sim_track_positions(boot.prev_cmd_target, boot.n_drones)
     pos0 = track0 if track0 is not None else boot.prev_cmd_target
     boot.axswarm_rt.sync_gesture(

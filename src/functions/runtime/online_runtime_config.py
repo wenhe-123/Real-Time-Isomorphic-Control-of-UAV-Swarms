@@ -66,7 +66,6 @@ class OnlineRuntimeConfig:
     sim_render_every: int
     imshow_every: int
     mp_detect_every: int
-    raw_target_ema: float
     left_trans_scale: float
     left_trans_ema: float
     left_rot_ema: float
@@ -77,7 +76,6 @@ class OnlineRuntimeConfig:
     debug_drone_targets_every: int
     debug_drone_pos_every: int
     spacing_audit_every: int
-    open_jump_reset: float
     left_axis_trans_deadzone_m: float
     left_axis_rot_deadzone_rad: float
     left_axis_trans_on_m: float
@@ -185,7 +183,6 @@ def build_online_runtime_config(
         sim_render_every=max(0, int(args.sim_render_every)),
         imshow_every=max(1, int(args.imshow_every)),
         mp_detect_every=max(1, int(args.mp_detect_every)),
-        raw_target_ema=float(max(0.0, min(float(args.raw_target_ema), 1.0))),
         left_trans_scale=float(left_trans_scale),
         left_trans_ema=float(args.left_trans_ema),
         left_rot_ema=float(args.left_rot_ema),
@@ -196,7 +193,6 @@ def build_online_runtime_config(
         debug_drone_targets_every=max(0, int(args.debug_drone_targets_every)),
         debug_drone_pos_every=debug_drone_pos_every,
         spacing_audit_every=int(args.spacing_audit_every),
-        open_jump_reset=float(args.open_jump_reset),
         left_axis_trans_deadzone_m=float(args.left_axis_trans_deadzone_m),
         left_axis_rot_deadzone_rad=float(np.radians(args.left_axis_rot_deadzone_deg)),
         left_axis_trans_on_m=float(args.left_axis_trans_on_m),

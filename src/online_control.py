@@ -358,21 +358,19 @@ def run_integrated_online_control(
                         boot.prearm_phase == "ground"
                         and boot.prev_prearm_phase == "vertical"
                     ):
-                        boot.axswarm_rt.enter_recover(float(elapsed), hold_s=8.0)
+                        pass
                     elif (
                         boot.prearm_phase == "formation"
                         and boot.prev_prearm_phase == "vertical"
                     ):
-                        # One continuous move to hover formation (no recover slow segment).
                         pass
                     elif (
                         boot.prearm_phase == "vertical"
                         and boot.prev_prearm_phase == "formation"
                     ):
-                        # One continuous shrink to vertical (no recover slow segment).
                         pass
                     else:
-                        boot.axswarm_rt.enter_recover(float(elapsed), hold_s=5.0)
+                        pass
 
                 filt, boot.raw_target_filt, boot.prev_open_for_snap, boot.prev_gesture_control_enabled = (
                     filter_online_targets(

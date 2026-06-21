@@ -164,7 +164,6 @@ class AxswarmSafetyFilter:
     _last_solve_ms: float
     _last_ok: bool
     _armed_at: float
-    _recover_until_s: float
     arm_warmup_s: float
     _prev_gesture_sp: np.ndarray | None
     _prev_gesture_vel: np.ndarray | None
@@ -216,7 +215,6 @@ class AxswarmSafetyFilter:
             _last_solve_ms=0.0,
             _last_ok=False,
             _armed_at=-1e9,
-            _recover_until_s=-1e9,
             arm_warmup_s=float(max(0.0, arm_warmup_s)),
             _prev_gesture_sp=None,
             _prev_gesture_vel=None,
@@ -256,20 +254,6 @@ class AxswarmSafetyFilter:
         el = float(elapsed_s)
         self._armed_at = el
         self._last_mpc_time = el - self.mpc_period_s
-
-    def enter_recover(self, elapsed_s: float, *, hold_s: float | None = None) -> None:
-        """Compatibility no-op: local recover/fallback is intentionally disabled."""
-        del elapsed_s, hold_s
-        self._last_ok = False
-
-    def clear_recover(self) -> None:
-        """Compatibility no-op: local recover/fallback is intentionally disabled."""
-        self._recover_until_s = -1e9
-        self._last_ok = True
-
-    def in_recover_at(self, elapsed_s: float) -> bool:
-        del elapsed_s
-        return False
 
     def _reset_gesture_kinematics(self) -> None:
         self._prev_gesture_sp = None

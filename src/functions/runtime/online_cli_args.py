@@ -40,14 +40,12 @@ from functions.runtime.online_defaults import (
     _DEFAULT_MODE_VIS_MIN,
     _DEFAULT_MORPH_WORLD_SCALE,
     _DEFAULT_ONLINE_IMSHOW_EVERY,
-    _DEFAULT_OPEN_JUMP_RESET,
     _DEFAULT_OPEN_VIS_MIN,
     _DEFAULT_ORBBEC_FLIP_HORIZONTAL,
     _DEFAULT_ORBBEC_HAND_SWAP,
     _DEFAULT_ORBBEC_USE_TRANSFORMED_DEPTH,
     _DEFAULT_PREARM_HOVER_Z,
     _DEFAULT_PREARM_TAKEOFF_Z,
-    _DEFAULT_RAW_TARGET_EMA,
     _DEFAULT_SIM_RENDER_EVERY,
     _DEFAULT_WEBCAM_ROT_STRIDE,
     _LED_APPLY_EVERY_FRAMES,
@@ -217,19 +215,6 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         default=int(_DEFAULT_ONLINE_IMSHOW_EVERY),
         metavar="N",
         help="Show OpenCV window every N iterations (2+ reduces UI stalls / perceived dropped frames).",
-    )
-    parser.add_argument(
-        "--raw-target-ema",
-        type=float,
-        default=_DEFAULT_RAW_TARGET_EMA,
-        help="EMA on morph targets before spacing (0=off, ~0.3–0.5 smooths motion).",
-    )
-    parser.add_argument(
-        "--open-jump-reset",
-        type=float,
-        default=_DEFAULT_OPEN_JUMP_RESET,
-        help="If |Δopen| >= this in one frame, snap internal smooth target to collision-safe target (0=off). "
-        "Reduces lag after plane↔sphere transitions.",
     )
     parser.add_argument(
         "--left-swarm-pose",

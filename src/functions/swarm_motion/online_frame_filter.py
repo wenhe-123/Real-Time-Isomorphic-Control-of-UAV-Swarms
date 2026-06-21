@@ -1,4 +1,4 @@
-"""Target EMA, axswarm filter, open-jump handling per frame."""
+"""Raw target -> axswarm filter per frame."""
 
 from __future__ import annotations
 
@@ -32,18 +32,12 @@ def filter_online_targets(
     elapsed: float,
     track_pos: np.ndarray | None,
 ) -> tuple[TargetFilterResult, np.ndarray, float | None, bool]:
-    """Return filtered targets and updated raw_target_filt / prev_open / prev_gesture flags."""
+    """Return axswarm-filtered targets and updated gesture flags."""
     del morph_targets_before_left_m
-    raw_target_filt = boot.raw_target_filt
     prev_gesture_control_enabled = boot.prev_gesture_control_enabled
     prev_open_for_snap = boot.prev_open_for_snap
 
-    if cfg.raw_target_ema > 0.0:
-        b = cfg.raw_target_ema
-        raw_target_filt = b * raw_target + (1.0 - b) * raw_target_filt
-        filter_src = raw_target_filt
-    else:
-        filter_src = raw_target
+    filter_src = np.asarray(raw_target, dtype=np.float32)
     safe_target = np.asarray(filter_src, dtype=np.float32)
     if (
         cfg.spacing_audit_every > 0
@@ -109,14 +103,6 @@ def filter_online_targets(
         hold_z=_hold_z,
         snap_z_to_setpoint=_snap_z,
     )
-    if (
-        cfg.open_jump_reset > 0.0
-        and boot.gesture_control_enabled
-        and gest.open_out is not None
-        and prev_open_for_snap is not None
-        and abs(float(gest.open_out) - float(prev_open_for_snap)) >= cfg.open_jump_reset
-    ):
-        boot.axswarm_rt.enter_recover(float(elapsed))
     if gest.open_out is not None:
         prev_open_for_snap = float(gest.open_out)
 
@@ -131,7 +117,7 @@ def filter_online_targets(
             cmd_velocity=cmd_velocity,
             control_updated=boot.axswarm_rt.control_updated(),
         ),
-        raw_target_filt,
+        np.asarray(filter_src, dtype=np.float32),
         prev_open_for_snap,
         prev_gesture_control_enabled,
     )

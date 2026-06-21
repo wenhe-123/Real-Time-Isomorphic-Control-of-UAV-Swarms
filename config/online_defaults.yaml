@@ -27,12 +27,6 @@ open_vis_min: 0.55
 trail_buffer_maxlen: 6
 # Legacy cap for max physics substeps (axswarm yaml cap sync only; no sim.step).
 max_sim_substeps_per_frame: 160
-# EMA on morph targets before separation (0 = off). Keep online control direct by default.
-raw_target_ema: 0.0
-# Max |Δposition| per drone per physics substep toward blended target (m); 0 = no cap.
-max_target_step_m: 0.038
-# When |Δopen| >= this after a frame's gesture update, restart post-SPACE slow blend (0=off).
-open_jump_reset: 0.34
 # Sim / spawn: physical ground plane in Crazyflow sim frame (m), not gesture workspace z_min.
 ground_z: 0.0
 # Before SPACE: morph layout hover altitude (m).
