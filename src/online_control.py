@@ -372,16 +372,14 @@ def run_integrated_online_control(
                     else:
                         pass
 
-                filt, boot.raw_target_filt, boot.prev_open_for_snap, boot.prev_gesture_control_enabled = (
-                    filter_online_targets(
-                        boot=boot,
-                        cfg=cfg,
-                        gest=gest,
-                        raw_target=raw_target,
-                        morph_targets_before_left_m=morph_targets_before_left_m,
-                        elapsed=elapsed,
-                        track_pos=axswarm_track_pos,
-                    )
+                filt, boot.prev_gesture_control_enabled = filter_online_targets(
+                    boot=boot,
+                    cfg=cfg,
+                    gest=gest,
+                    raw_target=raw_target,
+                    morph_targets_before_left_m=morph_targets_before_left_m,
+                    elapsed=elapsed,
+                    track_pos=axswarm_track_pos,
                 )
                 frame_prof.section("target_filter")
                 boot.cmd_target = filt.cmd_target

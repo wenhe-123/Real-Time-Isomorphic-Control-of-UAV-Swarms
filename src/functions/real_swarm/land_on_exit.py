@@ -76,16 +76,14 @@ def stream_real_swarm_land_on_exit(
         elapsed = time.monotonic() - boot.start_time
         raw_target = np.asarray(boot.ground_layout, dtype=np.float32).copy()
         track_pos = ex.get_sim_track_positions(boot.prev_cmd_target, boot.n_drones)
-        filt, boot.raw_target_filt, boot.prev_open_for_snap, boot.prev_gesture_control_enabled = (
-            filter_online_targets(
-                boot=boot,
-                cfg=cfg,
-                gest=gest,
-                raw_target=raw_target,
-                morph_targets_before_left_m=raw_target,
-                elapsed=elapsed,
-                track_pos=track_pos,
-            )
+        filt, boot.prev_gesture_control_enabled = filter_online_targets(
+            boot=boot,
+            cfg=cfg,
+            gest=gest,
+            raw_target=raw_target,
+            morph_targets_before_left_m=raw_target,
+            elapsed=elapsed,
+            track_pos=track_pos,
         )
         boot.prev_cmd_target = filt.cmd_target.copy()
         ex.send_sim_layout(filt.cmd_target)

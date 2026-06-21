@@ -78,7 +78,6 @@ class OnlineBoot:
     use_depth_fusion: bool
     cmd_target: np.ndarray
     prev_cmd_target: np.ndarray
-    raw_target_filt: np.ndarray
     ground_layout: np.ndarray
     ground_z: float
     prearm_hover_layout: np.ndarray
@@ -115,7 +114,6 @@ class OnlineBoot:
     start_time: float
     render_enabled: bool = True
     orbbec_flip_depth_warned: bool = False
-    prev_open_for_snap: float | None = None
     gesture_control_enabled: bool = False
     prev_gesture_control_enabled: bool = False
     prearm_climb_enabled: bool = False
@@ -469,7 +467,6 @@ def boot_online_control(
         use_depth_fusion=bool(cfg.pipe.depth_fusion_enabled),
         cmd_target=boot_cmd.copy(),
         prev_cmd_target=boot_cmd.copy(),
-        raw_target_filt=boot_cmd.copy(),
         ground_layout=ground_layout.copy(),
         ground_z=z_ground,
         prearm_hover_layout=prearm_hover_layout.copy(),

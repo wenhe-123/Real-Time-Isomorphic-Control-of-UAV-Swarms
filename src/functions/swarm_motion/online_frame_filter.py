@@ -31,11 +31,10 @@ def filter_online_targets(
     morph_targets_before_left_m: np.ndarray,
     elapsed: float,
     track_pos: np.ndarray | None,
-) -> tuple[TargetFilterResult, np.ndarray, float | None, bool]:
+) -> tuple[TargetFilterResult, bool]:
     """Return axswarm-filtered targets and updated gesture flags."""
     del morph_targets_before_left_m
     prev_gesture_control_enabled = boot.prev_gesture_control_enabled
-    prev_open_for_snap = boot.prev_open_for_snap
 
     filter_src = np.asarray(raw_target, dtype=np.float32)
     safe_target = np.asarray(filter_src, dtype=np.float32)
@@ -103,9 +102,6 @@ def filter_online_targets(
         hold_z=_hold_z,
         snap_z_to_setpoint=_snap_z,
     )
-    if gest.open_out is not None:
-        prev_open_for_snap = float(gest.open_out)
-
     cmd_target = np.asarray(control_target, dtype=np.float32)
     cmd_velocity = np.asarray(boot.axswarm_rt.current_control_velocity(), dtype=np.float32)
     return (
@@ -117,7 +113,5 @@ def filter_online_targets(
             cmd_velocity=cmd_velocity,
             control_updated=boot.axswarm_rt.control_updated(),
         ),
-        np.asarray(filter_src, dtype=np.float32),
-        prev_open_for_snap,
         prev_gesture_control_enabled,
     )
