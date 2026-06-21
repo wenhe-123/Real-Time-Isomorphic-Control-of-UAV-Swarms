@@ -18,6 +18,8 @@ class TargetFilterResult:
     safe_target: np.ndarray
     control_target: np.ndarray
     cmd_target: np.ndarray
+    cmd_velocity: np.ndarray
+    control_updated: bool
 
 
 def filter_online_targets(
@@ -119,12 +121,15 @@ def filter_online_targets(
         prev_open_for_snap = float(gest.open_out)
 
     cmd_target = np.asarray(control_target, dtype=np.float32)
+    cmd_velocity = np.asarray(boot.axswarm_rt.current_control_velocity(), dtype=np.float32)
     return (
         TargetFilterResult(
             filter_src=np.asarray(filter_src, dtype=np.float32),
             safe_target=np.asarray(safe_target, dtype=np.float32),
             control_target=np.asarray(control_target, dtype=np.float32),
             cmd_target=cmd_target,
+            cmd_velocity=cmd_velocity,
+            control_updated=boot.axswarm_rt.control_updated(),
         ),
         raw_target_filt,
         prev_open_for_snap,

@@ -24,15 +24,23 @@ def step_sim_to_cmd(
     *,
     outer_fps: int,
     max_substeps: int,
+    velocities: Any | None = None,
+    control_hz: float | None = None,
 ) -> int:
-    """Send position setpoints via ``state_control``, then ``sim.step``."""
+    """Send position/velocity setpoints via ``state_control``, then ``sim.step``."""
     pts = np.asarray(targets, dtype=np.float64)
     if pts.shape != (sim.n_drones, 3):
         raise ValueError(f"targets must be ({sim.n_drones}, 3), got {pts.shape}")
     control = np.zeros((sim.n_worlds, sim.n_drones, 13), dtype=np.float64)
     control[..., :3] = pts
+    if velocities is not None:
+        vel = np.asarray(velocities, dtype=np.float64)
+        if vel.shape != (sim.n_drones, 3):
+            raise ValueError(f"velocities must be ({sim.n_drones}, 3), got {vel.shape}")
+        control[..., 3:6] = vel
     sim.state_control(control)
-    n_steps = _substeps(sim, outer_fps=outer_fps, max_substeps=max_substeps)
+    step_hz = float(control_hz) if control_hz is not None else float(outer_fps)
+    n_steps = _substeps(sim, outer_fps=int(round(step_hz)), max_substeps=max_substeps)
     sim.step(n_steps)
     return n_steps
 

@@ -155,6 +155,8 @@ class AxswarmSafetyFilter:
     min_separation_m: float
     outer_fps: float
     _last_safe: np.ndarray | None
+    _last_safe_vel: np.ndarray | None
+    _control_updated: bool
     _last_mpc_time: float
     _solve_count: int
     _fail_count: int
@@ -205,6 +207,8 @@ class AxswarmSafetyFilter:
             min_separation_m=min_sep,
             outer_fps=float(max(1, outer_fps)),
             _last_safe=None,
+            _last_safe_vel=None,
+            _control_updated=False,
             _last_mpc_time=-1e9,
             _solve_count=0,
             _fail_count=0,
@@ -340,6 +344,8 @@ class AxswarmSafetyFilter:
             input_continuity_weight=self.settings.input_continuity_weight,
         )
         self._last_safe = pos.copy()
+        self._last_safe_vel = vel.copy()
+        self._control_updated = False
         self._last_mpc_time = -1e9
         self._last_ok = True
         self._reset_gesture_kinematics()
@@ -368,8 +374,15 @@ class AxswarmSafetyFilter:
         # the first input setpoint from the shifted plan.
         self.solver_data = self.solver_data.step(self.solver_data)
         planned = np.asarray(self.solver_data.u_pos[:, 0], dtype=np.float32)
+        planned_vel = np.asarray(self.solver_data.u_vel[:, 0], dtype=np.float32)
         if np.all(np.isfinite(planned)):
             self._last_safe = planned
+            self._last_safe_vel = (
+                planned_vel
+                if np.all(np.isfinite(planned_vel))
+                else np.zeros_like(planned, dtype=np.float32)
+            )
+            self._control_updated = True
             if not ok:
                 self._fail_count += 1
             return ok
@@ -410,6 +423,7 @@ class AxswarmSafetyFilter:
         else:
             raise ValueError("safety_filter_targets requires sim or track_pos")
         states = np.concatenate([pos, vel], axis=-1)
+        self._control_updated = False
 
         due = (el - self._last_mpc_time) >= self.mpc_period_s - 1e-9
         if due:
@@ -424,6 +438,14 @@ class AxswarmSafetyFilter:
         if hold_z is None and snap_z_to_setpoint:
             out[:, 2] = g_enf[:, 2]
         return out
+
+    def current_control_velocity(self) -> np.ndarray:
+        if self._last_safe_vel is None:
+            return np.zeros((self.n_drones, 3), dtype=np.float32)
+        return np.asarray(self._last_safe_vel, dtype=np.float32)
+
+    def control_updated(self) -> bool:
+        return bool(self._control_updated)
 
     def track_target_for(
         self,
