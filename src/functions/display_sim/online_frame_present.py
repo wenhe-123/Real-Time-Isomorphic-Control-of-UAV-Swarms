@@ -124,7 +124,7 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
                 print(f"[WARN] Disabled Crazyflow trail drawing after render error: {exc}")
                 break
     _sec("trail")
-    if boot.sim is not None and filt.control_updated:
+    if boot.sim is not None:
         try:
             step_sim_to_cmd(
                 boot.sim,
@@ -132,7 +132,6 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
                 outer_fps=int(cfg.fps),
                 max_substeps=int(cfg.max_sim_substeps),
                 velocities=np.asarray(filt.cmd_velocity, dtype=np.float64),
-                control_hz=float(boot.axswarm_rt.mpc_hz),
             )
         except Exception as exc:
             render_enabled = False

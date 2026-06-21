@@ -429,7 +429,10 @@ def apply_online_control_key(
         ctx.left_pose_reset_req[0] = True
         print("Left swarm move: will re-zero reference on next valid left hand.")
         return False
-    if key == ord("0") and ctx.left_swarm_enabled:
+    if key == ord("0"):
+        if not ctx.left_swarm_enabled:
+            print("Left swarm move ignored: --left-swarm-pose is disabled.")
+            return False
         if ctx.left_pose_state.is_unwinding():
             ctx.left_pose_state.cancel_unwind()
             ctx.left_pose_runtime_armed[0] = True
