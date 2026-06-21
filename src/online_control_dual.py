@@ -60,8 +60,6 @@ def inject_dual_default_argv(argv: list[str]) -> list[str]:
 def inject_dual_gesture_argv(argv: list[str]) -> list[str]:
     """Left-hand gesture tuning defaults for dual entry (not axswarm yaml)."""
     out = list(argv)
-    if not _argv_has_flag(out, "--raw-target-ema"):
-        out.extend(["--raw-target-ema", "0"])
     if not _argv_has_flag(out, "--left-trans-scale"):
         out.extend(["--left-trans-scale", "0.0075"])
     if not _argv_has_flag(out, "--left-trans-ema"):
