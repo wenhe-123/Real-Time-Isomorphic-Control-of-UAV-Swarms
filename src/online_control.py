@@ -131,9 +131,9 @@ def run_integrated_online_control(
                         resolved_model, delegate=mp_delegate_key
                     )
                     print(
-                        f"Dual USB webcam index {_widx} ({_wb}): palm rotation when Orbbec "
-                        f"visibility < {boot.left_rot_webcam_vis_thresh:.2f}; mode M1–M5 assist when "
-                        f"visibility < {cfg.mode_vis_min:.2f} or while rotating; translation stays depth."
+                        f"Dual USB webcam index {_widx} ({_wb}): palm rotation always (hybrid "
+                        f"depth roll/pitch + webcam yaw); mode M1–M5 assist when Orbbec "
+                        f"visibility < {cfg.mode_vis_min:.2f}; translation stays depth."
                     )
                 except Exception as exc:
                     print(f"[WARN] Dual webcam rotation disabled: {exc}")

@@ -22,10 +22,13 @@ def should_poll_webcam_for_dual(
     rotating: bool,
     show_preview: bool,
     dual_mode_assist: bool = False,
+    dual_rot_always: bool = False,
     orbbec_thumb_vis: float | None = None,
 ) -> bool:
     """True when USB webcam should be read: preview, palm rotation, or low Orbbec visibility."""
     _ = dual_mode_assist
+    if bool(dual_rot_always):
+        return True
     if show_preview:
         return True
     if rotating:

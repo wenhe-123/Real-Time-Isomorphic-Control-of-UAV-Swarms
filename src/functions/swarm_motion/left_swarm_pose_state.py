@@ -12,6 +12,7 @@ from functions.swarm_motion.left_pose_config import DEFAULT_LEFT_PALM_BASIS
 from functions.swarm_motion.left_palm_geom import _enforce_thumb_positive_x, palm_orthonormal_basis
 
 
+@dataclass
 class LeftSwarmPoseState:
     """Tracks reference palm frame and outputs smoothed world offset + full rotation."""
 

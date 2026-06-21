@@ -14,7 +14,7 @@ Display:
 Camera:
   orbbec_fps: "30"  # Nominal outer-loop / Orbbec rate (Hz)
   mp_input_scale: 0.5  # HandLandmarker input downscale
-  mp_detect_every: 1  # Run HandLandmarker every N frames
+  mp_detect_every: 2  # Run HandLandmarker every N frames; reuse last on skip
   orbbec_flip_horizontal: false  # Mirror BGR before MediaPipe
   orbbec_use_transformed_depth: false  # K4A color-aligned depth (Femto Bolt: often crashes)
   orbbec_hand_swap: auto  # Swap MP left/right for mode vs open (auto | on | off)
@@ -33,7 +33,7 @@ Sim:
   ground_z: 0.0  # Physical ground plane in sim frame (m)
 
 Prearm:
-  prearm_hover_z: 1.00  # Formation hover altitude before SPACE (m)
+  prearm_hover_z: 1.30  # Formation hover altitude before SPACE (m)
   prearm_takeoff_z: 0.20  # Vertical prearm climb / descent leg height (m)
 
 LeftHandPose:
@@ -60,7 +60,7 @@ LeftHandPose:
   left_rot_scale: 1.0
   left_rot_gain: 1.35
   left_rot_gate_rad: 0.008  # Min |rotvec| before applying formation rotation
-  left_max_rot_rad: 3.14
+  left_max_rot_rad: 3.14  # Max press-0 relative rotation (rad, ~180°)
   left_rot_trans_tau_mm: 0.0  # Rotation suppression during pans (0 = off)
   left_rot_world_z_scale: 1.0  # Damp world-Z component of axis-angle
   left_plane_rot_scale_mul: 1.0  # Extra rot scale when open snap is plane
@@ -77,7 +77,7 @@ LeftHandPose:
   axis_rot_on_rad: 0.012
   axis_trans_rot_coupling: 0.50
 
-  # Dual USB webcam rotation fallback when Orbbec visibility is low
+  # Dual USB webcam: always polled when enabled; hybrid depth roll/pitch + webcam yaw
   left_dual_webcam_rot: true
-  left_rot_webcam_vis_thresh: 0.42
+  left_rot_webcam_vis_thresh: 0.42  # Legacy HUD / mode-assist only (rotation not gated)
   left_rot_webcam_index: -1  # OpenCV device index (-1 = auto)

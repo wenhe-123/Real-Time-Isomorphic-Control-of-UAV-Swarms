@@ -24,7 +24,7 @@ def palm_world_rotvec_from_basis_delta(
     else:
         R_world = R_cam
     rv = np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
-    if float(np.linalg.norm(rv)) > np.deg2rad(150.0):
+    if float(np.linalg.norm(rv)) > np.deg2rad(180.0):
         return np.zeros(3, dtype=np.float64)
     return rv
 
@@ -65,7 +65,7 @@ def palm_cam_rotvec_from_basis_delta(B_current: np.ndarray, B_arm: np.ndarray) -
         3, 3
     ).T
     rv = np.asarray(R_to_rotvec(R), dtype=np.float64).reshape(3)
-    if float(np.linalg.norm(rv)) > np.deg2rad(150.0):
+    if float(np.linalg.norm(rv)) > np.deg2rad(180.0):
         return np.zeros(3, dtype=np.float64)
     return rv
 
@@ -76,7 +76,7 @@ def palm_local_rotvec_from_basis_delta(B_current: np.ndarray, B_arm: np.ndarray)
         B_current, dtype=np.float64
     ).reshape(3, 3)
     rv = np.asarray(R_to_rotvec(R_local), dtype=np.float64).reshape(3)
-    if float(np.linalg.norm(rv)) > np.deg2rad(150.0):
+    if float(np.linalg.norm(rv)) > np.deg2rad(180.0):
         return np.zeros(3, dtype=np.float64)
     return rv
 

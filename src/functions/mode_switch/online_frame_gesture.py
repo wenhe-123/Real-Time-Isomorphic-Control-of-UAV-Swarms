@@ -120,6 +120,7 @@ def process_online_gesture_frame(
             mode_vis_min=float(cfg.mode_vis_min),
             rotating=bool(_left_rotating),
             dual_mode_assist=_dual_mode_assist,
+            dual_rot_always=True,
             orbbec_thumb_vis=orbbec_thumb_vis,
             fps=float(cfg.fps),
             mp_input_scale=float(cfg.mp_input_scale),
