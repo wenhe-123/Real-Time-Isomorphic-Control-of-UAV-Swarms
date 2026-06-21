@@ -62,7 +62,7 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
         if not boot.gesture_control_enabled:
             if boot.prearm_phase == "ground":
                 _hold_z = float(boot.ground_z)
-            elif boot.prearm_phase == "vertical":
+            elif boot.prearm_phase == "vertical" and boot.prearm_vertical_leg == "climb":
                 _hold_z = float(boot.prearm_takeoff_z)
         print_drone_position_debug(
             frame_idx=frame_idx,

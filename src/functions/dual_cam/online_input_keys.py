@@ -391,8 +391,9 @@ def apply_online_control_key(
             if str(ctx.prearm_vertical_leg_box[0]) == "climb":
                 ctx.prearm_phase_box[0] = "formation"
                 print(
-                    f"Hover formation: spread to z={ctx.prearm_hover_z:.2f}m "
-                    "(axswarm-filtered). Press 1 to shrink back to vertical."
+                    f"Hover formation: direct 3D move to hover layout "
+                    f"(z≈{ctx.prearm_hover_z:.2f}m, axswarm-filtered). "
+                    "Press 1 to shrink back to vertical."
                 )
             else:
                 ctx.prearm_phase_box[0] = "ground"
@@ -405,8 +406,9 @@ def apply_online_control_key(
             ctx.prearm_phase_box[0] = "vertical"
             ctx.prearm_vertical_leg_box[0] = "descend"
             print(
-                f"Vertical descend: shrink to z={ctx.prearm_takeoff_z:.2f}m "
-                "(ground XY; axswarm-filtered). Press 1 again for ground."
+                f"Hover formation: direct 3D return to vertical layout "
+                f"(z≈{ctx.prearm_takeoff_z:.2f}m, axswarm-filtered). "
+                "Press 1 again for ground."
             )
         return False
     if key == _KEY_SPACE:

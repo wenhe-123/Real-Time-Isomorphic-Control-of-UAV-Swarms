@@ -210,13 +210,13 @@ class RealSwarmExecutor:
                     )
                 else:
                     print(
-                        f"Real vertical descend → z={z_takeoff:.2f}m "
+                        f"Real direct 3D return to vertical layout z≈{z_takeoff:.2f}m "
                         "(axswarm-filtered stream). Press 1 for ground."
                     )
             elif phase == "formation":
                 print(
-                    "Real hover formation: axswarm-filtered stream "
-                    "(gradual spread; press 1 to shrink to vertical)."
+                    "Real hover formation: direct 3D move to hover layout "
+                    "(axswarm-filtered stream; press 1 to shrink to vertical)."
                 )
             elif phase == "ground":
                 z_from = (

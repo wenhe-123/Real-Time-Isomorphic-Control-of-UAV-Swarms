@@ -87,16 +87,25 @@ def filter_online_targets(
         else np.asarray(boot.prev_cmd_target, dtype=np.float32)
     )
     _hold_z: float | None = None
+    _prearm_phase = str(boot.prearm_phase)
+    _vertical_leg = str(boot.prearm_vertical_leg)
+    _prearm_direct_3d = (not boot.gesture_control_enabled) and (
+        _prearm_phase == "formation"
+        or (_prearm_phase == "vertical" and _vertical_leg == "descend")
+    )
     if not boot.gesture_control_enabled:
-        if boot.prearm_phase == "ground":
+        if _prearm_phase == "ground":
             _hold_z = float(boot.ground_z)
-        elif boot.prearm_phase == "vertical":
+        elif _prearm_phase == "vertical" and _vertical_leg == "climb":
             _hold_z = float(boot.prearm_takeoff_z)
+    # Prearm hover <-> vertical uses one 3D path; only climb/ground lock Z.
+    _snap_z = not _prearm_direct_3d
     control_target = boot.axswarm_rt.safety_filter_targets(
         elapsed,
         filter_src,
         track_pos=_track,
         hold_z=_hold_z,
+        snap_z_to_setpoint=_snap_z,
     )
     if (
         cfg.open_jump_reset > 0.0

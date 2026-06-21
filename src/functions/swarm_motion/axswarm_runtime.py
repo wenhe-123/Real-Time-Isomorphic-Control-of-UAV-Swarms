@@ -18,12 +18,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import yaml
 
-from functions.swarm_motion.spacing_guard import (
-    closest_pair,
-    clamp_targets_step,
-    conservative_degraded_target,
-)
-
 if TYPE_CHECKING:
     from crazyflow.sim import Sim
 
@@ -160,14 +154,6 @@ class AxswarmSafetyFilter:
     max_solve_ms: float
     min_separation_m: float
     outer_fps: float
-    fail_sep_mult: float
-    fail_gesture_blend: float
-    fail_gesture_blend_recover: float
-    fail_frame_step_m: float
-    recover_hold_s: float
-    recover_step_frac: float
-    gesture_creep_blend: float
-    gesture_creep_blend_recover: float
     _last_safe: np.ndarray | None
     _last_mpc_time: float
     _solve_count: int
@@ -193,13 +179,6 @@ class AxswarmSafetyFilter:
         project_root: Path | None = None,
         max_solve_ms: float = 90.0,
         outer_fps: int = 30,
-        fail_sep_mult: float = 1.3,
-        fail_gesture_blend: float = 0.2,
-        fail_gesture_blend_recover: float = 0.12,
-        recover_hold_s: float = 0.7,
-        recover_step_frac: float = 1.0,
-        gesture_creep_blend: float = 0.90,
-        gesture_creep_blend_recover: float = 0.35,
         arm_warmup_s: float = 0.0,
     ) -> AxswarmSafetyFilter:
         if n_drones > 16:
@@ -215,7 +194,6 @@ class AxswarmSafetyFilter:
         pos_hi = np.asarray(settings_dict["pos_max"], dtype=np.float64)
         settings = SolverSettings(**settings_dict)
         mpc_hz = float(max(0.5, float(settings.freq)))
-        vel_max = float(settings.vel_max)
         min_sep = min_separation_from_envelope(np.asarray(settings.collision_envelope))
         filt = cls(
             settings=settings,
@@ -226,14 +204,6 @@ class AxswarmSafetyFilter:
             max_solve_ms=float(max(10.0, max_solve_ms)),
             min_separation_m=min_sep,
             outer_fps=float(max(1, outer_fps)),
-            fail_sep_mult=float(max(1.0, fail_sep_mult)),
-            fail_gesture_blend=float(np.clip(fail_gesture_blend, 0.0, 1.0)),
-            fail_gesture_blend_recover=float(np.clip(fail_gesture_blend_recover, 0.0, 1.0)),
-            fail_frame_step_m=vel_max / float(max(1, outer_fps)),
-            recover_hold_s=float(max(0.5, recover_hold_s)),
-            recover_step_frac=float(np.clip(recover_step_frac, 0.08, 1.0)),
-            gesture_creep_blend=float(np.clip(gesture_creep_blend, 0.02, 0.95)),
-            gesture_creep_blend_recover=float(np.clip(gesture_creep_blend_recover, 0.01, 0.7)),
             _last_safe=None,
             _last_mpc_time=-1e9,
             _solve_count=0,
@@ -284,23 +254,18 @@ class AxswarmSafetyFilter:
         self._last_mpc_time = el - self.mpc_period_s
 
     def enter_recover(self, elapsed_s: float, *, hold_s: float | None = None) -> None:
-        """Slow creep + keep re-planning after MPC fail, tight sim spacing, or morph jump."""
-        el = float(elapsed_s)
-        hold = float(self.recover_hold_s if hold_s is None else hold_s)
-        if el >= float(self._recover_until_s):
-            self._recover_until_s = el + hold
+        """Compatibility no-op: local recover/fallback is intentionally disabled."""
+        del elapsed_s, hold_s
         self._last_ok = False
 
     def clear_recover(self) -> None:
-        """Leave recover/slow-creep mode (e.g. entering hover formation)."""
+        """Compatibility no-op: local recover/fallback is intentionally disabled."""
         self._recover_until_s = -1e9
         self._last_ok = True
 
     def in_recover_at(self, elapsed_s: float) -> bool:
-        return float(elapsed_s) < float(self._recover_until_s)
-
-    def _slow_creep_at(self, elapsed_s: float) -> bool:
-        return self.in_recover_at(elapsed_s)
+        del elapsed_s
+        return False
 
     def _reset_gesture_kinematics(self) -> None:
         self._prev_gesture_sp = None
@@ -342,60 +307,11 @@ class AxswarmSafetyFilter:
         return self._lock_vertical_z(np.asarray(gesture, dtype=np.float32), hold_z)
 
     @staticmethod
-    def _mpc_blocks_hover_descent(
-        pos: np.ndarray,
-        cand: np.ndarray,
-        gesture_enf: np.ndarray,
-        *,
-        hold_z: float | None,
-    ) -> bool:
-        """True when MPC keeps Z high though the gesture setpoint is lower (hover_z descent)."""
-        if hold_z is not None:
-            return False
-        gz = float(np.mean(gesture_enf[:, 2]))
-        pz = float(np.mean(pos[:, 2]))
-        cz = float(np.mean(cand[:, 2]))
-        return pz > gz + 0.06 and cz > gz + 0.04
-
-    @staticmethod
     def _lock_vertical_z(pts: np.ndarray, hold_z: float | None) -> np.ndarray:
         if hold_z is None:
             return np.asarray(pts, dtype=np.float32)
         out = np.asarray(pts, dtype=np.float32).copy()
         out[:, 2] = float(hold_z)
-        return out
-
-    def _frame_step_m(self, elapsed_s: float, *, warmup: bool) -> float:
-        base = float(self.fail_frame_step_m)
-        if warmup:
-            return base
-        if self._slow_creep_at(elapsed_s):
-            return base * float(self.recover_step_frac)
-        return base
-
-    def _creep_toward(
-        self,
-        anchor: np.ndarray,
-        gesture_enf: np.ndarray,
-        sim_pos: np.ndarray,
-        *,
-        elapsed_s: float,
-        warmup: bool,
-        gesture_blend: float | None = None,
-    ) -> np.ndarray:
-        if gesture_blend is None:
-            gb = (
-                float(self.gesture_creep_blend_recover)
-                if self._slow_creep_at(elapsed_s)
-                else float(self.gesture_creep_blend)
-            )
-        else:
-            gb = float(gesture_blend)
-        if warmup:
-            gb = max(gb, 0.90)
-        tgt = ((1.0 - gb) * anchor + gb * gesture_enf).astype(np.float32)
-        step = self._frame_step_m(elapsed_s, warmup=warmup)
-        out = clamp_targets_step(sim_pos, tgt, step)
         return out
 
     def reset(self, initial_pos: np.ndarray, initial_vel: np.ndarray | None = None) -> None:
@@ -448,17 +364,19 @@ class AxswarmSafetyFilter:
         self._solve_count += 1
         ok = bool(np.all(success))
         self._last_ok = ok
+        planned = np.asarray(self.solver_data.u_pos[:, 0], dtype=np.float32)
+        if np.all(np.isfinite(planned)):
+            self._last_safe = planned
+            self.solver_data = self.solver_data.step(self.solver_data)
+            if not ok:
+                self._fail_count += 1
+            return ok
         if not ok:
             self._fail_count += 1
             return False
-        planned = np.asarray(self.solver_data.pos[:, 1], dtype=np.float32)
-        if not np.all(np.isfinite(planned)):
-            self._fail_count += 1
-            self._last_ok = False
-            return False
-        self._last_safe = planned
-        self.solver_data = self.solver_data.step(self.solver_data)
-        return True
+        self._fail_count += 1
+        self._last_ok = False
+        return False
 
     def safety_filter_targets(
         self,
@@ -469,8 +387,9 @@ class AxswarmSafetyFilter:
         track_pos: np.ndarray | None = None,
         track_vel: np.ndarray | None = None,
         hold_z: float | None = None,
+        snap_z_to_setpoint: bool = True,
     ) -> np.ndarray:
-        """Track spacing-safe gesture targets; use MPC ticks as collision corrections."""
+        """Return axswarm's filtered target for the raw setpoint."""
         el = float(elapsed_s)
         sp = self._lock_vertical_z(self._clamp_pos(gesture_setpoint), hold_z)
         g_enf = self._gesture_enforced(sp, hold_z=hold_z)
@@ -490,91 +409,17 @@ class AxswarmSafetyFilter:
             raise ValueError("safety_filter_targets requires sim or track_pos")
         states = np.concatenate([pos, vel], axis=-1)
 
-        sim_min, _, _ = closest_pair(pos)
-        warmup = (el - self._armed_at) < self.arm_warmup_s
-        was_recover = self.in_recover_at(el)
-        if not warmup and sim_min < float(self.min_separation_m) * 0.86:
-            self.enter_recover(el)
-            if self.solver_data is not None and not was_recover:
-                self.sync_gesture(pos, vel)
-        anchor = (
-            np.asarray(self._last_safe, dtype=np.float32)
-            if self._last_safe is not None
-            else pos.copy()
-        )
-        if warmup:
-            return self._lock_vertical_z(g_enf, hold_z)
-
-        step = self._frame_step_m(el, warmup=False)
-        out: np.ndarray | None = None
-
         due = (el - self._last_mpc_time) >= self.mpc_period_s - 1e-9
-        overloaded = self._last_solve_ms > self.max_solve_ms
         if due:
             self._last_mpc_time = el
-            if not overloaded:
-                if self._run_mpc(states, sp, el) and self._last_safe is not None:
-                    cand = self._last_safe
-                    plan_min, _, _ = closest_pair(cand)
-                    if plan_min >= float(self.min_separation_m) * 0.97:
-                        if self._mpc_blocks_hover_descent(
-                            pos, cand, g_enf, hold_z=hold_z
-                        ):
-                            self.enter_recover(el)
-                            self._last_ok = False
-                        else:
-                            out = cand
-                            gest_err = float(np.max(np.linalg.norm(g_enf - pos, axis=1)))
-                            if (
-                                sim_min >= float(self.min_separation_m)
-                                and gest_err < step * 1.5
-                            ):
-                                self._last_ok = True
-                                self._recover_until_s = -1e9
-                    else:
-                        self.enter_recover(el)
-                        self._last_ok = False
-                        out = conservative_degraded_target(
-                            g_enf,
-                            anchor,
-                            min_separation_m=self.min_separation_m,
-                            sep_mult=self.fail_sep_mult,
-                            gesture_blend=self.fail_gesture_blend_recover,
-                            max_step_m=step,
-                        )
-                        out = clamp_targets_step(pos, out, step)
-                else:
-                    self.enter_recover(el)
-                    gb = (
-                        self.fail_gesture_blend_recover
-                        if self._slow_creep_at(el)
-                        else self.fail_gesture_blend
-                    )
-                    out = conservative_degraded_target(
-                        g_enf,
-                        anchor,
-                        min_separation_m=self.min_separation_m,
-                        sep_mult=self.fail_sep_mult,
-                        gesture_blend=gb,
-                        max_step_m=step,
-                    )
-                    out = clamp_targets_step(pos, out, step)
-            else:
-                self._skip_count += 1
-
-        if out is None:
-            out = self._creep_toward(
-                anchor, g_enf, pos, elapsed_s=el, warmup=False
-            )
-
-        out = clamp_targets_step(pos, out, step)
-
-        if self._last_ok and sim_min >= float(self.min_separation_m) and el >= self._recover_until_s:
-            self._recover_until_s = -1e9
+            self._run_mpc(states, sp, el)
+        if self._last_safe is not None:
+            out = np.asarray(self._last_safe, dtype=np.float32)
+        else:
+            out = np.asarray(pos, dtype=np.float32)
 
         out = self._lock_vertical_z(self._clamp_pos(out), hold_z)
-        if hold_z is None:
-            # XY: spacing-safe MPC/creep; Z: follow hover/morph setpoint (not sim altitude).
+        if hold_z is None and snap_z_to_setpoint:
             out[:, 2] = g_enf[:, 2]
         return out
 
@@ -600,13 +445,11 @@ class AxswarmSafetyFilter:
         if self._solve_count == 0:
             return "axswarm-filter: idle"
         ok_frac = 1.0 - self._fail_count / max(1, self._solve_count)
-        hold = "recover" if self._recover_until_s > -1e8 else "ok"
-        if (self._fail_count > 0 or self._skip_count > 0) and not self._last_ok:
-            hold = "recover"
+        state = "ok" if self._last_ok else "best_effort"
         return (
             f"axswarm-filter:{self.mpc_hz:.0f}Hz "
             f"ok={ok_frac * 100:.0f}% "
-            f"last={self._last_solve_ms:.0f}ms skip={self._skip_count} {hold}"
+            f"last={self._last_solve_ms:.0f}ms {state}"
         )
 
 

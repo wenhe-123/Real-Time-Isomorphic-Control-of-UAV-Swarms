@@ -329,8 +329,24 @@ def run_integrated_online_control(
                             if axswarm_track_pos is not None
                             else boot.prev_cmd_target
                         )
+                    _direct_3d_prearm = (
+                        phase == "formation"
+                        or (
+                            phase == "vertical"
+                            and str(boot.prearm_vertical_leg) == "descend"
+                        )
+                    )
+                    _sync_pos = (
+                        axswarm_track_pos
+                        if _direct_3d_prearm and axswarm_track_pos is not None
+                        else (
+                            boot.prev_cmd_target
+                            if _direct_3d_prearm
+                            else _layout_pos
+                        )
+                    )
                     boot.axswarm_rt.sync_gesture(
-                        np.asarray(_layout_pos, dtype=np.float32),
+                        np.asarray(_sync_pos, dtype=np.float32),
                         np.zeros((boot.n_drones, 3), dtype=np.float32),
                     )
                     if (
