@@ -364,10 +364,12 @@ class AxswarmSafetyFilter:
         self._solve_count += 1
         ok = bool(np.all(success))
         self._last_ok = ok
+        # Match axswarm's amswarm example: solve, advance SolverData, then consume
+        # the first input setpoint from the shifted plan.
+        self.solver_data = self.solver_data.step(self.solver_data)
         planned = np.asarray(self.solver_data.u_pos[:, 0], dtype=np.float32)
         if np.all(np.isfinite(planned)):
             self._last_safe = planned
-            self.solver_data = self.solver_data.step(self.solver_data)
             if not ok:
                 self._fail_count += 1
             return ok
