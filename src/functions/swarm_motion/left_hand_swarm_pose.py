@@ -36,10 +36,6 @@ from functions.mode_switch.hand_constants import (
     WRIST_ID,
 )
 
-# Palm local rotation axes → simulation world axes.
-# x=thumb/lateral, y=fingertip, z=palm normal. Map palm-normal twist to world Z yaw.
-PALM_AXIS_TO_WORLD_PERM = (0, 1, 2)
-
 # Palm frame: Gram–Schmidt on (p_first − wrist), (p_second − wrist). Wider span reduces
 # spurious rotation when index/middle MCPs are close in depth noise.
 LEFT_PALM_BASIS_PRESETS: dict[str, tuple[int, int]] = {
@@ -705,10 +701,36 @@ def palm_world_rotvec_from_basis_delta(
     B_current: np.ndarray,
     B_arm: np.ndarray,
 ) -> np.ndarray:
-    """Palm ΔR → world rotvec via palm-local axes (normal twist → world yaw)."""
-    del Mc_rot
-    rv_local = palm_local_rotvec_from_basis_delta(B_current, B_arm)
-    return palm_world_rotvec_from_local_intrinsic(rv_local)
+    """Palm camera-frame ΔR expressed in simulation/world coordinates."""
+    R_cam = np.asarray(B_current, dtype=np.float64).reshape(3, 3) @ np.asarray(
+        B_arm, dtype=np.float64
+    ).reshape(3, 3).T
+    if Mc_rot is not None:
+        M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
+        R_world = M @ R_cam @ M.T
+    else:
+        R_world = R_cam
+    rv = np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
+    if float(np.linalg.norm(rv)) > np.deg2rad(150.0):
+        return np.zeros(3, dtype=np.float64)
+    return rv
+
+
+def palm_world_rotvec_from_local_delta(
+    Mc_rot: np.ndarray | None,
+    rv_local: np.ndarray,
+    B_arm: np.ndarray,
+) -> np.ndarray:
+    """Palm-local Δ rotvec expressed through camera→simulation rotation."""
+    R_local = rotvec_to_R(np.asarray(rv_local, dtype=np.float64).reshape(3))
+    B_ref = np.asarray(B_arm, dtype=np.float64).reshape(3, 3)
+    R_cam = B_ref @ R_local @ B_ref.T
+    if Mc_rot is not None:
+        M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
+        R_world = M @ R_cam @ M.T
+    else:
+        R_world = R_cam
+    return np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
 
 
 def stabilize_palm_basis_continuity(B: np.ndarray, B_ref: np.ndarray) -> np.ndarray:
@@ -746,15 +768,6 @@ def palm_local_rotvec_from_basis_delta(B_current: np.ndarray, B_arm: np.ndarray)
     return rv
 
 
-def palm_world_rotvec_from_local_intrinsic(rv_local: np.ndarray) -> np.ndarray:
-    """Map palm-local axis-angle components to sim/world axis-angle components."""
-    rv = np.asarray(rv_local, dtype=np.float64).reshape(3)
-    out = np.zeros(3, dtype=np.float64)
-    for palm_axis, world_axis in enumerate(PALM_AXIS_TO_WORLD_PERM):
-        out[int(world_axis)] = float(rv[palm_axis])
-    return out
-
-
 def sanitize_palm_rotvec_apply(
     rv_world: np.ndarray,
     rv_cam: np.ndarray,
@@ -762,26 +775,22 @@ def sanitize_palm_rotvec_apply(
     prev_basis: np.ndarray | None,
     B_current: np.ndarray,
     Mc_rot: np.ndarray | None = None,
+    delta_cam_mm: np.ndarray | None = None,
     max_step_rad: float | None = None,
 ) -> np.ndarray:
-    """Drop basis-flip spikes before commanding swarm rotation (keeps intentional twist 1:1)."""
+    """Drop rotation only when a large translation jump also causes a basis spike."""
     rv_w = np.asarray(rv_world, dtype=np.float64).reshape(3)
-    rv_c = np.asarray(rv_cam, dtype=np.float64).reshape(3)
-    wn = float(np.linalg.norm(rv_w))
-    cn = float(np.linalg.norm(rv_c))
+    del rv_cam
     step_cap = float(max_step_rad if max_step_rad is not None else np.deg2rad(32.0))
-
-    # Camera classifier zeroed a palm/back flip; do not apply inflated world pose.
-    if cn < 1e-9 and wn > np.deg2rad(18.0):
-        return np.zeros(3, dtype=np.float64)
-    if wn > np.deg2rad(118.0):
-        return np.zeros(3, dtype=np.float64)
+    pan_step_mm = 0.0
+    if delta_cam_mm is not None:
+        pan_step_mm = float(np.linalg.norm(np.asarray(delta_cam_mm, dtype=np.float64).reshape(3)))
 
     if prev_basis is not None:
         rv_step = palm_cam_rotvec_from_basis_delta(B_current, prev_basis)
         if Mc_rot is not None:
             rv_step = palm_world_rotvec_from_basis_delta(Mc_rot, B_current, prev_basis)
-        if float(np.linalg.norm(rv_step)) > step_cap:
+        if pan_step_mm > 95.0 and float(np.linalg.norm(rv_step)) > step_cap:
             return np.zeros(3, dtype=np.float64)
 
     return rv_w
@@ -924,8 +933,6 @@ def R_to_rotvec(R: np.ndarray) -> np.ndarray:
     s = float(np.linalg.norm(v))
     if theta < 1e-8:
         return np.zeros(3, dtype=np.float64)
-    if s < 1e-10:
-        return np.zeros(3, dtype=np.float64)
     if np.pi - theta < 1e-2:
         diag = np.array([R[0, 0], R[1, 1], R[2, 2]], dtype=np.float64)
         k = int(np.argmax(diag))
@@ -936,6 +943,8 @@ def R_to_rotvec(R: np.ndarray) -> np.ndarray:
         axis[m] = R[m, k] / max(2.0 * axis[k], 1e-9)
         axis /= max(float(np.linalg.norm(axis)), 1e-9)
         return axis * theta
+    if s < 1e-10:
+        return np.zeros(3, dtype=np.float64)
     axis = v / (2.0 * np.sin(theta))
     axis /= max(float(np.linalg.norm(axis)), 1e-9)
     return axis * theta
@@ -1086,12 +1095,10 @@ def _rigid_target_from_hand(
     if float(np.linalg.norm(off)) < float(trans_deadzone_m):
         off[:] = 0.0
 
-    del Mc_rot
     if rv_world_override is not None:
         rv_world = np.asarray(rv_world_override, dtype=np.float64).reshape(3).copy()
     else:
-        rv_local = palm_local_rotvec_from_basis_delta(B, ref_b_rot)
-        rv_world = palm_world_rotvec_from_local_intrinsic(rv_local)
+        rv_world = palm_world_rotvec_from_basis_delta(Mc_rot, B, ref_b_rot)
     R_world = rotvec_to_R(rv_world)
     zsc = float(rot_world_z_scale)
     if zsc != 1.0 and float(np.linalg.norm(rv_world)) >= 1e-9:
@@ -1993,7 +2000,7 @@ def update_left_swarm_pose(
                 [float(rv_depth_local[0]), float(rv_depth_local[1]), float(rv_img_local[2])],
                 dtype=np.float64,
             )
-            rv_world_override = palm_world_rotvec_from_local_intrinsic(rv_hybrid_local)
+            rv_world_override = palm_world_rotvec_from_local_delta(Mc_rot, rv_hybrid_local, ref_img)
             B = B_img
             ref_b_rot = ref_img
             rot_source = "hybrid"
@@ -2023,6 +2030,7 @@ def update_left_swarm_pose(
         else None,
         B_current=B,
         Mc_rot=Mc_rot,
+        delta_cam_mm=delta_cam,
         max_step_rad=step_cap,
     )
     if float(np.linalg.norm(rv_apply - rv_world)) > 1e-9:

@@ -185,11 +185,6 @@ def resolve_dual_left_rotation(
             if B is not None:
                 out.arm_ref_img = B
                 out.rot_source = "webcam"
-        if out.arm_ref_img is None:
-            out.arm_ref_img = palm_basis_from_mp_image_plane(
-                orbbec_result, orbbec_idx_l, palm_basis=palm_basis
-            )
-            out.rot_source = "orbbec2d"
         return out, webcam_frame_idx
 
     if use_wcam and webcam_landmarker is not None and webcam_cap is not None:
@@ -213,11 +208,4 @@ def resolve_dual_left_rotation(
             out.rot_dbg = " rot:wcam"
             out.rot_source = "webcam"
             return out, webcam_frame_idx
-    B = palm_basis_from_mp_image_plane(orbbec_result, orbbec_idx_l, palm_basis=palm_basis)
-    if B is not None:
-        out.B_rot = B
-        out.rot_dbg = " rot:orbbec2d"
-        out.rot_source = "orbbec2d"
-    else:
-        out.rot_source = "depth"
     return out, webcam_frame_idx
