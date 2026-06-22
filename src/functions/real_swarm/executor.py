@@ -37,6 +37,7 @@ class RealSwarmExecutor:
         *,
         config_path: Path,
         morph_point_count: int | None = None,
+        dry_run: bool = False,
     ):
         drones, mapping, opts = load_drones_config(config_path)
         n_physical = len(drones)
@@ -55,8 +56,11 @@ class RealSwarmExecutor:
         self.physical_armed = False
         self._last_mode = 1
         self._mocap_hold_logged = False
+        self._dry_run = bool(dry_run)
+        self.swarm: DroneSwarm | None = None
 
         print(
+            f"{'[dry-run] ' if self._dry_run else ''}"
             f"Connecting {n_physical} Crazyflie(s) (morph={morph_point_count} virtual targets; "
             f"physical indices 0..{n_physical - 1}) mocap/ROS ..."
         )
@@ -64,6 +68,13 @@ class RealSwarmExecutor:
             f"  Sim (0,0,0) → room {np.round(mapping.origin, 3)} m "
             f"(scale={mapping.scale}, yaw={np.rad2deg(mapping.yaw_rad):.1f}°)"
         )
+        if self._dry_run:
+            print(
+                "Dry-run: skipping Crazyflie radio + ROS mocap connect "
+                "(Orbbec + axswarm pipeline only)."
+            )
+            return
+
         _ensure_rclpy()
         self.swarm = DroneSwarm(
             drones,
@@ -92,6 +103,8 @@ class RealSwarmExecutor:
         return pts[: self.n_physical]
 
     def _room_targets(self, sim_layout: np.ndarray) -> dict[str, list[float]]:
+        if self.swarm is None:
+            return {}
         real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
         return {
             uri: [float(real[i, 0]), float(real[i, 1]), float(real[i, 2]), 0.0]
@@ -137,6 +150,8 @@ class RealSwarmExecutor:
 
     def verify_near_sim_layout(self, sim_layout: np.ndarray) -> bool:
         """Check drones are close to mapped sim layout before arming."""
+        if self._dry_run:
+            return True
         real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
         ok = True
         for i, uri in enumerate(self._uris):
@@ -168,6 +183,8 @@ class RealSwarmExecutor:
         return self.get_positions_for_debug() is not None
 
     def send_sim_layout(self, sim_layout: np.ndarray) -> None:
+        if self._dry_run:
+            return
         if not self.mocap_ok():
             if not self._mocap_hold_logged:
                 logger.warning(
@@ -244,6 +261,8 @@ class RealSwarmExecutor:
                 self._last_mode = mode
 
     def _apply_mode_led(self, mode: int) -> None:
+        if self.swarm is None:
+            return
         color = _MODE_LED_COLORS.get(int(mode), np.zeros(4))
         top = {uri: color for uri in self._uris if self.swarm.is_active(uri)}
         if top:
@@ -253,9 +272,12 @@ class RealSwarmExecutor:
                 logger.warning("LED update failed: %s", exc)
 
     def close(self) -> None:
-        self.swarm.close()
+        if self.swarm is not None:
+            self.swarm.close()
 
     def get_positions_for_debug(self) -> np.ndarray | None:
+        if self.swarm is None:
+            return None
         rows = []
         for uri in self._uris:
             if not self.swarm.is_active(uri):

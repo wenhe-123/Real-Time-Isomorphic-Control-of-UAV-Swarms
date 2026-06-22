@@ -47,8 +47,8 @@ def mode_epsilon_pair(morph_mode: int, shape_t: Optional[float]) -> Tuple[float,
 MORPH_LP_MESH_ETA = 18
 MORPH_LP_MESH_OMEGA = 24
 
-MORPH_PLANE_RADIUS_A = 0.90
-MORPH_PLANE_RADIUS_B = 0.95
+MORPH_PLANE_RADIUS_A = 1.15  #scale of closed shape
+MORPH_PLANE_RADIUS_B = 0.65  #scale of open shape
 MORPH_PLANE_GRID_N = 5
 MORPH_PLANE_GRID_SPHERE_ALPHA = 0.22
 

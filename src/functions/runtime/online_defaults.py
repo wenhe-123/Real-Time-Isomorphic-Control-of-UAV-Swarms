@@ -45,7 +45,6 @@ class MorphDefaults:
 @dataclass(frozen=True, slots=True)
 class SimDefaults:
     drone_model: str
-    min_separation_m: float
     max_sim_substeps_per_frame: int
     ground_z: float
 
@@ -156,7 +155,6 @@ class OnlineDefaults:
             ),
             sim=SimDefaults(
                 drone_model=str(s["drone_model"]),
-                min_separation_m=float(s["min_separation_m"]),
                 max_sim_substeps_per_frame=int(s["max_sim_substeps_per_frame"]),
                 ground_z=float(s["ground_z"]),
             ),

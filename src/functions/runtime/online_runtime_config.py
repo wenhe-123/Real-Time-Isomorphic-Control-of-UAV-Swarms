@@ -38,6 +38,7 @@ class OnlineRuntimeConfig:
     install_hotkey_deps: bool
     global_hotkeys: bool
     drones_config: str | None
+    skip_real_connect: bool
     morph_radius_mm: float
     trail_every_n: int
     led_every_n: int
@@ -117,10 +118,15 @@ def build_online_runtime_config(
         install_hotkey_deps=bool(getattr(args, "install_hotkey_deps", False)),
         global_hotkeys=not bool(getattr(args, "no_global_hotkeys", False)),
         drones_config=str(args.drones_config) if args.drones_config else None,
+        skip_real_connect=bool(getattr(args, "skip_real_connect", False)),
         morph_radius_mm=float(args.radius_mm),
         trail_every_n=max(0, int(d.display.trail_draw_every_frames)),
         led_every_n=max(1, int(d.display.led_apply_every_frames)),
-        sim_render_every=max(0, int(d.display.sim_render_every)),
+        sim_render_every=(
+            0
+            if args.drones_config
+            else max(0, int(d.display.sim_render_every))
+        ),
         imshow_every=max(1, int(d.display.online_imshow_every)),
         mp_detect_every=max(1, int(d.camera.mp_detect_every)),
         debug_drone_targets_every=max(0, int(args.debug_drone_targets_every)),

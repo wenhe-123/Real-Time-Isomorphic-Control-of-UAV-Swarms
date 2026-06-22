@@ -252,7 +252,6 @@ def run_integrated_online_control(
                         scale=boot.scale,
                         radius_mm=float(cfg.morph_radius_mm),
                         open_out=gest.open_out,
-                        min_separation_m=float(cfg.min_separation_m),
                     )
                     raw_target = np.asarray(boot.live_target.get(), dtype=np.float32)
                 elif boot.prearm_phase == "formation":
@@ -511,19 +510,24 @@ def main() -> None:
     n_default = int(max(8, int(args.point_count)))
     if n_default < 8:
         parser.error("--point-count must be >= 8")
+    if bool(getattr(args, "skip_real_connect", False)) and not args.drones_config:
+        parser.error("--skip-real-connect requires --drones-config")
+    drones_from_config: dict | None = None
+    if args.drones_config:
+        from functions.real_swarm.swarm_config import load_drones_config
+
+        drones_from_config, _, _ = load_drones_config(args.drones_config)
+        n_default = max(n_default, len(drones_from_config))
     if sys.stdin.isatty() and not args.drones_config:
         point_count = int(prompt_and_init_fixed_surface_points(default_n=n_default))
     else:
         init_fixed_surface_points(n_default)
         point_count = n_default
-        if args.drones_config:
-            from functions.real_swarm.swarm_config import load_drones_config
-
-            _drones, _, _ = load_drones_config(args.drones_config)
+        if drones_from_config is not None:
             print(
                 f"Fixed surface samples: morph n={point_count} (virtual formation); "
-                f"physical Crazyflies n={len(_drones)} from {args.drones_config} "
-                f"(receive cmd_target indices 0..{len(_drones) - 1})."
+                f"physical Crazyflies n={len(drones_from_config)} from {args.drones_config} "
+                f"(receive cmd_target indices 0..{len(drones_from_config) - 1})."
             )
         else:
             print(f"Fixed surface samples initialized (non-interactive): n={point_count}")

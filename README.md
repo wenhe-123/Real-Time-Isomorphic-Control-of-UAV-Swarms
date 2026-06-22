@@ -90,11 +90,20 @@ pixi run online-dual
 # Terminal 1 — use deploy env only (do not source system ROS /opt/ros/jazzy)
 pixi run -e deploy mocap
 
-# Terminal 2
-pixi run -e deploy real-dual -- --drones-config config/2drones.toml
+# Terminal 2 — dry-run (no drones / mocap):
+pixi run -e deploy real-dual -- --drones-config config/drones.toml --skip-real-connect
+
+# Terminal 2 — live (mocap + drones required):
+pixi run -e deploy real-dual -- --drones-config config/drones.toml
 ```
 
-Edit `config/2drones.toml` (or copy from `config/drones.example.toml`) for your drone URIs and room frame.
+Validate config only (no camera):
+
+```bash
+pixi run check-drones-config
+```
+
+Edit `config/drones.toml` (`active`, `addr`, `channel`, `pos`) and `config/settings.yaml` (`radio.uri_base`), or use lab presets `config/2drones.toml` with explicit URIs.
 
 - **Sim:** 24 virtual morph points (`online-dual` default)
 - **Real:** 8 virtual morph points; physical count = `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow indices 0 and 1)
@@ -144,8 +153,9 @@ src/
     real_swarm/               # executor (swarmGPT DroneSwarm + sim→room setpoints)
     swarm_motion/             # axswarm filter, prearm layouts, spacing
 config/
-  drones.example.toml         # template
-  2drones.toml / 5drones.toml # lab presets (swarmGPT-style URIs)
+  drones.toml                 # active drones (addr/channel → URI via settings.yaml)
+  settings.yaml               # radio.uri_base template (swarmGPT-compatible)
+  2drones.toml / 5drones.toml # lab presets with explicit [[drone]] URIs
   axswarm_settings.yaml       # axswarm MPC / collision defaults (freq: 8 Hz)
 scripts/
   setup_orbbec.sh             # download Orbbec K4A Wrapper

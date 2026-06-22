@@ -93,7 +93,6 @@ def _build_left_tuning(
     rot_world_z_scale = float(lp.left_rot_world_z_scale)
     plane_rot_scale_mul = float(lp.left_plane_rot_scale_mul)
     if direct_follow:
-        rot_world_z_scale = 1.0
         rot_trans_tau_mm = 0.0
         rot_gate_rad = 0.02
         plane_rot_scale_mul = 1.0

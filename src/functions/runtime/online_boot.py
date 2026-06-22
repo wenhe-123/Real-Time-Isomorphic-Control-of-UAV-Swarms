@@ -171,15 +171,20 @@ def boot_online_control(
         real_executor = RealSwarmExecutor(
             config_path=Path(cfg.drones_config),
             morph_point_count=n_drones,
+            dry_run=bool(cfg.skip_real_connect),
         )
         motion_freq_hz = float(real_executor.ctrl_freq)
-        print("Real-swarm mode: Crazyflow MuJoCo disabled; cmd_target → Crazyflie setpoints.")
+        if cfg.skip_real_connect:
+            print("Real-swarm dry-run: Crazyflow MuJoCo disabled; setpoints not sent to hardware.")
+        else:
+            print("Real-swarm mode: Crazyflow MuJoCo disabled; cmd_target → Crazyflie setpoints.")
     else:
         sim = Sim(
             n_worlds=1,
             n_drones=n_drones,
             control=Control.state,
             drone_model=str(cfg.drone_model),
+            device="cpu",
         )
         sim.reset()
         motion_freq_hz = float(sim.freq)

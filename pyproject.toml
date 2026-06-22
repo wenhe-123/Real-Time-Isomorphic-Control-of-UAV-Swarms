@@ -93,6 +93,7 @@ iso-swarm = { path = ".", editable = true }
 
 [tool.pixi.tasks]
 setup = { cmd = "bash scripts/setup_orbbec.sh && bash scripts/install_pyk4a.sh", description = "One-time: Orbbec SDK + pyk4a (current env)" }
+check-drones-config = { cmd = "python scripts/check_drones_config.py", description = "Validate drones.toml + settings.yaml (no hardware)" }
 online-dual = { cmd = "python src/online_control_dual.py", description = "Orbbec gesture → MuJoCo sim" }
 mocap = { cmd = "ros2 launch motion_capture_tracking launch.py", description = "Start mocap → Crazyflie TF (deploy env)" }
 real-dual = { cmd = "python src/online_control_real_dual.py", description = "Orbbec gesture → real Crazyflies (use -e deploy)" }

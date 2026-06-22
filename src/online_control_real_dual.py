@@ -5,7 +5,7 @@ Run from ``iso_swarm`` (pixi)::
     cd /path/to/iso_swarm
     pixi install -e deploy
     pixi run -e deploy setup
-    cp config/drones.example.toml config/drones.toml
+    # edit config/drones.toml (active drones) and config/settings.yaml (radio.uri_base)
     pixi run -e deploy real-dual -- --drones-config config/drones.toml
 
 Uses the same gesture / axswarm / left-hand pose pipeline as ``online_control_dual.py``,
@@ -53,17 +53,13 @@ def _require_drones_config(argv: list[str]) -> list[str]:
         if default.is_file():
             out.extend(["--drones-config", str(default)])
         else:
-            example = Path("config/drones.example.toml")
             print(
                 "Real-swarm mode requires --drones-config PATH.\n"
-                f"  cp {example} config/drones.toml\n"
-                "  edit URIs / home positions to match your Crazyflies\n"
+                "  edit config/drones.toml and config/settings.yaml (radio.uri_base)\n"
                 f"  python {argv[0]} --drones-config config/drones.toml",
                 file=sys.stderr,
             )
             raise SystemExit(2)
-    if not _argv_has_flag(out, "--sim-render-every"):
-        out.extend(["--sim-render-every", "0"])
     return out
 
 

@@ -68,6 +68,11 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         default=None,
         help="TOML file listing Crazyflie URIs (enables real-swarm mode; disables MuJoCo).",
     )
+    parser.add_argument(
+        "--skip-real-connect",
+        action="store_true",
+        help="With --drones-config: load TOML layout but skip Crazyflie radio and ROS mocap.",
+    )
     parser.add_argument("--axswarm-settings", type=str, default=None)
 
     # --- Left-hand: yaml defaults; only sign fixes and opt-outs on CLI ---

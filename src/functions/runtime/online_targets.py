@@ -15,7 +15,6 @@ from functions.open_close.morph_world import (
     summarize_target_workspace,
 )
 from functions.runtime.live_target import LiveTargetState
-from functions.runtime.online_defaults import ONLINE_DEFAULTS
 from functions.swarm_motion.spacing_guard import closest_pair
 
 
@@ -27,9 +26,7 @@ def _bootstrap_initial_target(
     open_alpha: float,
     shape_t: float | None,
     scale: ScaleConfig,
-    min_separation_m: float,
 ) -> np.ndarray:
-    del min_separation_m
     points_mm = fixed_morph_points(point_count, radius_mm, morph_mode, open_alpha, shape_t)
     target = normalize_morph_points_at_hover(points_mm, scale)
     dist, i, j = closest_pair(target)
@@ -64,7 +61,6 @@ def make_initial_live_target(
         open_alpha=open_alpha,
         shape_t=shape_t,
         scale=scale,
-        min_separation_m=ONLINE_DEFAULTS.sim.min_separation_m,
     )
     state = LiveTargetState(target)
     state.mode = int(morph_mode)
@@ -89,9 +85,7 @@ def update_live_target_from_state(
     scale: ScaleConfig,
     radius_mm: float,
     open_out: float | None,
-    min_separation_m: float = ONLINE_DEFAULTS.sim.min_separation_m,
 ) -> None:
-    del min_separation_m
     open_v = float(
         open_out
         if open_out is not None

@@ -32,7 +32,7 @@ def sim_chessboard_ground_layout(
     if n < 1:
         raise ValueError(f"n_drones must be >= 1, got {n}")
     sep = float(min_separation_m)
-    pitch = max(sep * 1.10, 0.34)
+    pitch = max(sep * 2.00, 0.34)  #max--min spacing between drones at ground level
     cols = int(np.ceil(np.sqrt(n)))
     rows = int(np.ceil(n / cols))
     stagger = 0.5 * pitch

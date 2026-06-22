@@ -8,6 +8,7 @@ Same API entry points as ``simulate.py``: ``SolverData``, ``SolverSettings``, ``
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,6 +73,25 @@ def load_axswarm_min_separation(
     return min_separation_from_envelope(env)
 
 
+@contextlib.contextmanager
+def _axswarm_force_cpu_init():
+    """Keep axswarm ``SolverData.init`` on CPU even if the package was patched for GPU."""
+    import jax
+
+    real_devices = jax.devices
+
+    def _devices(platform: str | None = None):
+        if platform == "gpu":
+            return real_devices("cpu")
+        return real_devices(platform)
+
+    jax.devices = _devices  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        jax.devices = real_devices  # type: ignore[method-assign]
+
+
 @dataclass
 class AxswarmPlanner:
     """Gesture setpoints -> axswarm MPC -> Crazyflow commands."""
@@ -82,8 +102,6 @@ class AxswarmPlanner:
     n_drones: int
     mpc_hz: float
     min_separation_m: float
-    _last_safe: np.ndarray | None
-    _last_safe_vel: np.ndarray | None
     _control_updated: bool
     _last_mpc_time: float
     _solve_count: int
@@ -115,8 +133,6 @@ class AxswarmPlanner:
             n_drones=n_drones,
             mpc_hz=mpc_hz,
             min_separation_m=min_sep,
-            _last_safe=None,
-            _last_safe_vel=None,
             _control_updated=False,
             _last_mpc_time=-1e9,
             _solve_count=0,
@@ -162,22 +178,21 @@ class AxswarmPlanner:
         )
         states = np.concatenate([pos, vel], axis=-1)
         z = np.zeros((self.n_drones, 3), dtype=np.float32)
-        self.solver_data = self._SolverData.init(
-            setpoints={"pos": pos.copy(), "vel": vel.copy(), "acc": z.copy()},
-            initial_states=states,
-            K=self.settings.K,
-            N=self.settings.N,
-            A=self.dynamics["A"],
-            B=self.dynamics["B"],
-            A_prime=self.dynamics["A_prime"],
-            B_prime=self.dynamics["B_prime"],
-            freq=self.settings.freq,
-            smoothness_weight=self.settings.smoothness_weight,
-            input_smoothness_weight=self.settings.input_smoothness_weight,
-            input_continuity_weight=self.settings.input_continuity_weight,
-        )
-        self._last_safe = pos.copy()
-        self._last_safe_vel = vel.copy()
+        with _axswarm_force_cpu_init():
+            self.solver_data = self._SolverData.init(
+                setpoints={"pos": pos.copy(), "vel": vel.copy(), "acc": z.copy()},
+                initial_states=states,
+                K=self.settings.K,
+                N=self.settings.N,
+                A=self.dynamics["A"],
+                B=self.dynamics["B"],
+                A_prime=self.dynamics["A_prime"],
+                B_prime=self.dynamics["B_prime"],
+                freq=self.settings.freq,
+                smoothness_weight=self.settings.smoothness_weight,
+                input_smoothness_weight=self.settings.input_smoothness_weight,
+                input_continuity_weight=self.settings.input_continuity_weight,
+            )
         self._control_updated = False
         self._last_mpc_time = -1e9
         self._last_ok = True
@@ -185,6 +200,21 @@ class AxswarmPlanner:
     def sync_gesture(self, gesture: np.ndarray, sim_vel: np.ndarray | None = None) -> None:
         """Re-init MPC state from current gesture (e.g. SPACE armed)."""
         self.reset(gesture, sim_vel)
+
+    def _planned_cmd(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """First MPC input from solver state (no separate output cache)."""
+        if self.solver_data is None:
+            return None, None
+        try:
+            pos = np.asarray(self.solver_data.u_pos[:, 0], dtype=np.float32)
+            vel = np.asarray(self.solver_data.u_vel[:, 0], dtype=np.float32)
+        except Exception:
+            return None, None
+        if pos.shape != (self.n_drones, 3) or not np.all(np.isfinite(pos)):
+            return None, None
+        if vel.shape != (self.n_drones, 3) or not np.all(np.isfinite(vel)):
+            vel = np.zeros_like(pos, dtype=np.float32)
+        return pos, vel
 
     def _run_mpc(self, states: np.ndarray, gesture_setpoint: np.ndarray) -> bool:
         sp = np.asarray(gesture_setpoint, dtype=np.float32)
@@ -203,15 +233,8 @@ class AxswarmPlanner:
         # Match axswarm's amswarm example: solve, advance SolverData, then consume
         # the first input setpoint from the shifted plan.
         self.solver_data = self.solver_data.step(self.solver_data)
-        planned = np.asarray(self.solver_data.u_pos[:, 0], dtype=np.float32)
-        planned_vel = np.asarray(self.solver_data.u_vel[:, 0], dtype=np.float32)
-        if np.all(np.isfinite(planned)):
-            self._last_safe = planned
-            self._last_safe_vel = (
-                planned_vel
-                if np.all(np.isfinite(planned_vel))
-                else np.zeros_like(planned, dtype=np.float32)
-            )
+        planned, _ = self._planned_cmd()
+        if planned is not None:
             self._control_updated = True
             if not ok:
                 self._fail_count += 1
@@ -257,18 +280,15 @@ class AxswarmPlanner:
         if due:
             self._last_mpc_time = el
             self._run_mpc(states, sp)
-        if self._last_safe is not None:
-            out = np.asarray(self._last_safe, dtype=np.float32)
-        else:
-            out = np.asarray(pos, dtype=np.float32)
-
-        out = self._lock_vertical_z(out, hold_z)
-        return out
+        planned_pos, _ = self._planned_cmd()
+        out = planned_pos if planned_pos is not None else np.asarray(pos, dtype=np.float32)
+        return self._lock_vertical_z(out, hold_z)
 
     def current_control_velocity(self) -> np.ndarray:
-        if self._last_safe_vel is None:
+        _, vel = self._planned_cmd()
+        if vel is None:
             return np.zeros((self.n_drones, 3), dtype=np.float32)
-        return np.asarray(self._last_safe_vel, dtype=np.float32)
+        return vel
 
     def control_updated(self) -> bool:
         return bool(self._control_updated)

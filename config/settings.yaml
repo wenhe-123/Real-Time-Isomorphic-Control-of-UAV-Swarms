@@ -1,0 +1,5 @@
+# Real-swarm settings (swarmGPT-compatible).
+# URIs are built from addr/channel in config/drones.toml via radio.uri_base.
+
+radio:
+  uri_base: "radio://0/{channel}/2M/E7E7E7E7{addr:02X}"
