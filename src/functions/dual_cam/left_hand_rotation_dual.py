@@ -192,6 +192,37 @@ def resolve_dual_left_rotation(
         return out, webcam_frame_idx
     out.vis_mean, out.vis_min = mp_hand_visibility_scores(orbbec_result, orbbec_idx_l)
 
+    if do_arm:
+        # Fresh USB read at press-0 so ref_basis_image matches the arm pose (not stale cache).
+        B, wres, wfr, webcam_frame_idx = detect_webcam_hand(
+            webcam_cap,
+            webcam_landmarker,
+            fps=fps,
+            webcam_frame_idx=webcam_frame_idx,
+            mp_input_scale=mp_input_scale,
+            palm_basis=palm_basis,
+            prefer_hand_idx=orbbec_idx_l,
+        )
+        if B is None:
+            B, wres, wfr, _ = _resolve_webcam_palm_basis(
+                webcam_cap=webcam_cap,
+                webcam_landmarker=webcam_landmarker,
+                fps=fps,
+                webcam_frame_idx=webcam_frame_idx,
+                mp_input_scale=mp_input_scale,
+                palm_basis=palm_basis,
+                prefer_hand_idx=orbbec_idx_l,
+                prefetch_B=prefetch_B,
+                prefetch_result=prefetch_result,
+                prefetch_frame_bgr=prefetch_frame_bgr,
+            )
+        out.webcam_frame_bgr = wfr
+        out.webcam_result = wres
+        if B is not None:
+            out.arm_ref_img = np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
+            out.rot_source = "webcam"
+        return out, webcam_frame_idx
+
     B, wres, wfr, webcam_frame_idx = _resolve_webcam_palm_basis(
         webcam_cap=webcam_cap,
         webcam_landmarker=webcam_landmarker,
@@ -206,12 +237,6 @@ def resolve_dual_left_rotation(
     )
     out.webcam_frame_bgr = wfr
     out.webcam_result = wres
-
-    if do_arm:
-        if B is not None:
-            out.arm_ref_img = B
-            out.rot_source = "webcam"
-        return out, webcam_frame_idx
 
     if B is not None:
         out.B_rot = B

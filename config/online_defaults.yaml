@@ -17,7 +17,7 @@ Camera:
   mp_detect_every: 2  # Run HandLandmarker every N frames; reuse last on skip
   orbbec_flip_horizontal: false  # Mirror BGR before MediaPipe
   orbbec_use_transformed_depth: false  # K4A color-aligned depth (Femto Bolt: often crashes)
-  orbbec_hand_swap: auto  # Swap MP left/right for mode vs open (auto | on | off)
+  orbbec_hand_swap: off  # Swap MP left/right for mode vs open (auto | on | off)
 
 Morph:
   target_alpha: 0.44  # Live target low-pass toward morph goals

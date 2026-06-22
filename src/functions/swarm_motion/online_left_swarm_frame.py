@@ -103,6 +103,8 @@ def apply_left_swarm_frame(
         _B_rot = _dual_rot.B_rot
         _viz_B_rot = _B_rot
         _arm_ref_img = _dual_rot.arm_ref_img
+        if _do_arm and _arm_ref_img is None and gest.prefetch_B is not None:
+            _arm_ref_img = gest.prefetch_B
         _rot_dbg = _dual_rot.rot_dbg
         left_pose_state.last_dual_rot_source = str(_dual_rot.rot_source)
         left_pose_state.last_dual_vis_min = float(_dual_rot.vis_min)
@@ -128,7 +130,7 @@ def apply_left_swarm_frame(
             gest.orbbec_vis_min_now is not None
             and float(gest.orbbec_vis_min_now) < float(tuning.mode_vis_min)
         )
-        if _left_pose_hold:
+        if _left_pose_hold and not _do_arm:
             off = np.asarray(left_pose_state.ema_offset, dtype=np.float64).copy()
             R_pose = rotvec_to_R(left_pose_state.ema_rotvec)
             _sec("left_pose_hold")
@@ -165,6 +167,17 @@ def apply_left_swarm_frame(
                 "Left swarm armed: depth-camera palm-center translation + palm basis rotation; "
                 f"frozen cam→sim preset={left_pose_state.frozen_cam_preset!r}."
             )
+        if _do_arm and boot.left_dual_webcam_rot_eff:
+            if left_pose_state.ref_basis_image is not None:
+                print(
+                    "Left swarm hybrid rot armed: depth roll/pitch + USB webcam yaw "
+                    "(ref_basis_image saved at press-0)."
+                )
+            else:
+                print(
+                    "Left swarm hybrid rot: USB webcam ref missing at press-0 "
+                    "(rotation will stay depth-only until re-arm)."
+                )
         boot.left_pose_reset_req_box[0] = False
         raw_target = apply_rigid_to_targets(
             morph_targets_before_left_m,
