@@ -109,6 +109,11 @@ _PALM_PLANE_Z_MIN_MM = 180.0
 _PALM_PLANE_Z_MAX_MM = 1600.0
 
 
+# Depths (mm) for two-point ray through a color pixel when intersecting the palm plane.
+_PALM_PLANE_RAY_Z0_MM = 350.0
+_PALM_PLANE_RAY_Z1_MM = 950.0
+
+
 _PALM_PLANE_CORE_IDS = (WRIST_ID, THUMB_MCP_ID, *MCP_IDS)
 
 
