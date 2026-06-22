@@ -179,11 +179,6 @@ def update_left_swarm_pose(
         return _decay_pose_on_track_loss(state, tuning.lost_decay)
 
     if sensor.force_reset or not state.initialized:
-        ref_basis_image_arm = None
-        if sensor.force_reset:
-            ref_basis_image_arm = sensor.ref_basis_image
-            if ref_basis_image_arm is None and sensor.B_rot is not None:
-                ref_basis_image_arm = sensor.B_rot
         if not state.reset_to_current(
             h,
             palm_basis=sensor.palm_basis,
@@ -191,7 +186,7 @@ def update_left_swarm_pose(
             sim_trans_from_cam=sensor.arm_sim_trans_from_cam if sensor.force_reset else None,
             cam_preset_label=str(sensor.arm_cam_preset_label) if sensor.force_reset else "",
             ref_swarm_targets=sensor.ref_swarm_xyz if sensor.force_reset else None,
-            ref_basis_image=ref_basis_image_arm,
+            ref_basis_image=sensor.ref_basis_image if sensor.force_reset else None,
             palm_center_override=palm_center,
             palm_pose=(palm_center, B_depth),
         ):

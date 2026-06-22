@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -69,29 +69,14 @@ def resolve_mode_open_hand_indices(
     *,
     swap_mp_hands: bool = False,
 ) -> Tuple[Optional[int], Optional[int]]:
-    """Assign mode (physical left) vs open (physical right) hand indices.
+    """Assign mode (MP Left) vs open (MP Right) using MediaPipe handedness only.
 
-    Two hands: 2D wrist x (image-left ≈ person's right/open).  One hand: always
-    mode-only — typical when the right (open) hand is occluded; open holds last value.
+    One visible hand: Left → mode, Right → open (the other channel holds last value).
+    ``swap_mp_hands`` inverts label interpretation (mirror / ``orbbec_hand_swap``).
     """
     if not result or not getattr(result, "hand_landmarks", None):
         return None, None
-
-    sorted_idxs = hand_indices_sorted_by_image_x(result)
-    if not sorted_idxs:
-        return find_left_right_indices(result, invert_handedness=bool(swap_mp_hands))
-
-    n = len(sorted_idxs)
-    if n >= 2:
-        idx_r = int(sorted_idxs[0])
-        idx_l = int(sorted_idxs[-1])
-        if idx_l == idx_r:
-            return idx_l, None
-        if bool(swap_mp_hands):
-            idx_l, idx_r = idx_r, idx_l
-        return idx_l, idx_r
-
-    return int(sorted_idxs[0]), None
+    return find_left_right_indices(result, invert_handedness=bool(swap_mp_hands))
 
 
 def extract_world_points_mm_result(result, hand_idx: int):
@@ -164,40 +149,6 @@ def confidence_color_bgr(mean_vis: float) -> Tuple[int, int, int]:
     if mean_vis >= 0.45:
         return (80, 200, 255)
     return (100, 120, 255)
-
-
-def _wrist_x_norm(result, hand_idx: int) -> Optional[float]:
-    """Normalized wrist x in [0,1] from 2D landmarks; returns None if unavailable."""
-    if not result.hand_landmarks or hand_idx >= len(result.hand_landmarks):
-        return None
-    hlm = result.hand_landmarks[hand_idx]
-    if not hlm:
-        return None
-    wrist = hlm[0]
-    x = getattr(wrist, "x", None)
-    if x is None:
-        return None
-    try:
-        return float(x)
-    except Exception:
-        return None
-
-
-def hand_indices_sorted_by_image_x(result) -> List[int]:
-    """Return detected hand indices sorted left→right by 2D wrist x position.
-
-    This is often more stable than MediaPipe handedness on mirrored cameras or cross-view setups.
-    """
-    if not result.hand_landmarks:
-        return []
-    xs: List[Tuple[float, int]] = []
-    for i in range(len(result.hand_landmarks)):
-        x = _wrist_x_norm(result, i)
-        if x is None or not np.isfinite(float(x)):
-            continue
-        xs.append((float(x), int(i)))
-    xs.sort(key=lambda t: t[0])
-    return [i for _, i in xs]
 
 
 def orbbec_resolve_swap_mp_hands(*, hand_swap: str, flip_horizontal: bool, use_orbbec: bool) -> bool:

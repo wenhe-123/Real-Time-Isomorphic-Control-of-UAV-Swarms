@@ -1,4 +1,4 @@
-"""Dual rotation: Orbbec depth for translation; USB webcam 2D palm for rotation (always when enabled)."""
+"""Dual rotation: Orbbec depth for translation; webcam 2D palm when MP visibility is low."""
 
 from __future__ import annotations
 
@@ -73,36 +73,6 @@ def detect_webcam_hand(
     return B, w_res, wfr, idx
 
 
-def _resolve_webcam_palm_basis(
-    *,
-    webcam_cap,
-    webcam_landmarker,
-    fps: float,
-    webcam_frame_idx: int,
-    mp_input_scale: float,
-    palm_basis: str,
-    prefer_hand_idx: int | None,
-    prefetch_B: np.ndarray | None,
-    prefetch_result: Any | None,
-    prefetch_frame_bgr: np.ndarray | None,
-) -> tuple[np.ndarray | None, Any | None, np.ndarray | None, int]:
-    """Use prefetched webcam basis or detect live."""
-    B = prefetch_B
-    wres = prefetch_result
-    wfr = prefetch_frame_bgr
-    if B is None and webcam_landmarker is not None and webcam_cap is not None:
-        B, wres, wfr, webcam_frame_idx = detect_webcam_hand(
-            webcam_cap,
-            webcam_landmarker,
-            fps=fps,
-            webcam_frame_idx=webcam_frame_idx,
-            mp_input_scale=mp_input_scale,
-            palm_basis=palm_basis,
-            prefer_hand_idx=prefer_hand_idx,
-        )
-    return B, wres, wfr, webcam_frame_idx
-
-
 def poll_webcam_dual_cache(
     *,
     webcam_cap,
@@ -116,7 +86,6 @@ def poll_webcam_dual_cache(
     mode_vis_min: float,
     rotating: bool,
     dual_mode_assist: bool = False,
-    dual_rot_always: bool = False,
     orbbec_thumb_vis: float | None = None,
     fps: float = 30.0,
     mp_input_scale: float = 1.0,
@@ -124,7 +93,7 @@ def poll_webcam_dual_cache(
     prefer_hand_idx: int | None = None,
     webcam_frame_idx: int = 0,
 ) -> tuple[np.ndarray | None, Any | None, np.ndarray | None, int | None, int]:
-    """Read USB webcam when dual rotation is on, preview is on, or Orbbec visibility is low."""
+    """Read USB webcam when rotating, thumb occluded, or Orbbec visibility is low."""
     if webcam_cap is None or webcam_landmarker is None:
         return None, None, None, None, webcam_frame_idx
     if not should_poll_webcam_for_dual(
@@ -134,9 +103,10 @@ def poll_webcam_dual_cache(
         rotating=bool(rotating),
         show_preview=bool(show_preview),
         dual_mode_assist=bool(dual_mode_assist),
-        dual_rot_always=bool(dual_rot_always),
         orbbec_thumb_vis=orbbec_thumb_vis,
     ):
+        # Do not feed stale webcam landmarks into per-frame mode fusion. When Orbbec
+        # visibility is good, the cached webcam result only adds CPU work downstream.
         return None, None, None, None, webcam_frame_idx
     stride_n = max(1, int(stride))
     due = (int(frame_idx) % stride_n) == 0
@@ -182,64 +152,60 @@ def resolve_dual_left_rotation(
     webcam_frame_idx: int,
     mp_input_scale: float,
     prefetch_B: np.ndarray | None = None,
-    prefetch_result: Any | None = None,
+    prefetch_result: Any = None,
     prefetch_frame_bgr: np.ndarray | None = None,
 ) -> tuple[DualRotationFrame, int]:
     """Pick palm basis for rotation; translation must still use depth wrist elsewhere."""
-    del vis_thresh  # kept for API; rotation always uses webcam when enabled
     out = DualRotationFrame()
     if not enabled or orbbec_idx_l is None or orbbec_result is None:
         return out, webcam_frame_idx
     out.vis_mean, out.vis_min = mp_hand_visibility_scores(orbbec_result, orbbec_idx_l)
+    use_wcam = float(out.vis_min) < float(vis_thresh) or prefetch_B is not None
+    if prefetch_frame_bgr is not None:
+        out.webcam_frame_bgr = prefetch_frame_bgr
+        out.webcam_result = prefetch_result
 
     if do_arm:
-        # Fresh USB read at press-0 so ref_basis_image matches the arm pose (not stale cache).
-        B, wres, wfr, webcam_frame_idx = detect_webcam_hand(
-            webcam_cap,
-            webcam_landmarker,
-            fps=fps,
-            webcam_frame_idx=webcam_frame_idx,
-            mp_input_scale=mp_input_scale,
-            palm_basis=palm_basis,
-            prefer_hand_idx=orbbec_idx_l,
-        )
+        if use_wcam:
+            B = prefetch_B
+            wres = prefetch_result
+            wfr = prefetch_frame_bgr
+            if B is None:
+                B, wres, wfr, webcam_frame_idx = detect_webcam_hand(
+                    webcam_cap,
+                    webcam_landmarker,
+                    fps=fps,
+                    webcam_frame_idx=webcam_frame_idx,
+                    mp_input_scale=mp_input_scale,
+                    palm_basis=palm_basis,
+                    prefer_hand_idx=orbbec_idx_l,
+                )
+            out.webcam_frame_bgr = wfr
+            out.webcam_result = wres
+            if B is not None:
+                out.arm_ref_img = B
+                out.rot_source = "webcam"
+        return out, webcam_frame_idx
+
+    if use_wcam and webcam_landmarker is not None and webcam_cap is not None:
+        B = prefetch_B
+        wres = prefetch_result
+        wfr = prefetch_frame_bgr
         if B is None:
-            B, wres, wfr, _ = _resolve_webcam_palm_basis(
-                webcam_cap=webcam_cap,
-                webcam_landmarker=webcam_landmarker,
+            B, wres, wfr, webcam_frame_idx = detect_webcam_hand(
+                webcam_cap,
+                webcam_landmarker,
                 fps=fps,
                 webcam_frame_idx=webcam_frame_idx,
                 mp_input_scale=mp_input_scale,
                 palm_basis=palm_basis,
                 prefer_hand_idx=orbbec_idx_l,
-                prefetch_B=prefetch_B,
-                prefetch_result=prefetch_result,
-                prefetch_frame_bgr=prefetch_frame_bgr,
             )
         out.webcam_frame_bgr = wfr
         out.webcam_result = wres
         if B is not None:
-            out.arm_ref_img = np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
+            out.B_rot = B
+            out.rot_dbg = " rot:wcam"
             out.rot_source = "webcam"
-        return out, webcam_frame_idx
-
-    B, wres, wfr, webcam_frame_idx = _resolve_webcam_palm_basis(
-        webcam_cap=webcam_cap,
-        webcam_landmarker=webcam_landmarker,
-        fps=fps,
-        webcam_frame_idx=webcam_frame_idx,
-        mp_input_scale=mp_input_scale,
-        palm_basis=palm_basis,
-        prefer_hand_idx=orbbec_idx_l,
-        prefetch_B=prefetch_B,
-        prefetch_result=prefetch_result,
-        prefetch_frame_bgr=prefetch_frame_bgr,
-    )
-    out.webcam_frame_bgr = wfr
-    out.webcam_result = wres
-
-    if B is not None:
-        out.B_rot = B
-        out.rot_dbg = " rot:wcam"
-        out.rot_source = "webcam"
+            return out, webcam_frame_idx
     return out, webcam_frame_idx

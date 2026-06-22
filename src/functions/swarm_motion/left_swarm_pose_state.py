@@ -12,7 +12,6 @@ from functions.swarm_motion.left_pose_config import DEFAULT_LEFT_PALM_BASIS
 from functions.swarm_motion.left_palm_geom import _enforce_thumb_positive_x, palm_orthonormal_basis
 
 
-@dataclass
 class LeftSwarmPoseState:
     """Tracks reference palm frame and outputs smoothed world offset + full rotation."""
 
@@ -115,15 +114,9 @@ class LeftSwarmPoseState:
         self.ema_offset[:] = 0.0
         self.ema_rotvec[:] = 0.0
         self.prev_palm_mm = pc.copy()
-        _hybrid_ref = ref_basis_image is not None
-        if _hybrid_ref:
-            self.prev_rot_basis = np.asarray(ref_basis_image, dtype=np.float64).reshape(3, 3).copy()
-            self.prev_rot_source = "hybrid"
-            self.last_rot_source = "hybrid"
-        else:
-            self.prev_rot_basis = B.copy()
-            self.prev_rot_source = "depth"
-            self.last_rot_source = "depth"
+        self.prev_rot_basis = B.copy()
+        self.prev_rot_source = "depth"
+        self.last_rot_source = "depth"
         self.last_palm_center_mm = pc.copy()
         self.last_delta_cam_mm[:] = 0.0
         self.last_delta_cam_arm_mm[:] = 0.0

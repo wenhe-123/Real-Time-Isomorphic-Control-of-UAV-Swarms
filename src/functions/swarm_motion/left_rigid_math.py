@@ -14,16 +14,9 @@ def palm_world_rotvec_from_basis_delta(
     B_current: np.ndarray,
     B_arm: np.ndarray,
 ) -> np.ndarray:
-    """Palm camera-frame ΔR expressed in simulation/world coordinates."""
-    R_cam = np.asarray(B_current, dtype=np.float64).reshape(3, 3) @ np.asarray(
-        B_arm, dtype=np.float64
-    ).reshape(3, 3).T
-    if Mc_rot is not None:
-        M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
-        R_world = M @ R_cam @ M.T
-    else:
-        R_world = R_cam
-    rv = np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
+    """Palm ΔR expressed in simulation/world coordinates."""
+    rv_local = palm_local_rotvec_from_basis_delta(B_current, B_arm)
+    rv = palm_world_rotvec_from_local_delta(Mc_rot, rv_local, B_arm)
     if float(np.linalg.norm(rv)) > np.deg2rad(180.0):
         return np.zeros(3, dtype=np.float64)
     return rv
@@ -35,7 +28,10 @@ def palm_world_rotvec_from_local_delta(
     B_arm: np.ndarray,
 ) -> np.ndarray:
     """Palm-local Δ rotvec expressed through camera→simulation rotation."""
-    R_local = rotvec_to_R(np.asarray(rv_local, dtype=np.float64).reshape(3))
+    rv = np.asarray(rv_local, dtype=np.float64).reshape(3).copy()
+    # Positive palm-normal twist felt reversed in the swarm frame; invert only that local component.
+    rv[2] *= -1.0
+    R_local = rotvec_to_R(rv)
     B_ref = np.asarray(B_arm, dtype=np.float64).reshape(3, 3)
     R_cam = B_ref @ R_local @ B_ref.T
     if Mc_rot is not None:
