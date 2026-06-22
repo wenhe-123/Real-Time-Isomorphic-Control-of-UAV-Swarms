@@ -86,6 +86,7 @@ def poll_webcam_dual_cache(
     mode_vis_min: float,
     rotating: bool,
     dual_mode_assist: bool = False,
+    dual_rot_always: bool = False,
     orbbec_thumb_vis: float | None = None,
     fps: float = 30.0,
     mp_input_scale: float = 1.0,
@@ -103,6 +104,7 @@ def poll_webcam_dual_cache(
         rotating=bool(rotating),
         show_preview=bool(show_preview),
         dual_mode_assist=bool(dual_mode_assist),
+        dual_rot_always=bool(dual_rot_always),
         orbbec_thumb_vis=orbbec_thumb_vis,
     ):
         # Do not feed stale webcam landmarks into per-frame mode fusion. When Orbbec

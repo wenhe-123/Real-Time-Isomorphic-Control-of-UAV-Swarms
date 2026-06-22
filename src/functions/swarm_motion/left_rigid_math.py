@@ -30,7 +30,7 @@ def palm_world_rotvec_from_local_delta(
     """Palm-local Δ rotvec expressed through camera→simulation rotation."""
     rv = np.asarray(rv_local, dtype=np.float64).reshape(3).copy()
     # Positive palm-normal twist felt reversed in the swarm frame; invert only that local component.
-    rv[2] *= -1.0
+    rv[2] *= 1.0
     R_local = rotvec_to_R(rv)
     B_ref = np.asarray(B_arm, dtype=np.float64).reshape(3, 3)
     R_cam = B_ref @ R_local @ B_ref.T
