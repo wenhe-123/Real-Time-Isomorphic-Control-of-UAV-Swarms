@@ -29,6 +29,7 @@ def filter_online_targets(
     morph_targets_before_left_m: np.ndarray,
     elapsed: float,
     track_pos: np.ndarray | None,
+    track_vel: np.ndarray | None = None,
 ) -> tuple[TargetFilterResult, bool]:
     """Return axswarm-planned targets and updated gesture flags."""
     del morph_targets_before_left_m
@@ -69,6 +70,11 @@ def filter_online_targets(
         if track_pos is not None
         else np.asarray(boot.prev_cmd_target, dtype=np.float32)
     )
+    _track_vel = (
+        np.asarray(track_vel, dtype=np.float32)
+        if track_vel is not None
+        else None
+    )
     _hold_z: float | None = None
     _prearm_phase = str(boot.prearm_phase)
     _vertical_leg = str(boot.prearm_vertical_leg)
@@ -82,6 +88,7 @@ def filter_online_targets(
             elapsed,
             axswarm_input,
             track_pos=_track,
+            track_vel=_track_vel,
             hold_z=_hold_z,
         ),
         dtype=np.float32,

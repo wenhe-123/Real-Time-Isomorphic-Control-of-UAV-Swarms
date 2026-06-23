@@ -56,11 +56,16 @@ def stream_real_swarm_land_on_exit(
     boot.prearm_has_flown_box[0] = True
     sync_armed_flags(boot)
 
-    track0 = ex.get_sim_track_positions(boot.prev_cmd_target, boot.n_drones)
-    pos0 = track0 if track0 is not None else boot.prev_cmd_target
+    track0 = ex.get_sim_track_state(boot.prev_cmd_target, boot.n_drones)
+    pos0 = track0[0] if track0 is not None else boot.prev_cmd_target
+    vel0 = (
+        track0[1]
+        if track0 is not None
+        else np.zeros((boot.n_drones, 3), dtype=np.float32)
+    )
     boot.axswarm_rt.sync_gesture(
         np.asarray(pos0, dtype=np.float32),
-        np.zeros((boot.n_drones, 3), dtype=np.float32),
+        np.asarray(vel0, dtype=np.float32),
     )
 
     gest = _idle_gesture_result(frame_idx=boot.frame_idx)
@@ -75,7 +80,9 @@ def stream_real_swarm_land_on_exit(
 
         elapsed = time.monotonic() - boot.start_time
         raw_target = np.asarray(boot.ground_layout, dtype=np.float32).copy()
-        track_pos = ex.get_sim_track_positions(boot.prev_cmd_target, boot.n_drones)
+        track_state = ex.get_sim_track_state(boot.prev_cmd_target, boot.n_drones)
+        track_pos = track_state[0] if track_state is not None else None
+        track_vel = track_state[1] if track_state is not None else None
         filt, boot.prev_gesture_control_enabled = filter_online_targets(
             boot=boot,
             cfg=cfg,
@@ -84,6 +91,7 @@ def stream_real_swarm_land_on_exit(
             morph_targets_before_left_m=raw_target,
             elapsed=elapsed,
             track_pos=track_pos,
+            track_vel=track_vel,
         )
         boot.prev_cmd_target = filt.cmd_target.copy()
         ex.send_sim_layout(filt.cmd_target)

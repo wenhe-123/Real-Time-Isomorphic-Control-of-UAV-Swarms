@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,9 @@ class RealSwarmExecutor:
         self._last_mode = 1
         self._mocap_hold_logged = False
         self._dry_run = bool(dry_run)
+        self._last_sim_phys_pos: np.ndarray | None = None
+        self._last_sim_phys_time: float | None = None
+        self._last_sim_phys_vel: np.ndarray | None = None
         self.swarm: DroneSwarm | None = None
 
         print(
@@ -130,23 +134,55 @@ class RealSwarmExecutor:
         layout[: self.n_physical] = sim_phys
         return layout
 
-    def get_sim_track_positions(
-        self, morph_fallback: np.ndarray, n_morph: int
-    ) -> np.ndarray | None:
-        """Mocap poses (ROS TF) → sim frame for physical rows; morph fallback for virtual."""
-        real_pos = self.get_positions_for_debug()
-        if real_pos is None:
-            return None
+    def _validate_morph_fallback(self, morph_fallback: np.ndarray, n_morph: int) -> np.ndarray:
         fallback = np.asarray(morph_fallback, dtype=np.float32)
         if fallback.ndim != 2 or fallback.shape[1] != 3:
             raise ValueError(f"morph_fallback must be (N,3), got {fallback.shape}")
         n = int(n_morph)
         if fallback.shape[0] < n:
             raise ValueError(f"morph_fallback has {fallback.shape[0]} rows but need {n}")
-        out = fallback[:n].copy()
+        return fallback[:n].copy()
+
+    def _update_sim_velocity_cache(self, sim_phys: np.ndarray, now_s: float) -> np.ndarray:
+        sim_phys = np.asarray(sim_phys, dtype=np.float32)
+        if self._last_sim_phys_pos is None or self._last_sim_phys_time is None:
+            vel = np.zeros_like(sim_phys, dtype=np.float32)
+        else:
+            dt = float(now_s - self._last_sim_phys_time)
+            if dt <= 1e-3 or dt > 1.0:
+                vel = np.zeros_like(sim_phys, dtype=np.float32)
+            else:
+                vel = (sim_phys - self._last_sim_phys_pos) / dt
+                if self._last_sim_phys_vel is not None:
+                    vel = 0.35 * vel + 0.65 * self._last_sim_phys_vel
+                if not np.all(np.isfinite(vel)):
+                    vel = np.zeros_like(sim_phys, dtype=np.float32)
+        self._last_sim_phys_pos = sim_phys.copy()
+        self._last_sim_phys_time = float(now_s)
+        self._last_sim_phys_vel = vel.astype(np.float32, copy=True)
+        return self._last_sim_phys_vel
+
+    def get_sim_track_state(
+        self, morph_fallback: np.ndarray, n_morph: int
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """Mocap poses → sim-frame position/velocity rows for axswarm."""
+        real_pos = self.get_positions_for_debug()
+        if real_pos is None:
+            return None
+        pos = self._validate_morph_fallback(morph_fallback, n_morph)
+        vel = np.zeros_like(pos, dtype=np.float32)
         sim_phys = self.mapping.real_to_sim(real_pos).astype(np.float32)
-        out[: self.n_physical] = sim_phys[: self.n_physical]
-        return out
+        sim_phys_vel = self._update_sim_velocity_cache(sim_phys, time.monotonic())
+        pos[: self.n_physical] = sim_phys[: self.n_physical]
+        vel[: self.n_physical] = sim_phys_vel[: self.n_physical]
+        return pos, vel
+
+    def get_sim_track_positions(
+        self, morph_fallback: np.ndarray, n_morph: int
+    ) -> np.ndarray | None:
+        """Mocap poses (ROS TF) → sim frame for physical rows; morph fallback for virtual."""
+        state = self.get_sim_track_state(morph_fallback, n_morph)
+        return None if state is None else state[0]
 
     def verify_near_sim_layout(self, sim_layout: np.ndarray) -> bool:
         """Check drones are close to mapped sim layout before arming."""
