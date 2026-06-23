@@ -1,9 +1,11 @@
 """Realtime axswarm planner bridge for iso_swarm.
 
 Gesture supplies position setpoints; axswarm MPC returns ``u_pos``/``u_vel``
-per ``config/axswarm_settings.yaml``. Crazyflow tracks those commands.
+per ``config/axswarm_settings.yaml``. Crazyflow tracks those commands via
+``state_control`` (pos + vel), matching the online slice of swarmGPT's
+``simulate_axswarm`` loop (solve → step → consume ``u_pos[:, 0]`` / ``u_vel[:, 0]``).
 
-Same API entry points as ``simulate.py``: ``SolverData``, ``SolverSettings``, ``solve``.
+Solver API: ``SolverData.init(setpoints, initial_states, ...)``, ``solve(states, data, settings)``.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import jax
 import numpy as np
 import yaml
 
@@ -90,6 +93,15 @@ def _axswarm_force_cpu_init():
         yield
     finally:
         jax.devices = real_devices  # type: ignore[method-assign]
+
+
+@dataclass
+class AxswarmControl:
+    """MPC output consumed by Crazyflow ``state_control`` (first horizon step)."""
+
+    pos: np.ndarray
+    vel: np.ndarray
+    updated: bool
 
 
 @dataclass
@@ -226,6 +238,7 @@ class AxswarmPlanner:
         success, _, self.solver_data = self._solve_fn(
             states, self.solver_data, self.settings
         )
+        jax.block_until_ready(self.solver_data)
         self._last_solve_ms = (time.perf_counter() - t0) * 1000.0
         self._solve_count += 1
         ok = bool(np.all(success))
@@ -246,6 +259,64 @@ class AxswarmPlanner:
         self._last_ok = False
         return False
 
+    def _track_state(
+        self,
+        *,
+        sim: Sim | None,
+        track_pos: np.ndarray | None,
+        track_vel: np.ndarray | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if track_pos is not None:
+            pos = np.asarray(track_pos, dtype=np.float32)
+            if pos.shape != (self.n_drones, 3):
+                raise ValueError(f"track_pos must be ({self.n_drones}, 3), got {pos.shape}")
+            if track_vel is None:
+                vel = np.zeros((self.n_drones, 3), dtype=np.float32)
+            else:
+                vel = np.asarray(track_vel, dtype=np.float32)
+                if vel.shape != (self.n_drones, 3):
+                    raise ValueError(f"track_vel must be ({self.n_drones}, 3), got {vel.shape}")
+        elif sim is not None:
+            pos = np.asarray(sim.data.states.pos[0], dtype=np.float32)
+            vel = np.asarray(sim.data.states.vel[0], dtype=np.float32)
+        else:
+            raise ValueError("plan_control requires sim or track_pos")
+        return pos, vel
+
+    def plan_control(
+        self,
+        elapsed_s: float,
+        gesture_setpoint: np.ndarray,
+        sim: Sim | None = None,
+        *,
+        track_pos: np.ndarray | None = None,
+        track_vel: np.ndarray | None = None,
+        hold_z: float | None = None,
+    ) -> AxswarmControl:
+        """Run MPC (when due) and return ``u_pos[:, 0]`` / ``u_vel[:, 0]`` for Crazyflow."""
+        el = float(elapsed_s)
+        sp = self._lock_vertical_z(np.asarray(gesture_setpoint, dtype=np.float32), hold_z)
+        pos, vel = self._track_state(sim=sim, track_pos=track_pos, track_vel=track_vel)
+        states = np.concatenate([pos, vel], axis=-1)
+        self._control_updated = False
+
+        due = (el - self._last_mpc_time) >= self.mpc_period_s - 1e-9
+        if due:
+            self._last_mpc_time = el
+            self._run_mpc(states, sp)
+        planned_pos, planned_vel = self._planned_cmd()
+        out_pos = planned_pos if planned_pos is not None else np.asarray(pos, dtype=np.float32)
+        out_vel = (
+            planned_vel
+            if planned_vel is not None
+            else np.zeros((self.n_drones, 3), dtype=np.float32)
+        )
+        return AxswarmControl(
+            pos=self._lock_vertical_z(out_pos, hold_z),
+            vel=out_vel,
+            updated=bool(self._control_updated),
+        )
+
     def plan_targets(
         self,
         elapsed_s: float,
@@ -256,33 +327,24 @@ class AxswarmPlanner:
         track_vel: np.ndarray | None = None,
         hold_z: float | None = None,
     ) -> np.ndarray:
-        """Return axswarm's planned target for the raw setpoint."""
-        el = float(elapsed_s)
-        sp = self._lock_vertical_z(np.asarray(gesture_setpoint, dtype=np.float32), hold_z)
+        """Return axswarm's planned position target for the raw setpoint."""
+        return self.plan_control(
+            elapsed_s,
+            gesture_setpoint,
+            sim,
+            track_pos=track_pos,
+            track_vel=track_vel,
+            hold_z=hold_z,
+        ).pos
 
-        if track_pos is not None:
-            pos = np.asarray(track_pos, dtype=np.float32)
-            if pos.shape != (self.n_drones, 3):
-                raise ValueError(f"track_pos must be ({self.n_drones}, 3), got {pos.shape}")
-            if track_vel is None:
-                vel = np.zeros((self.n_drones, 3), dtype=np.float32)
-            else:
-                vel = np.asarray(track_vel, dtype=np.float32)
-        elif sim is not None:
-            pos = np.asarray(sim.data.states.pos[0], dtype=np.float32)
-            vel = np.asarray(sim.data.states.vel[0], dtype=np.float32)
-        else:
-            raise ValueError("plan_targets requires sim or track_pos")
-        states = np.concatenate([pos, vel], axis=-1)
-        self._control_updated = False
-
-        due = (el - self._last_mpc_time) >= self.mpc_period_s - 1e-9
-        if due:
-            self._last_mpc_time = el
-            self._run_mpc(states, sp)
-        planned_pos, _ = self._planned_cmd()
-        out = planned_pos if planned_pos is not None else np.asarray(pos, dtype=np.float32)
-        return self._lock_vertical_z(out, hold_z)
+    def current_control(self) -> np.ndarray:
+        """Crazyflow ``state_control`` slice: ``(n_drones, 6)`` pos + vel."""
+        pos, vel = self._planned_cmd()
+        if pos is None:
+            pos = np.zeros((self.n_drones, 3), dtype=np.float32)
+        if vel is None:
+            vel = np.zeros((self.n_drones, 3), dtype=np.float32)
+        return np.concatenate([pos, vel], axis=-1)
 
     def current_control_velocity(self) -> np.ndarray:
         _, vel = self._planned_cmd()

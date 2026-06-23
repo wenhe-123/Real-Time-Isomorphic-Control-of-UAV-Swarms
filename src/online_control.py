@@ -300,6 +300,7 @@ def run_integrated_online_control(
                 frame_prof.section("plot3d")
 
                 axswarm_track_pos: np.ndarray | None = None
+                axswarm_track_vel: np.ndarray | None = None
                 if boot.real_executor is not None:
                     axswarm_track_pos = boot.real_executor.get_sim_track_positions(
                         boot.prev_cmd_target,
@@ -308,6 +309,9 @@ def run_integrated_online_control(
                 elif boot.sim is not None:
                     axswarm_track_pos = np.asarray(
                         boot.sim.data.states.pos[0], dtype=np.float32
+                    )
+                    axswarm_track_vel = np.asarray(
+                        boot.sim.data.states.vel[0], dtype=np.float32
                     )
 
                 if just_prearm_phase:
@@ -357,6 +361,7 @@ def run_integrated_online_control(
                     morph_targets_before_left_m=morph_targets_before_left_m,
                     elapsed=elapsed,
                     track_pos=axswarm_track_pos,
+                    track_vel=axswarm_track_vel,
                 )
                 frame_prof.section("target_filter")
                 boot.cmd_target = filt.cmd_target
