@@ -18,6 +18,9 @@ class TargetFilterResult:
     cmd_target: np.ndarray
     cmd_velocity: np.ndarray
     control_updated: bool
+    cmd_source: str = "unknown"
+    plan_drift_m: float = 0.0
+    mpc_due: bool = False
 
 
 def filter_online_targets(
@@ -65,11 +68,6 @@ def filter_online_targets(
         print("Gesture armed. Axswarm active.")
     prev_gesture_control_enabled = bool(boot.gesture_control_enabled)
 
-    _track = (
-        np.asarray(track_pos, dtype=np.float32)
-        if track_pos is not None
-        else np.asarray(boot.prev_cmd_target, dtype=np.float32)
-    )
     _hold_z: float | None = None
     _prearm_phase = str(boot.prearm_phase)
     _vertical_leg = str(boot.prearm_vertical_leg)
@@ -78,10 +76,14 @@ def filter_online_targets(
             _hold_z = float(boot.ground_z)
         elif _prearm_phase == "vertical" and _vertical_leg == "climb":
             _hold_z = float(boot.prearm_takeoff_z)
+    _mpc_track = track_pos
+    if _mpc_track is None and boot.sim is None:
+        _mpc_track = np.asarray(boot.cmd_target, dtype=np.float32)
     cmd = boot.axswarm_rt.plan_control(
         elapsed,
         axswarm_input,
-        track_pos=_track,
+        sim=boot.sim,
+        track_pos=_mpc_track,
         track_vel=track_vel,
         hold_z=_hold_z,
     )
@@ -91,6 +93,9 @@ def filter_online_targets(
             cmd_target=np.asarray(cmd.pos, dtype=np.float32),
             cmd_velocity=np.asarray(cmd.vel, dtype=np.float32),
             control_updated=cmd.updated,
+            cmd_source=str(cmd.cmd_source),
+            plan_drift_m=float(cmd.plan_drift_m),
+            mpc_due=bool(cmd.mpc_due),
         ),
         prev_gesture_control_enabled,
     )

@@ -8,6 +8,7 @@ import numpy as np
 from crazyflow.sim.visualize import draw_line
 from debug.online_control_debug import (
     draw_drone_target_debug_hud,
+    print_axswarm_cmd_source_debug,
     print_center_trace,
     print_drone_position_debug,
 )
@@ -124,18 +125,33 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
                 break
     _sec("trail")
     if boot.sim is not None:
-        try:
-            step_sim_to_cmd(
-                boot.sim,
-                np.asarray(filt.cmd_target, dtype=np.float64),
-                outer_fps=int(cfg.fps),
-                max_substeps=int(cfg.max_sim_substeps),
-                velocities=np.asarray(filt.cmd_velocity, dtype=np.float64),
-            )
-        except Exception as exc:
-            render_enabled = False
-            print(f"[WARN] Disabled Crazyflow sim step after error: {exc}")
+        ctl_hz = float(boot.control_freq_hz)
+        step_every = max(1, int(round(float(cfg.fps) / max(ctl_hz, 1e-6))))
+        if (frame_idx % step_every) == 0:
+            try:
+                step_sim_to_cmd(
+                    boot.sim,
+                    np.asarray(filt.cmd_target, dtype=np.float64),
+                    outer_fps=int(round(ctl_hz)),
+                    max_substeps=int(cfg.max_sim_substeps),
+                    velocities=np.asarray(filt.cmd_velocity, dtype=np.float64),
+                    control_hz=ctl_hz,
+                )
+            except Exception as exc:
+                render_enabled = False
+                print(f"[WARN] Disabled Crazyflow sim step after error: {exc}")
     _sec("sim_step")
+    if cfg.debug_axswarm_cmd_every > 0 and (frame_idx % cfg.debug_axswarm_cmd_every) == 0:
+        print_axswarm_cmd_source_debug(
+            frame_idx=frame_idx,
+            cmd_source=filt.cmd_source,
+            plan_drift_m=filt.plan_drift_m,
+            mpc_due=filt.mpc_due,
+            solve_ok=boot.axswarm_rt.last_solve_ok,
+            solve_n_ok=boot.axswarm_rt.last_solve_n_ok,
+            n_drones=boot.axswarm_rt.n_drones,
+            axswarm_status=boot.axswarm_rt.status_line(),
+        )
     if cfg.debug_drone_pos_every > 0 and (frame_idx % cfg.debug_drone_pos_every) == 0:
         _hold_z: float | None = None
         if not boot.gesture_control_enabled:

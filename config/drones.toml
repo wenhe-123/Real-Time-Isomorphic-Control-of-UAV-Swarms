@@ -1,8 +1,20 @@
 # Crazyflie swarm config for ``online_control_real_dual.py``.
 # URIs are built from addr/channel via ``config/settings.yaml`` → radio.uri_base.
-# Trim ``active`` to the drones you fly; optional [swarm] / [frame] match 2drones.toml.
+# Trim ``active`` to the drones you fly.
 
 active = ["cf11", "cf12", "cf13", "cf14", "cf15", "cf21", "cf22", "cf23"]
+
+[swarm]
+ctrl_freq = 10.0
+land_on_exit = true
+max_pos_error_m = 0.35
+
+[frame]
+# Gesture/sim coordinates (same frame as Crazyflow) → mocap room frame (meters).
+#   real_xyz = origin + scale * Rz(yaw_deg) * sim_xyz
+origin = [0.0, 0.0, 0.0]
+scale = 1.0
+yaw_deg = 0.0
 
 [cf11]
 addr = 11

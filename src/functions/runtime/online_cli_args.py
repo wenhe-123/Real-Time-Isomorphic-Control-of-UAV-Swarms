@@ -145,6 +145,18 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         help="Shorthand for --debug-drone-pos-every 1.",
     )
     parser.add_argument(
+        "--debug-axswarm-cmd-every",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Print one-line MPC vs setpoint fallback status every N frames (0=off).",
+    )
+    parser.add_argument(
+        "--debug-axswarm-cmd",
+        action="store_true",
+        help="Shorthand for --debug-axswarm-cmd-every 1.",
+    )
+    parser.add_argument(
         "--formation-rigid-3d-debug",
         action="store_true",
         help="Matplotlib topo: blue morph-only vs magenta after L-hand rigid.",

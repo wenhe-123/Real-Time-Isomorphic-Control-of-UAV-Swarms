@@ -103,10 +103,10 @@ Validate config only (no camera):
 pixi run check-drones-config
 ```
 
-Edit `config/drones.toml` (`active`, `addr`, `channel`, `pos`) and `config/settings.yaml` (`radio.uri_base`), or use lab presets `config/2drones.toml` with explicit URIs.
+Edit `config/drones.toml` (`active`, `addr`, `channel`, `pos`, `[swarm]`, `[frame]`) and `config/settings.yaml` (`radio.uri_base`).
 
 - **Sim:** 24 virtual morph points (`online-dual` default)
-- **Real:** 8 virtual morph points; physical count = `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow indices 0 and 1)
+- **Real:** 8 virtual morph points; physical count = length of `active` in `drones.toml` (e.g. 2 drones follow indices 0 and 1)
 - **Ground layout:** sim uses a chessboard at `z=0.05 m`; real uses each drone’s TOML `home` (XY fixed on vertical legs)
 
 ### Prearm sequence (press `1` four times per cycle)
@@ -155,7 +155,6 @@ src/
 config/
   drones.toml                 # active drones (addr/channel → URI via settings.yaml)
   settings.yaml               # radio.uri_base template (swarmGPT-compatible)
-  2drones.toml / 5drones.toml # lab presets with explicit [[drone]] URIs
   axswarm_settings.yaml       # axswarm MPC / collision defaults (freq: 8 Hz)
 scripts/
   setup_orbbec.sh             # download Orbbec K4A Wrapper

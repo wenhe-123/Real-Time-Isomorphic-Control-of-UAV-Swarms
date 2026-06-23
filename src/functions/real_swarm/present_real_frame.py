@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from debug.online_control_debug import draw_drone_target_debug_hud, print_drone_position_debug
+from debug.online_control_debug import (
+    draw_drone_target_debug_hud,
+    print_axswarm_cmd_source_debug,
+    print_drone_position_debug,
+)
 from functions.display_sim.online_frame_present import _draw_online_hud_overlay, _maybe_print_center_trace
 from functions.display_sim.online_present_input import PresentFrameInput
 
@@ -55,6 +59,18 @@ def present_real_online_frame(inp: PresentFrameInput) -> None:
             prearm_vertical_layout=boot.prearm_vertical_layout,
         )
     _sec("real_cmd")
+
+    if cfg.debug_axswarm_cmd_every > 0 and (frame_idx % cfg.debug_axswarm_cmd_every) == 0:
+        print_axswarm_cmd_source_debug(
+            frame_idx=frame_idx,
+            cmd_source=filt.cmd_source,
+            plan_drift_m=filt.plan_drift_m,
+            mpc_due=filt.mpc_due,
+            solve_ok=boot.axswarm_rt.last_solve_ok,
+            solve_n_ok=boot.axswarm_rt.last_solve_n_ok,
+            n_drones=boot.axswarm_rt.n_drones,
+            axswarm_status=boot.axswarm_rt.status_line(),
+        )
 
     if cfg.debug_drone_pos_every > 0 and (frame_idx % cfg.debug_drone_pos_every) == 0:
         real_pos = boot.real_executor.get_positions_for_debug() if boot.real_executor else None

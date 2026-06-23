@@ -102,6 +102,9 @@ class AxswarmControl:
     pos: np.ndarray
     vel: np.ndarray
     updated: bool
+    cmd_source: str = "unknown"
+    plan_drift_m: float = 0.0
+    mpc_due: bool = False
 
 
 @dataclass
@@ -120,6 +123,7 @@ class AxswarmPlanner:
     _fail_count: int
     _last_solve_ms: float
     _last_ok: bool
+    _last_solve_n_ok: int
 
     @classmethod
     def create(
@@ -151,6 +155,7 @@ class AxswarmPlanner:
             _fail_count=0,
             _last_solve_ms=0.0,
             _last_ok=False,
+            _last_solve_n_ok=0,
         )
         filt._solve_fn = solve
         filt._SolverData = SolverData
@@ -214,7 +219,7 @@ class AxswarmPlanner:
         self.reset(gesture, sim_vel)
 
     def _planned_cmd(self) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """First MPC input from solver state (no separate output cache)."""
+        """First MPC input from solver state (``u_pos[:, 0]`` / ``u_vel[:, 0]``)."""
         if self.solver_data is None:
             return None, None
         try:
@@ -235,29 +240,32 @@ class AxswarmPlanner:
             setpoints={"pos": sp, "vel": zero_sp, "acc": zero_sp},
         )
         t0 = time.perf_counter()
-        success, _, self.solver_data = self._solve_fn(
+        success, _, solved_data = self._solve_fn(
             states, self.solver_data, self.settings
         )
-        jax.block_until_ready(self.solver_data)
+        jax.block_until_ready(solved_data)
         self._last_solve_ms = (time.perf_counter() - t0) * 1000.0
         self._solve_count += 1
-        ok = bool(np.all(success))
+        success_arr = np.asarray(success, dtype=bool)
+        n_ok = int(np.sum(success_arr))
+        ok = n_ok == self.n_drones
         self._last_ok = ok
-        # Match axswarm's amswarm example: solve, advance SolverData, then consume
-        # the first input setpoint from the shifted plan.
-        self.solver_data = self.solver_data.step(self.solver_data)
-        planned, _ = self._planned_cmd()
-        if planned is not None:
-            self._control_updated = True
-            if not ok:
-                self._fail_count += 1
-            return ok
+        self._last_solve_n_ok = n_ok
         if not ok:
             self._fail_count += 1
-            return False
-        self._fail_count += 1
-        self._last_ok = False
-        return False
+            # Use this solve's u_pos[:, 0] (best effort) but do not step — stepping
+            # a failed solve corrupts the horizon; restoring prev_data freezes cmd
+            # while the setpoint keeps moving (formation ramp → "stuck").
+            self.solver_data = solved_data
+            planned, _ = self._planned_cmd()
+            self._control_updated = planned is not None
+            return ok
+        # Match amswarm: solve → step → consume u_pos[:, 0] (only on full success).
+        self.solver_data = solved_data
+        self.solver_data = self.solver_data.step(self.solver_data)
+        planned, _ = self._planned_cmd()
+        self._control_updated = planned is not None
+        return ok
 
     def _track_state(
         self,
@@ -305,16 +313,27 @@ class AxswarmPlanner:
             self._last_mpc_time = el
             self._run_mpc(states, sp)
         planned_pos, planned_vel = self._planned_cmd()
-        out_pos = planned_pos if planned_pos is not None else np.asarray(pos, dtype=np.float32)
-        out_vel = (
-            planned_vel
-            if planned_vel is not None
-            else np.zeros((self.n_drones, 3), dtype=np.float32)
-        )
+        plan_drift_m = 0.0
+        if planned_pos is not None:
+            plan_drift_m = float(np.max(np.linalg.norm(planned_pos - sp, axis=-1)))
+            out_pos = planned_pos
+            out_vel = (
+                planned_vel
+                if planned_vel is not None
+                else np.zeros((self.n_drones, 3), dtype=np.float32)
+            )
+            cmd_source = "mpc" if self._last_ok else "mpc:best_effort"
+        else:
+            out_pos = np.zeros((self.n_drones, 3), dtype=np.float32)
+            out_vel = np.zeros((self.n_drones, 3), dtype=np.float32)
+            cmd_source = "mpc:none"
         return AxswarmControl(
             pos=self._lock_vertical_z(out_pos, hold_z),
             vel=out_vel,
             updated=bool(self._control_updated),
+            cmd_source=cmd_source,
+            plan_drift_m=plan_drift_m,
+            mpc_due=due,
         )
 
     def plan_targets(
@@ -354,6 +373,14 @@ class AxswarmPlanner:
 
     def control_updated(self) -> bool:
         return bool(self._control_updated)
+
+    @property
+    def last_solve_ok(self) -> bool:
+        return bool(self._last_ok)
+
+    @property
+    def last_solve_n_ok(self) -> int:
+        return int(self._last_solve_n_ok)
 
     def status_line(self) -> str:
         if self._solve_count == 0:

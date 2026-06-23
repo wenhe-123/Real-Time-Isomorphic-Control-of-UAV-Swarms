@@ -14,7 +14,7 @@ Display:
 Camera:
   orbbec_fps: "30"  # Nominal outer-loop / Orbbec rate (Hz)
   mp_input_scale: 0.5  # HandLandmarker input downscale
-  mp_detect_every: 2  # Run HandLandmarker every N frames; reuse last on skip
+  mp_detect_every: 1  # Run HandLandmarker every N frames; reuse last on skip
   orbbec_flip_horizontal: false  # Mirror BGR before MediaPipe
   orbbec_use_transformed_depth: false  # K4A color-aligned depth (Femto Bolt: often crashes)
   orbbec_hand_swap: off  # Swap MP left/right for mode vs open (auto | on | off)
@@ -28,12 +28,13 @@ Morph:
 
 Sim:
   drone_model: cf21B_500  # Crazyflow drone model name
+  control_freq_hz: 10.0  # Crazyflow cmd + axswarm replan rate (Hz); real swarm uses drones.toml ctrl_freq
   max_sim_substeps_per_frame: 160  # Physics substeps cap per camera frame
   ground_z: 0.0  # Physical ground plane in sim frame (m)
 
 Prearm:
-  prearm_hover_z: 1.00  # Formation hover altitude before SPACE (m)
-  prearm_takeoff_z: 0.20  # Vertical prearm climb / descent leg height (m)
+  prearm_hover_z: 1.20  # Formation hover altitude before SPACE (m)
+  prearm_takeoff_z: 0.30  # Vertical prearm climb / descent leg height (m)
 
 LeftHandPose:
   # Feature toggles (press 0 = arm rigid follow)

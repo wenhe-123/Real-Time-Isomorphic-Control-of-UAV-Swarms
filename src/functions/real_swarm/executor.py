@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +59,9 @@ class RealSwarmExecutor:
         self._mocap_hold_logged = False
         self._dry_run = bool(dry_run)
         self.swarm: DroneSwarm | None = None
+        self._setpoint_period_s = 1.0 / max(float(opts.ctrl_freq), 1e-6)
+        self._setpoint_next_mono = 0.0
+        self._pending_sim_layout: np.ndarray | None = None
 
         print(
             f"{'[dry-run] ' if self._dry_run else ''}"
@@ -103,13 +107,13 @@ class RealSwarmExecutor:
         return pts[: self.n_physical]
 
     def _room_targets(self, sim_layout: np.ndarray) -> dict[str, list[float]]:
+        """Sim-frame layout → room-frame ``{uri: [x,y,z,yaw]}`` for every configured drone."""
         if self.swarm is None:
             return {}
         real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
         return {
             uri: [float(real[i, 0]), float(real[i, 1]), float(real[i, 2]), 0.0]
             for i, uri in enumerate(self._uris)
-            if self.swarm.is_active(uri)
         }
 
     def get_sim_ground_layout(self, n_morph: int, *, min_separation_m: float) -> np.ndarray:
@@ -182,21 +186,34 @@ class RealSwarmExecutor:
         """True when every active drone has a fresh mocap pose."""
         return self.get_positions_for_debug() is not None
 
-    def send_sim_layout(self, sim_layout: np.ndarray) -> None:
-        if self._dry_run:
-            return
+    def send_sim_layout(self, sim_layout: np.ndarray, *, force: bool = False) -> bool:
+        """Stream one low-level position setpoint batch (throttled to ``ctrl_freq``).
+
+        Returns True when a setpoint was sent to the radio.
+        """
+        if self._dry_run or self.swarm is None:
+            return False
+        self._pending_sim_layout = np.asarray(sim_layout, dtype=np.float32)
         if not self.mocap_ok():
             if not self._mocap_hold_logged:
                 logger.warning(
                     "Mocap unavailable — pausing setpoint stream until poses return."
                 )
                 self._mocap_hold_logged = True
-            return
+            return False
         self._mocap_hold_logged = False
-        targets = self._room_targets(sim_layout)
-        if targets:
-            self.swarm.setpoint(targets)
-            self.physical_armed = True
+
+        now = time.monotonic()
+        if not force and now < self._setpoint_next_mono:
+            return False
+
+        targets = self._room_targets(self._pending_sim_layout)
+        if not targets:
+            return False
+        self.swarm.setpoint(targets)
+        self.physical_armed = True
+        self._setpoint_next_mono = now + self._setpoint_period_s
+        return True
 
     def track_frame(
         self,

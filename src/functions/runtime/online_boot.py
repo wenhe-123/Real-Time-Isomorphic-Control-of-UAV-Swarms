@@ -73,7 +73,6 @@ class OnlineBoot:
     pipe: PipelineTuning
     use_depth_fusion: bool
     cmd_target: np.ndarray
-    prev_cmd_target: np.ndarray
     ground_layout: np.ndarray
     ground_z: float
     prearm_hover_layout: np.ndarray
@@ -107,6 +106,7 @@ class OnlineBoot:
     left_unwind_s: float
     left_pose_tuning: LeftPoseTuning
     start_time: float
+    control_freq_hz: float
     render_enabled: bool = True
     orbbec_flip_depth_warned: bool = False
     gesture_control_enabled: bool = False
@@ -117,6 +117,7 @@ class OnlineBoot:
     prev_prearm_phase: str = "ground"
     prearm_vertical_leg: str = "climb"
     prearm_has_flown: bool = False
+    prearm_formation_start_s: float = -1.0
     left_pose_reset_req: bool = False
     left_pose_runtime_armed: bool = False
     frame_idx: int = 0
@@ -163,7 +164,7 @@ def boot_online_control(
     n_drones = int(cfg.point_count)
     real_executor: RealSwarmExecutor | None = None
     sim: Sim | None = None
-    motion_freq_hz = 100.0
+    control_freq_hz = float(cfg.control_freq_hz)
 
     if cfg.drones_config is not None:
         from functions.real_swarm.executor import RealSwarmExecutor
@@ -173,7 +174,7 @@ def boot_online_control(
             morph_point_count=n_drones,
             dry_run=bool(cfg.skip_real_connect),
         )
-        motion_freq_hz = float(real_executor.ctrl_freq)
+        control_freq_hz = float(real_executor.ctrl_freq)
         if cfg.skip_real_connect:
             print("Real-swarm dry-run: Crazyflow MuJoCo disabled; setpoints not sent to hardware.")
         else:
@@ -187,7 +188,6 @@ def boot_online_control(
             device="cpu",
         )
         sim.reset()
-        motion_freq_hz = float(sim.freq)
 
     center_trace_every = max(1, int(cfg.center_trace_every))
     center_trace_prev: dict[str, float | None] = {
@@ -220,7 +220,7 @@ def boot_online_control(
     )
     print(
         f"Planner: gesture setpoints + axswarm @ {axswarm_rt.mpc_hz:.1f} Hz, "
-        f"n={n_drones} (active from startup)."
+        f"control @ {control_freq_hz:.1f} Hz, n={n_drones} (active from startup)."
     )
 
     z_ground = float(ONLINE_DEFAULTS.sim.ground_z)
@@ -459,7 +459,6 @@ def boot_online_control(
         pipe=cfg.pipe,
         use_depth_fusion=bool(cfg.pipe.depth_fusion_enabled),
         cmd_target=boot_cmd.copy(),
-        prev_cmd_target=boot_cmd.copy(),
         ground_layout=ground_layout.copy(),
         ground_z=z_ground,
         prearm_hover_layout=prearm_hover_layout.copy(),
@@ -493,6 +492,7 @@ def boot_online_control(
         left_unwind_s=float(cfg.left.unwind_s),
         left_pose_tuning=left_pose_tuning,
         start_time=time.monotonic(),
+        control_freq_hz=control_freq_hz,
         extras={
             "report_debug_figs": report_debug_figs,
             "report_panels": panels if panels.any_enabled() else None,

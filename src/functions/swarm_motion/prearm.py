@@ -6,6 +6,30 @@ import numpy as np
 
 from functions.swarm_motion.spacing_guard import closest_pair
 
+# Seconds to blend vertical-column XY → full hover morph when entering formation.
+PREARM_FORMATION_RAMP_S = 3.0
+
+
+def prearm_formation_setpoint(
+    vertical_layout: np.ndarray,
+    hover_layout: np.ndarray,
+    *,
+    elapsed_s: float,
+    formation_start_s: float,
+    ramp_s: float = PREARM_FORMATION_RAMP_S,
+) -> np.ndarray:
+    """Ramp setpoint from vertical column to hover morph (avoids instant 3 m MPC jump)."""
+    v = np.asarray(vertical_layout, dtype=np.float32)
+    h = np.asarray(hover_layout, dtype=np.float32)
+    if formation_start_s < 0.0:
+        alpha = 1.0
+    else:
+        alpha = min(
+            1.0,
+            max(0.0, (float(elapsed_s) - float(formation_start_s)) / max(float(ramp_s), 1e-6)),
+        )
+    return ((1.0 - alpha) * v + alpha * h).astype(np.float32)
+
 
 def vertical_takeoff_layout(
     ground_layout: np.ndarray,
