@@ -11,6 +11,8 @@ from __future__ import annotations
 import contextlib
 import time
 from dataclasses import dataclass
+
+import jax
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -226,6 +228,7 @@ class AxswarmPlanner:
         success, _, self.solver_data = self._solve_fn(
             states, self.solver_data, self.settings
         )
+        jax.block_until_ready(self.solver_data)
         self._last_solve_ms = (time.perf_counter() - t0) * 1000.0
         self._solve_count += 1
         ok = bool(np.all(success))
@@ -270,7 +273,8 @@ class AxswarmPlanner:
                 vel = np.asarray(track_vel, dtype=np.float32)
         elif sim is not None:
             pos = np.asarray(sim.data.states.pos[0], dtype=np.float32)
-            vel = np.asarray(sim.data.states.vel[0], dtype=np.float32)
+            # Online loop: close position loop only; sim velocity is too noisy for MPC.
+            vel = np.zeros((self.n_drones, 3), dtype=np.float32)
         else:
             raise ValueError("plan_targets requires sim or track_pos")
         states = np.concatenate([pos, vel], axis=-1)

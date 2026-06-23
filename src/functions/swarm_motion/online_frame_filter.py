@@ -60,8 +60,17 @@ def filter_online_targets(
                     f"(sim z≈{float(np.mean(_sim[:, 2])):.2f}m, "
                     f"target z≈{float(np.mean(_pos[:, 2])):.2f}m, Δz={_dz:+.2f}m)."
                 )
-        _vel = np.zeros((boot.axswarm_rt.n_drones, 3), dtype=np.float32)
-        boot.axswarm_rt.sync_gesture(_pos, _vel)
+        if track_pos is not None:
+            _sync_pos = np.asarray(track_pos, dtype=np.float32)
+            _sync_vel = (
+                np.asarray(track_vel, dtype=np.float32)
+                if track_vel is not None
+                else np.zeros((boot.axswarm_rt.n_drones, 3), dtype=np.float32)
+            )
+        else:
+            _sync_pos = _pos
+            _sync_vel = np.zeros((boot.axswarm_rt.n_drones, 3), dtype=np.float32)
+        boot.axswarm_rt.sync_gesture(_sync_pos, _sync_vel)
         print("Gesture armed. Axswarm active.")
     prev_gesture_control_enabled = bool(boot.gesture_control_enabled)
 

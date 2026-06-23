@@ -130,7 +130,6 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
                 np.asarray(filt.cmd_target, dtype=np.float64),
                 outer_fps=int(cfg.fps),
                 max_substeps=int(cfg.max_sim_substeps),
-                velocities=np.asarray(filt.cmd_velocity, dtype=np.float64),
             )
         except Exception as exc:
             render_enabled = False

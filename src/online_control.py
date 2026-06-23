@@ -104,6 +104,19 @@ def _prompt_fixed_surface_points(default_n: int) -> int | None:
     return n
 
 
+def _pace_control_loop(*, t_loop: float, hz: float, frame_idx: int) -> None:
+    """Hold the outer control loop at ``hz`` (shared by sim and real-swarm)."""
+    period = 1.0 / max(float(hz), 1e-6)
+    dt = time.perf_counter() - t_loop
+    if dt < period:
+        time.sleep(period - dt)
+    elif frame_idx > 0 and (frame_idx % 30) == 0:
+        print(
+            f"[WARN] Control loop exceeded {hz:.0f}Hz by {dt - period:.3f}s.",
+            flush=True,
+        )
+
+
 def run_integrated_online_control(
     live_target: LiveTargetState,
     cfg: OnlineRuntimeConfig,
@@ -202,6 +215,13 @@ def run_integrated_online_control(
                     f"Orbbec preview: imshow every {cfg.imshow_every} frames "
                     f"(control loop still every frame; pollKey on off frames when available)."
                 )
+            loop_hz = float(cfg.fps)
+            loop_mode = "real Crazyflie" if boot.real_executor is not None else "MuJoCo sim"
+            print(
+                f"Control loop paced at {loop_hz:.0f} Hz ({loop_mode}; "
+                f"axswarm MPC @ {boot.axswarm_rt.mpc_hz:.1f} Hz).",
+                flush=True,
+            )
             cached_mp_result = None
             cached_hands_3d_all: list = []
             ema_3d = None
@@ -214,6 +234,7 @@ def run_integrated_online_control(
             boot.prev_prearm_phase = "ground"
 
             while True:
+                t_loop = time.perf_counter()
                 elapsed = time.monotonic() - boot.start_time
                 if float(duration) > 0.0 and elapsed > float(duration):
                     break
@@ -343,9 +364,6 @@ def run_integrated_online_control(
                     axswarm_track_pos = np.asarray(
                         boot.sim.data.states.pos[0], dtype=np.float32
                     )
-                    axswarm_track_vel = np.asarray(
-                        boot.sim.data.states.vel[0], dtype=np.float32
-                    )
 
                 if just_prearm_phase:
                     phase = str(boot.prearm_phase)
@@ -451,6 +469,7 @@ def run_integrated_online_control(
                 frame_prof.frame_end(boot.frame_idx)
                 sync_armed_flags(boot)
                 boot.frame_idx += 1
+                _pace_control_loop(t_loop=t_loop, hz=loop_hz, frame_idx=boot.frame_idx)
 
             if boot.real_executor is not None:
                 from functions.real_swarm.land_on_exit import try_stream_real_swarm_land_on_exit
