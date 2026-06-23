@@ -222,6 +222,12 @@ def boot_online_control(
         f"Planner: gesture setpoints + axswarm @ {axswarm_rt.mpc_hz:.1f} Hz, "
         f"n={n_drones} (active from startup)."
     )
+    if n_drones > 12:
+        print(
+            f"[WARN] axswarm with n={n_drones} often hits iter_cap in real time; "
+            "use n<=12 for reliable converged solves, or expect ~300–600ms/solve.",
+            flush=True,
+        )
 
     z_ground = float(ONLINE_DEFAULTS.sim.ground_z)
     if real_executor is not None:

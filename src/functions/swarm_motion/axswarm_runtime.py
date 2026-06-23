@@ -110,6 +110,7 @@ class AxswarmPlanner:
     _fail_count: int
     _last_solve_ms: float
     _last_ok: bool
+    _last_iters: int
 
     @classmethod
     def create(
@@ -141,6 +142,7 @@ class AxswarmPlanner:
             _fail_count=0,
             _last_solve_ms=0.0,
             _last_ok=False,
+            _last_iters=0,
         )
         filt._solve_fn = solve
         filt._SolverData = SolverData
@@ -198,6 +200,26 @@ class AxswarmPlanner:
         self._control_updated = False
         self._last_mpc_time = -1e9
         self._last_ok = True
+        self._last_iters = 0
+        self._warmup_solve(pos, vel)
+
+    def _warmup_solve(self, pos: np.ndarray, vel: np.ndarray) -> None:
+        """JIT-compile axswarm once at init (first online solve is much faster)."""
+        if self.solver_data is None:
+            return
+        states = np.concatenate(
+            [np.asarray(pos, dtype=np.float32), np.asarray(vel, dtype=np.float32)],
+            axis=-1,
+        )
+        try:
+            self._run_mpc(states, np.asarray(pos, dtype=np.float32))
+        except Exception:
+            pass
+        self._solve_count = 0
+        self._fail_count = 0
+        self._last_ok = True
+        self._last_iters = 0
+        self._last_mpc_time = -1e9
 
     def sync_gesture(self, gesture: np.ndarray, sim_vel: np.ndarray | None = None) -> None:
         """Re-init MPC state from current gesture (e.g. SPACE armed)."""
@@ -225,10 +247,14 @@ class AxswarmPlanner:
             setpoints={"pos": sp, "vel": zero_sp, "acc": zero_sp},
         )
         t0 = time.perf_counter()
-        success, _, self.solver_data = self._solve_fn(
+        success, iters, self.solver_data = self._solve_fn(
             states, self.solver_data, self.settings
         )
         jax.block_until_ready(self.solver_data)
+        try:
+            self._last_iters = int(np.max(np.asarray(iters)))
+        except Exception:
+            self._last_iters = 0
         self._last_solve_ms = (time.perf_counter() - t0) * 1000.0
         self._solve_count += 1
         ok = bool(np.all(success))
@@ -300,11 +326,13 @@ class AxswarmPlanner:
     def status_line(self) -> str:
         if self._solve_count == 0:
             return "axswarm: idle"
-        ok_frac = 1.0 - self._fail_count / max(1, self._solve_count)
-        state = "ok" if self._last_ok else "best_effort"
+        max_iters = int(self.settings.max_iters)
+        if self._last_ok:
+            conv = f"converged {self._last_iters}/{max_iters}"
+        else:
+            conv = f"iter_cap {self._last_iters}/{max_iters}"
         return (
-            f"axswarm:{self.mpc_hz:.0f}Hz "
-            f"ok={ok_frac * 100:.0f}% "
-            f"last={self._last_solve_ms:.0f}ms {state}"
+            f"axswarm:{self.mpc_hz:.0f}Hz {conv} "
+            f"last={self._last_solve_ms:.0f}ms"
         )
 
