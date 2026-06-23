@@ -73,6 +73,11 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="With --drones-config: load TOML layout but skip Crazyflie radio and ROS mocap.",
     )
+    parser.add_argument(
+        "--no-real-track-velocity",
+        action="store_true",
+        help="With --drones-config: feed axswarm mocap positions with zero velocity.",
+    )
     parser.add_argument("--axswarm-settings", type=str, default=None)
 
     # --- Left-hand: yaml defaults; only sign fixes and opt-outs on CLI ---

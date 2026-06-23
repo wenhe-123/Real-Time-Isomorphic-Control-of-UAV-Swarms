@@ -60,7 +60,7 @@ def stream_real_swarm_land_on_exit(
     pos0 = track0[0] if track0 is not None else boot.prev_cmd_target
     vel0 = (
         track0[1]
-        if track0 is not None
+        if track0 is not None and cfg.real_track_velocity
         else np.zeros((boot.n_drones, 3), dtype=np.float32)
     )
     boot.axswarm_rt.sync_gesture(
@@ -82,7 +82,11 @@ def stream_real_swarm_land_on_exit(
         raw_target = np.asarray(boot.ground_layout, dtype=np.float32).copy()
         track_state = ex.get_sim_track_state(boot.prev_cmd_target, boot.n_drones)
         track_pos = track_state[0] if track_state is not None else None
-        track_vel = track_state[1] if track_state is not None else None
+        track_vel = (
+            track_state[1]
+            if track_state is not None and cfg.real_track_velocity
+            else None
+        )
         filt, boot.prev_gesture_control_enabled = filter_online_targets(
             boot=boot,
             cfg=cfg,

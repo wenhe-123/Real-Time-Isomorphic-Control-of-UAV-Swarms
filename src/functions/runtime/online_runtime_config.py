@@ -39,6 +39,7 @@ class OnlineRuntimeConfig:
     global_hotkeys: bool
     drones_config: str | None
     skip_real_connect: bool
+    real_track_velocity: bool
     morph_radius_mm: float
     trail_every_n: int
     led_every_n: int
@@ -119,6 +120,7 @@ def build_online_runtime_config(
         global_hotkeys=not bool(getattr(args, "no_global_hotkeys", False)),
         drones_config=str(args.drones_config) if args.drones_config else None,
         skip_real_connect=bool(getattr(args, "skip_real_connect", False)),
+        real_track_velocity=not bool(getattr(args, "no_real_track_velocity", False)),
         morph_radius_mm=float(args.radius_mm),
         trail_every_n=max(0, int(d.display.trail_draw_every_frames)),
         led_every_n=max(1, int(d.display.led_apply_every_frames)),

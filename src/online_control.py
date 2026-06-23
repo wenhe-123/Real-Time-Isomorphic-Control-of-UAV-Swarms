@@ -75,6 +75,35 @@ os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
 os.environ.setdefault("OPENCV_UI_BACKEND", "GTK3")
 
 
+def _prompt_fixed_surface_points(default_n: int) -> int | None:
+    """Prompt on stdin, or fall back to the controlling terminal under task runners."""
+    if sys.stdin.isatty():
+        return int(prompt_and_init_fixed_surface_points(default_n=default_n))
+
+    tty_path = Path("/dev/tty")
+    if not tty_path.exists():
+        return None
+    try:
+        with open(tty_path, "r+", encoding="utf-8", buffering=1) as tty:
+            tty.write(f"Enter n surface samples (>=8, default {int(default_n)}): ")
+            raw = tty.readline().strip()
+    except OSError:
+        return None
+
+    if raw:
+        try:
+            n = int(raw)
+        except ValueError:
+            print(f"Invalid n={raw!r}; using default {int(default_n)}.")
+            n = int(default_n)
+    else:
+        n = int(default_n)
+    n = int(max(8, n))
+    init_fixed_surface_points(n)
+    print(f"Fixed surface samples initialized: n={n} (first 8 are fixed angular seeds).")
+    return n
+
+
 def run_integrated_online_control(
     live_target: LiveTargetState,
     cfg: OnlineRuntimeConfig,
@@ -308,9 +337,14 @@ def run_integrated_online_control(
                     )
                     if axswarm_track_state is not None:
                         axswarm_track_pos, axswarm_track_vel = axswarm_track_state
+                        if not cfg.real_track_velocity:
+                            axswarm_track_vel = None
                 elif boot.sim is not None:
                     axswarm_track_pos = np.asarray(
                         boot.sim.data.states.pos[0], dtype=np.float32
+                    )
+                    axswarm_track_vel = np.asarray(
+                        boot.sim.data.states.vel[0], dtype=np.float32
                     )
 
                 if just_prearm_phase:
@@ -522,8 +556,22 @@ def main() -> None:
 
         drones_from_config, _, _ = load_drones_config(args.drones_config)
         n_default = max(n_default, len(drones_from_config))
-    if sys.stdin.isatty() and not args.drones_config:
-        point_count = int(prompt_and_init_fixed_surface_points(default_n=n_default))
+    prompted_point_count = _prompt_fixed_surface_points(default_n=n_default)
+    if prompted_point_count is not None:
+        point_count = int(prompted_point_count)
+        if drones_from_config is not None and point_count < len(drones_from_config):
+            point_count = len(drones_from_config)
+            init_fixed_surface_points(point_count)
+            print(
+                f"Raised morph point count to active Crazyflie count: n={point_count} "
+                f"from {args.drones_config}."
+            )
+        if drones_from_config is not None:
+            print(
+                f"Fixed surface samples: morph n={point_count} (virtual formation); "
+                f"physical Crazyflies n={len(drones_from_config)} from {args.drones_config} "
+                f"(receive cmd_target indices 0..{len(drones_from_config) - 1})."
+            )
     else:
         init_fixed_surface_points(n_default)
         point_count = n_default
