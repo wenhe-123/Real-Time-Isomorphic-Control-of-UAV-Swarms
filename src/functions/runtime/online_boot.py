@@ -249,12 +249,17 @@ def boot_online_control(
     )
     if real_executor is not None:
         ground_layout = real_executor.get_sim_ground_layout(
-            n_drones, min_separation_m=float(cfg.min_separation_m)
+            n_drones,
+            plane_layout=prearm_hover_layout,
+            min_separation_m=float(cfg.min_separation_m),
         )
         z_ground = float(np.median(ground_layout[: real_executor.n_physical, 2]))
+        d_g, pi_g, pj_g = closest_pair(ground_layout)
         print(
-            f"Startup layout: TOML home positions (sim frame, z≈{z_ground:.2f}m). "
-            "Press 1: vertical takeoff → formation → vertical descend → ground."
+            f"Startup layout: TOML home for {real_executor.n_physical} physical drone(s), "
+            f"plane morph for virtual rows (sim frame, z≈{z_ground:.2f}m, "
+            f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
+            "Place drones near mapped plane XY; press 1: vertical takeoff → formation → ground."
         )
     else:
         ground_layout = plane_ground_layout(prearm_hover_layout, z_ground=z_ground)

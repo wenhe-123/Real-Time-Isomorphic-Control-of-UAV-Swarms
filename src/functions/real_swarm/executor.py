@@ -116,22 +116,29 @@ class RealSwarmExecutor:
             for i, uri in enumerate(self._uris)
         }
 
-    def get_sim_ground_layout(self, n_morph: int, *, min_separation_m: float) -> np.ndarray:
-        """TOML ``home`` poses → sim frame for physical drones; chessboard fill for virtual rows."""
-        from functions.swarm_motion.prearm import sim_chessboard_ground_layout
+    def get_sim_ground_layout(
+        self,
+        n_morph: int,
+        *,
+        plane_layout: np.ndarray,
+        min_separation_m: float,
+    ) -> np.ndarray:
+        """TOML ``home`` for physical rows; plane-morph XY at ground Z for virtual rows."""
+        del min_separation_m  # spacing comes from morph plane layout; arg kept for callers
+        from functions.swarm_motion.prearm import plane_ground_layout
 
         n = int(n_morph)
+        plane = np.asarray(plane_layout, dtype=np.float32)
+        if plane.ndim != 2 or plane.shape[1] != 3:
+            raise ValueError(f"plane_layout must be (N,3), got {plane.shape}")
+        if plane.shape[0] < n:
+            raise ValueError(f"plane_layout has {plane.shape[0]} rows but need {n}")
+
         homes = np.stack([self._homes[uri] for uri in self._uris], axis=0)
         sim_phys = self.mapping.real_to_sim(homes).astype(np.float32)
         z_ground = float(np.median(sim_phys[:, 2]))
-        xy_half = max(0.5, float(np.max(np.abs(sim_phys[:, :2]))) + 0.6)
-        layout = sim_chessboard_ground_layout(
-            n,
-            min_separation_m=float(min_separation_m),
-            z_ground=z_ground,
-            xy_half_extent_m=xy_half,
-        )
-        layout[: self.n_physical] = sim_phys
+        layout = plane_ground_layout(plane[:n], z_ground=z_ground)
+        layout[: self.n_physical] = sim_phys[: self.n_physical]
         return layout
 
     def get_sim_track_positions(
