@@ -29,6 +29,7 @@ Morph:
 Sim:
   drone_model: cf21B_500  # Crazyflow drone model name
   control_freq_hz: 10.0  # Crazyflow cmd + axswarm replan rate (Hz); real swarm uses drones.toml ctrl_freq
+  mpc_horizon_steps: 1  # Stream u_pos[:, 0:M] from each MPC solve (1 = first step only; replan every M/freq s)
   max_sim_substeps_per_frame: 160  # Physics substeps cap per camera frame
   ground_z: 0.0  # Physical ground plane in sim frame (m)
 

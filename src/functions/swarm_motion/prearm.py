@@ -31,6 +31,17 @@ def prearm_formation_setpoint(
     return ((1.0 - alpha) * v + alpha * h).astype(np.float32)
 
 
+def plane_ground_layout(
+    plane_layout: np.ndarray,
+    *,
+    z_ground: float,
+) -> np.ndarray:
+    """Plane formation XY at ground altitude (sim home / prearm spawn)."""
+    layout = np.asarray(plane_layout, dtype=np.float32).copy()
+    layout[:, 2] = float(z_ground)
+    return layout
+
+
 def vertical_takeoff_layout(
     ground_layout: np.ndarray,
     *,

@@ -24,6 +24,7 @@ class OnlineRuntimeConfig:
     pipe: PipelineTuning
     drone_model: str
     control_freq_hz: float
+    mpc_horizon_steps: int
     prearm_hover_z: float
     prearm_takeoff_z: float
     axswarm_settings: str | None
@@ -109,6 +110,7 @@ def build_online_runtime_config(
         pipe=pipeline,
         drone_model=str(d.sim.drone_model),
         control_freq_hz=float(d.sim.control_freq_hz),
+        mpc_horizon_steps=int(d.sim.mpc_horizon_steps),
         prearm_hover_z=float(d.prearm.prearm_hover_z),
         prearm_takeoff_z=float(d.prearm.prearm_takeoff_z),
         axswarm_settings=args.axswarm_settings,

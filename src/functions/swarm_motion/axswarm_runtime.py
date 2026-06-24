@@ -117,8 +117,12 @@ class AxswarmPlanner:
     n_drones: int
     mpc_hz: float
     min_separation_m: float
+    horizon_steps: int
     _control_updated: bool
     _last_mpc_time: float
+    _horizon_pos: np.ndarray | None
+    _horizon_vel: np.ndarray | None
+    _horizon_anchor_s: float
     _solve_count: int
     _fail_count: int
     _last_solve_ms: float
@@ -131,6 +135,7 @@ class AxswarmPlanner:
         n_drones: int,
         *,
         settings_path: Path | None = None,
+        horizon_steps: int = 1,
     ) -> AxswarmPlanner:
         if n_drones < 8:
             raise ValueError(f"axswarm planner requires n_drones >= 8, got {n_drones}")
@@ -142,6 +147,12 @@ class AxswarmPlanner:
         settings = SolverSettings(**settings_dict)
         mpc_hz = float(max(0.5, float(settings.freq)))
         min_sep = min_separation_from_envelope(np.asarray(settings.collision_envelope))
+        k = int(settings.K)
+        m = max(1, min(int(horizon_steps), k))
+        if int(horizon_steps) > k:
+            raise ValueError(
+                f"mpc_horizon_steps ({horizon_steps}) must be <= axswarm K ({k})"
+            )
         filt = cls(
             settings=settings,
             dynamics=dynamics,
@@ -149,8 +160,12 @@ class AxswarmPlanner:
             n_drones=n_drones,
             mpc_hz=mpc_hz,
             min_separation_m=min_sep,
+            horizon_steps=m,
             _control_updated=False,
             _last_mpc_time=-1e9,
+            _horizon_pos=None,
+            _horizon_vel=None,
+            _horizon_anchor_s=-1e9,
             _solve_count=0,
             _fail_count=0,
             _last_solve_ms=0.0,
@@ -170,11 +185,63 @@ class AxswarmPlanner:
         return cls.create(
             n_drones,
             settings_path=Path(cfg.axswarm_settings) if cfg.axswarm_settings else None,
+            horizon_steps=int(cfg.mpc_horizon_steps),
         )
 
     @property
     def mpc_period_s(self) -> float:
         return 1.0 / max(float(self.mpc_hz), 1e-6)
+
+    @property
+    def replan_period_s(self) -> float:
+        """Wall time between MPC solves when streaming ``u_pos[:, 0:M]``."""
+        return float(self.horizon_steps) * self.mpc_period_s
+
+    def _clear_horizon_cache(self) -> None:
+        self._horizon_pos = None
+        self._horizon_vel = None
+        self._horizon_anchor_s = -1e9
+
+    def _cache_horizon(self, solved_data: Any) -> None:
+        m = int(self.horizon_steps)
+        try:
+            pos = np.asarray(solved_data.u_pos[:, :m], dtype=np.float32)
+            vel = np.asarray(solved_data.u_vel[:, :m], dtype=np.float32)
+        except Exception:
+            self._clear_horizon_cache()
+            return
+        if pos.shape != (self.n_drones, m, 3) or not np.all(np.isfinite(pos)):
+            self._clear_horizon_cache()
+            return
+        if vel.shape != (self.n_drones, m, 3) or not np.all(np.isfinite(vel)):
+            vel = np.zeros_like(pos, dtype=np.float32)
+        self._horizon_pos = pos
+        self._horizon_vel = vel
+
+    def _horizon_step_index(self, elapsed_s: float) -> int:
+        if self._horizon_pos is None or self.horizon_steps <= 1:
+            return 0
+        steps_elapsed = int((float(elapsed_s) - self._horizon_anchor_s) / self.mpc_period_s)
+        return int(min(max(0, steps_elapsed), self.horizon_steps - 1))
+
+    def _needs_replan(self, elapsed_s: float) -> bool:
+        if self.solver_data is None:
+            return True
+        if self.horizon_steps <= 1:
+            return (float(elapsed_s) - self._last_mpc_time) >= self.mpc_period_s - 1e-9
+        if self._horizon_pos is None:
+            return True
+        steps_elapsed = int((float(elapsed_s) - self._horizon_anchor_s) / self.mpc_period_s)
+        return steps_elapsed >= self.horizon_steps
+
+    def _cmd_from_horizon(
+        self, elapsed_s: float
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int]:
+        if self.horizon_steps > 1 and self._horizon_pos is not None:
+            idx = self._horizon_step_index(elapsed_s)
+            return self._horizon_pos[:, idx], self._horizon_vel[:, idx], idx
+        pos, vel = self._planned_cmd()
+        return pos, vel, 0
 
     @staticmethod
     def _lock_vertical_z(pts: np.ndarray, hold_z: float | None) -> np.ndarray:
@@ -213,6 +280,7 @@ class AxswarmPlanner:
         self._control_updated = False
         self._last_mpc_time = -1e9
         self._last_ok = True
+        self._clear_horizon_cache()
 
     def sync_gesture(self, gesture: np.ndarray, sim_vel: np.ndarray | None = None) -> None:
         """Re-init MPC state from current gesture (e.g. SPACE armed)."""
@@ -251,19 +319,17 @@ class AxswarmPlanner:
         ok = n_ok == self.n_drones
         self._last_ok = ok
         self._last_solve_n_ok = n_ok
+        self.solver_data = solved_data
+        self._cache_horizon(solved_data)
         if not ok:
             self._fail_count += 1
-            # Use this solve's u_pos[:, 0] (best effort) but do not step — stepping
-            # a failed solve corrupts the horizon; restoring prev_data freezes cmd
-            # while the setpoint keeps moving (formation ramp → "stuck").
-            self.solver_data = solved_data
-            planned, _ = self._planned_cmd()
+            planned, _, _ = self._cmd_from_horizon(self._horizon_anchor_s)
             self._control_updated = planned is not None
             return ok
-        # Match amswarm: solve → step → consume u_pos[:, 0] (only on full success).
-        self.solver_data = solved_data
-        self.solver_data = self.solver_data.step(self.solver_data)
-        planned, _ = self._planned_cmd()
+        if self.horizon_steps <= 1:
+            # Match amswarm: solve → step → consume u_pos[:, 0] (only on full success).
+            self.solver_data = self.solver_data.step(self.solver_data)
+        planned, _, _ = self._cmd_from_horizon(self._horizon_anchor_s)
         self._control_updated = planned is not None
         return ok
 
@@ -301,18 +367,19 @@ class AxswarmPlanner:
         track_vel: np.ndarray | None = None,
         hold_z: float | None = None,
     ) -> AxswarmControl:
-        """Run MPC (when due) and return ``u_pos[:, 0]`` / ``u_vel[:, 0]`` for Crazyflow."""
+        """Run MPC (when due) and return the active horizon command for Crazyflow."""
         el = float(elapsed_s)
         sp = self._lock_vertical_z(np.asarray(gesture_setpoint, dtype=np.float32), hold_z)
         pos, vel = self._track_state(sim=sim, track_pos=track_pos, track_vel=track_vel)
         states = np.concatenate([pos, vel], axis=-1)
         self._control_updated = False
 
-        due = (el - self._last_mpc_time) >= self.mpc_period_s - 1e-9
+        due = self._needs_replan(el)
         if due:
             self._last_mpc_time = el
+            self._horizon_anchor_s = el
             self._run_mpc(states, sp)
-        planned_pos, planned_vel = self._planned_cmd()
+        planned_pos, planned_vel, horizon_idx = self._cmd_from_horizon(el)
         plan_drift_m = 0.0
         if planned_pos is not None:
             plan_drift_m = float(np.max(np.linalg.norm(planned_pos - sp, axis=-1)))
@@ -322,7 +389,14 @@ class AxswarmPlanner:
                 if planned_vel is not None
                 else np.zeros((self.n_drones, 3), dtype=np.float32)
             )
-            cmd_source = "mpc" if self._last_ok else "mpc:best_effort"
+            if self.horizon_steps > 1:
+                cmd_source = (
+                    f"mpc:horizon[{horizon_idx}/{self.horizon_steps - 1}]"
+                    if self._last_ok
+                    else f"mpc:horizon[{horizon_idx}/{self.horizon_steps - 1}]:best_effort"
+                )
+            else:
+                cmd_source = "mpc" if self._last_ok else "mpc:best_effort"
         else:
             out_pos = np.zeros((self.n_drones, 3), dtype=np.float32)
             out_vel = np.zeros((self.n_drones, 3), dtype=np.float32)
@@ -358,7 +432,7 @@ class AxswarmPlanner:
 
     def current_control(self) -> np.ndarray:
         """Crazyflow ``state_control`` slice: ``(n_drones, 6)`` pos + vel."""
-        pos, vel = self._planned_cmd()
+        pos, vel, _ = self._cmd_from_horizon(self._horizon_anchor_s)
         if pos is None:
             pos = np.zeros((self.n_drones, 3), dtype=np.float32)
         if vel is None:
@@ -366,7 +440,7 @@ class AxswarmPlanner:
         return np.concatenate([pos, vel], axis=-1)
 
     def current_control_velocity(self) -> np.ndarray:
-        _, vel = self._planned_cmd()
+        _, vel, _ = self._cmd_from_horizon(self._horizon_anchor_s)
         if vel is None:
             return np.zeros((self.n_drones, 3), dtype=np.float32)
         return vel
@@ -387,8 +461,13 @@ class AxswarmPlanner:
             return "axswarm: idle"
         ok_frac = 1.0 - self._fail_count / max(1, self._solve_count)
         state = "ok" if self._last_ok else "best_effort"
+        horizon = (
+            f" M={self.horizon_steps}"
+            if self.horizon_steps > 1
+            else ""
+        )
         return (
-            f"axswarm:{self.mpc_hz:.0f}Hz "
+            f"axswarm:{self.mpc_hz:.0f}Hz{horizon} "
             f"ok={ok_frac * 100:.0f}% "
             f"last={self._last_solve_ms:.0f}ms {state}"
         )

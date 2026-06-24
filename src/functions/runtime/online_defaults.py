@@ -46,6 +46,7 @@ class MorphDefaults:
 class SimDefaults:
     drone_model: str
     control_freq_hz: float
+    mpc_horizon_steps: int
     max_sim_substeps_per_frame: int
     ground_z: float
 
@@ -157,6 +158,7 @@ class OnlineDefaults:
             sim=SimDefaults(
                 drone_model=str(s["drone_model"]),
                 control_freq_hz=float(s.get("control_freq_hz", 10.0)),
+                mpc_horizon_steps=max(1, int(s.get("mpc_horizon_steps", 1))),
                 max_sim_substeps_per_frame=int(s["max_sim_substeps_per_frame"]),
                 ground_z=float(s["ground_z"]),
             ),

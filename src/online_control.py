@@ -61,7 +61,6 @@ from functions.swarm_motion.online_left_swarm_frame import apply_left_swarm_fram
 from functions.swarm_motion.prearm import (
     PREARM_FORMATION_RAMP_S,
     prearm_formation_setpoint,
-    sim_chessboard_ground_layout,
     vertical_takeoff_layout,
 )
 from functions.swarm_motion.spacing_guard import closest_pair

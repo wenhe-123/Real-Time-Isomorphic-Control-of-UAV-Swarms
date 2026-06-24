@@ -47,7 +47,7 @@ from functions.swarm_motion.left_hand_swarm_pose import (
 )
 from functions.swarm_motion.left_pose_tuning import LeftPoseTuning
 from functions.swarm_motion.prearm import (
-    sim_chessboard_ground_layout,
+    plane_ground_layout,
     vertical_takeoff_layout,
 )
 from functions.swarm_motion.spacing_guard import closest_pair
@@ -220,32 +220,12 @@ def boot_online_control(
     )
     print(
         f"Planner: gesture setpoints + axswarm @ {axswarm_rt.mpc_hz:.1f} Hz, "
+        f"horizon M={axswarm_rt.horizon_steps} "
+        f"(replan every {axswarm_rt.replan_period_s:.2f}s), "
         f"control @ {control_freq_hz:.1f} Hz, n={n_drones} (active from startup)."
     )
 
     z_ground = float(ONLINE_DEFAULTS.sim.ground_z)
-    if real_executor is not None:
-        ground_layout = real_executor.get_sim_ground_layout(
-            n_drones, min_separation_m=float(cfg.min_separation_m)
-        )
-        z_ground = float(np.median(ground_layout[: real_executor.n_physical, 2]))
-        print(
-            f"Startup layout: TOML home positions (sim frame, z≈{z_ground:.2f}m). "
-            "Press 1: vertical takeoff → formation → vertical descend → ground."
-        )
-    else:
-        ground_layout = sim_chessboard_ground_layout(
-            n_drones,
-            min_separation_m=float(cfg.min_separation_m),
-            z_ground=z_ground,
-            xy_half_extent_m=float(scale.xy_radius) * 0.85,
-        )
-        d_g, pi_g, pj_g = closest_pair(ground_layout)
-        print(
-            f"Startup layout: chessboard ground (z={z_ground:.2f}m, "
-            f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
-            "Press 1: vertical takeoff → formation → vertical descend → ground."
-        )
     prearm_hover_z = float(
         np.clip(float(cfg.prearm_hover_z), float(z_ground) + 0.15, 10.0)
     )
@@ -267,6 +247,23 @@ def boot_online_control(
         _hover_mm,
         scale,
     )
+    if real_executor is not None:
+        ground_layout = real_executor.get_sim_ground_layout(
+            n_drones, min_separation_m=float(cfg.min_separation_m)
+        )
+        z_ground = float(np.median(ground_layout[: real_executor.n_physical, 2]))
+        print(
+            f"Startup layout: TOML home positions (sim frame, z≈{z_ground:.2f}m). "
+            "Press 1: vertical takeoff → formation → vertical descend → ground."
+        )
+    else:
+        ground_layout = plane_ground_layout(prearm_hover_layout, z_ground=z_ground)
+        d_g, pi_g, pj_g = closest_pair(ground_layout)
+        print(
+            f"Startup layout: plane XY at z={z_ground:.2f}m "
+            f"(spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
+            "Press 1: vertical takeoff → formation → vertical descend → ground."
+        )
     live_target.set(
         prearm_hover_layout,
         int(live_target.mode),

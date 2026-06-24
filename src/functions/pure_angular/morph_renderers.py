@@ -51,6 +51,9 @@ _PLANE_PREV_OUTPUT_CACHE: Optional[np.ndarray] = None
 # R used when _PLANE_PREV_OUTPUT_CACHE was written (avoid cross-blend after a different-radius call).
 _PLANE_PREV_OUTPUT_CACHE_R: Optional[float] = None
 _OPEN_TRANSLATE_ONLY_ON = 0.82
+# Mode 1 sphere plane (ε₁=ε₂=1): shared open=1 layout for every morph mode.
+_PLANE_OPEN_EPSILON1 = 1.0
+_PLANE_OPEN_EPSILON2 = 1.0
 _DEBUG_OPEN_WARP = os.environ.get("ISO_SWARM_DEBUG_OPEN_WARP", "0").strip().lower() in (
     "1",
     "true",
@@ -2232,8 +2235,8 @@ def mapped_fixed_surface_points(
         int(u_relaxed.shape[0]),
         int(morph_mode),
         round(float(R), 1),
-        round(float(epsilon1), 2),
-        round(float(epsilon2), 2),
+        round(float(_PLANE_OPEN_EPSILON1), 2),
+        round(float(_PLANE_OPEN_EPSILON2), 2),
     )
     if float(open_a) >= _OPEN_TRANSLATE_ONLY_ON:
         w_raw = float(
@@ -2258,18 +2261,13 @@ def mapped_fixed_surface_points(
                 _PLANE_TRANSLATE_START_CACHE = _PLANE_PREV_OUTPUT_CACHE.copy()
             else:
                 _PLANE_TRANSLATE_START_CACHE = p.copy()
-        # M3: plane layout matches M4 (same open-warp hints + FPS assign). Cube-only M3 warp
-        # must not steer plane targets or 8 corner anchors collapse to 4 duplicate XY slots.
-        u_plane = (
-            _open_warp_unit_dirs(u, open_a)
-            if int(morph_mode) == 3
-            else u_relaxed
-        )
+        # Same plane hints + superellipse as mode 1 for all morph modes at open→1.
+        u_plane = _open_warp_unit_dirs(u, open_a)
         xy_tgt = _build_current_plane_xy_targets(
             u_plane,
             R=float(R),
-            epsilon1=float(epsilon1),
-            epsilon2=float(epsilon2),
+            epsilon1=_PLANE_OPEN_EPSILON1,
+            epsilon2=_PLANE_OPEN_EPSILON2,
         )
         _PLANE_TRANSLATE_TARGET_CACHE = np.column_stack(
             [xy_tgt[:, 0], xy_tgt[:, 1], np.zeros((xy_tgt.shape[0],), dtype=float)]
@@ -2282,8 +2280,8 @@ def mapped_fixed_surface_points(
         _PLANE_TRANSLATE_START_CACHE = None
         _PLANE_TRANSLATE_TARGET_CACHE = None
         _mapped_call_prof.section("plane_skip")
-    # M3 corner anchors only before plane blend (open < 0.82). After that, plane targets
-    # from u_plane above are kept — overwriting p[:8] duplicated corners at open=1.
+    # M3 corner anchors only before plane blend (open < 0.82). Plane at open=1 is mode-1
+    # layout for all modes (see _PLANE_OPEN_EPSILON* above).
     if int(morph_mode) == 3 and float(open_a) < _OPEN_TRANSLATE_ONLY_ON:
         n_fix = min(_FIXED_ANCHOR_COUNT, int(p.shape[0]))
         if n_fix > 0:
