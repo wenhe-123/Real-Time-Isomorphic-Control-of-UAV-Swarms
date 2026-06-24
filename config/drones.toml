@@ -2,7 +2,7 @@
 # URIs are built from addr/channel via ``config/settings.yaml`` → radio.uri_base.
 # Trim ``active`` to the drones you fly.
 
-active = ["cf11", "cf12", "cf13", "cf14", "cf15", "cf21", "cf22", "cf23"]
+active = ["cf12", "cf11", "cf15"]
 
 [swarm]
 ctrl_freq = 10.0

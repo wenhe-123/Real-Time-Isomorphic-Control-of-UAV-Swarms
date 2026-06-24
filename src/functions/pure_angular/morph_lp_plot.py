@@ -48,7 +48,7 @@ MORPH_LP_MESH_ETA = 18
 MORPH_LP_MESH_OMEGA = 24
 
 MORPH_PLANE_RADIUS_A = 1.15  #scale of closed shape
-MORPH_PLANE_RADIUS_B = 0.65  #scale of open shape
+MORPH_PLANE_RADIUS_B = 0.35  #scale of open shape
 MORPH_PLANE_GRID_N = 5
 MORPH_PLANE_GRID_SPHERE_ALPHA = 0.22
 

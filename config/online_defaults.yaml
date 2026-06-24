@@ -21,7 +21,7 @@ Camera:
 
 Morph:
   target_alpha: 0.44  # Live target low-pass toward morph goals
-  morph_world_scale: 0.65  # Gesture mm → sim m workspace scale
+  morph_world_scale: 0.45  # Gesture mm → sim m workspace scale
   mode_rot_freeze_latch: 18  # Morph mode debounce frames (see pipeline defaults)
   mode_vis_min: 0.55  # Min left-hand MP visibility to change morph mode M1..M5
   open_vis_min: 0.55  # Min right-hand MP visibility for open gesture
