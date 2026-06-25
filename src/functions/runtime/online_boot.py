@@ -47,6 +47,7 @@ from functions.swarm_motion.left_hand_swarm_pose import (
 )
 from functions.swarm_motion.left_pose_tuning import LeftPoseTuning
 from functions.swarm_motion.prearm import (
+    PREARM_HL_DESCEND_M,
     plane_ground_layout,
     vertical_takeoff_layout,
 )
@@ -79,6 +80,7 @@ class OnlineBoot:
     prearm_hover_z: float
     prearm_vertical_layout: np.ndarray
     prearm_takeoff_z: float
+    prearm_descend_m: float
     trail_rgba: list
     pos_buffer: deque
     center_trace_prev: dict[str, float | None]
@@ -118,8 +120,6 @@ class OnlineBoot:
     prearm_vertical_leg: str = "climb"
     prearm_has_flown: bool = False
     prearm_formation_start_s: float = -1.0
-    prearm_return_start_s: float = -1.0
-    prearm_hold_vertical_start_s: float = -1.0
     left_pose_reset_req: bool = False
     left_pose_runtime_armed: bool = False
     frame_idx: int = 0
@@ -262,7 +262,7 @@ def boot_online_control(
             f"plane morph for virtual rows (sim frame, z≈{z_ground:.2f}m, "
             f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
             "Place drones on ground; startup auto takeoff +0.3m → axswarm vertical hold; "
-            "Key1×2: formation → vertical hover → auto land."
+            "Key1×2: formation → HL descend in place → land."
         )
     else:
         ground_layout = plane_ground_layout(prearm_hover_layout, z_ground=z_ground)
@@ -293,6 +293,7 @@ def boot_online_control(
     prearm_takeoff_z = float(
         np.clip(float(cfg.prearm_takeoff_z), takeoff_z_lo, takeoff_z_hi)
     )
+    prearm_descend_m = float(PREARM_HL_DESCEND_M)
     prearm_vertical_layout = vertical_takeoff_layout(
         ground_layout,
         takeoff_z=prearm_takeoff_z,
@@ -348,7 +349,7 @@ def boot_online_control(
         real_prearm_climb_enabled = True
         print(
             f"Axswarm vertical hold at z≈{prearm_takeoff_z:.2f}m. "
-            "Press 1: hover formation → vertical (auto land after hover).",
+            "Press 1: hover formation → HL descend −0.7m in place + land.",
             flush=True,
         )
     if real_executor is None:
@@ -489,6 +490,7 @@ def boot_online_control(
         prearm_hover_z=prearm_hover_z,
         prearm_vertical_layout=prearm_vertical_layout.copy(),
         prearm_takeoff_z=prearm_takeoff_z,
+        prearm_descend_m=prearm_descend_m,
         trail_rgba=trail_rgba,
         pos_buffer=deque(maxlen=ONLINE_DEFAULTS.display.trail_buffer_maxlen),
         center_trace_prev=center_trace_prev,

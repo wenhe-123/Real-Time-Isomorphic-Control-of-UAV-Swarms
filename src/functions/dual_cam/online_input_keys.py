@@ -25,7 +25,7 @@ _warned_climb_while_gestured = False
 
 
 def _real_prearm_key1(ctx: OnlineKeyContext) -> bool:
-    """Real: vertical hold → formation → vertical return → HL land."""
+    """Real: vertical hold → formation → HL descend in place → HL land."""
     ex = ctx.real_executor
     assert ex is not None
     phase = str(ctx.prearm_phase_box[0])
@@ -34,17 +34,21 @@ def _real_prearm_key1(ctx: OnlineKeyContext) -> bool:
         ctx.prearm_phase_box[0] = "formation"
         print(
             f"Hover formation ramp → z≈{ctx.prearm_hover_z:.2f}m (axswarm). "
-            "Press 1 to return to vertical column.",
+            "Press 1 for in-place HL descend + land.",
             flush=True,
         )
     elif phase == "formation":
-        ctx.prearm_phase_box[0] = "vertical"
-        ctx.prearm_vertical_leg_box[0] = "descend"
+        ex.pause_setpoints_for_hl()
         print(
-            f"Return to vertical z≈{ctx.prearm_takeoff_z:.2f}m (axswarm); "
-            "then hover, axswarm off, auto high-level land.",
+            f"Axswarm off; HL descend −{ctx.prearm_descend_m:.2f}m in place, then land...",
             flush=True,
         )
+        ex.high_level_descend(ctx.prearm_descend_m)
+        ex.high_level_land()
+        ctx.prearm_phase_box[0] = "ground"
+        ctx.prearm_climb_enabled[0] = False
+        ctx.prearm_vertical_leg_box[0] = "climb"
+        print("On ground. Press 1 to take off again, or quit.", flush=True)
     elif phase == "ground":
         ex.high_level_takeoff(ctx.prearm_takeoff_z)
         ctx.prearm_phase_box[0] = "vertical"
@@ -53,13 +57,13 @@ def _real_prearm_key1(ctx: OnlineKeyContext) -> bool:
         ctx.prearm_has_flown_box[0] = True
         print(
             f"Axswarm vertical hold at z≈{ctx.prearm_takeoff_z:.2f}m. "
-            "Press 1: formation → vertical (auto land).",
+            "Press 1: formation → in-place HL descend + land.",
             flush=True,
         )
     else:
         print(
             f"[WARN] Real prearm phase {phase!r}/{leg!r} ignored "
-            "(wait for return/hover/land sequence to finish).",
+            "(wait for formation/descend/land to finish).",
             flush=True,
         )
     return False
@@ -76,6 +80,7 @@ class OnlineKeyContext:
     prearm_has_flown_box: list
     prearm_takeoff_z: float
     prearm_hover_z: float
+    prearm_descend_m: float
     left_pose_reset_req: list
     left_pose_runtime_armed: list
     left_pose_state: object
@@ -94,6 +99,7 @@ class OnlineKeyContext:
             prearm_has_flown_box=boot.prearm_has_flown_box,
             prearm_takeoff_z=float(boot.prearm_takeoff_z),
             prearm_hover_z=float(boot.prearm_hover_z),
+            prearm_descend_m=float(boot.prearm_descend_m),
             left_pose_reset_req=boot.left_pose_reset_req_box,
             left_pose_runtime_armed=boot.left_pose_runtime_armed_box,
             left_pose_state=boot.left_pose_state,

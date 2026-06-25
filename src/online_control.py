@@ -60,9 +60,7 @@ from functions.swarm_motion.online_frame_filter import filter_online_targets
 from functions.swarm_motion.online_left_swarm_frame import apply_left_swarm_frame
 from functions.swarm_motion.prearm import (
     PREARM_FORMATION_RAMP_S,
-    PREARM_PRE_LAND_HOVER_S,
     prearm_formation_setpoint,
-    prearm_return_to_vertical_setpoint,
     vertical_takeoff_layout,
 )
 from functions.swarm_motion.spacing_guard import closest_pair
@@ -268,22 +266,6 @@ def run_integrated_online_control(
                         formation_start_s=float(boot.prearm_formation_start_s),
                     )
                 elif boot.prearm_phase == "vertical":
-                    if (
-                        boot.real_executor is not None
-                        and str(boot.prearm_vertical_leg) == "descend"
-                        and float(boot.prearm_return_start_s) >= 0.0
-                    ):
-                        raw_target = prearm_return_to_vertical_setpoint(
-                            boot.prearm_vertical_layout,
-                            boot.prearm_hover_layout,
-                            elapsed_s=elapsed,
-                            return_start_s=float(boot.prearm_return_start_s),
-                        )
-                    else:
-                        raw_target = np.asarray(
-                            boot.prearm_vertical_layout, dtype=np.float32
-                        ).copy()
-                elif boot.prearm_phase == "hold_vertical":
                     raw_target = np.asarray(
                         boot.prearm_vertical_layout, dtype=np.float32
                     ).copy()
@@ -304,47 +286,8 @@ def run_integrated_online_control(
                 if not boot.gesture_control_enabled:
                     if boot.prearm_phase == "vertical":
                         raw_target[:, 2] = float(boot.prearm_takeoff_z)
-                    elif boot.prearm_phase in ("ground", "hold_vertical"):
-                        raw_target[:, 2] = float(
-                            boot.prearm_takeoff_z
-                            if boot.prearm_phase == "hold_vertical"
-                            else boot.ground_z
-                        )
-                if (
-                    boot.real_executor is not None
-                    and boot.prearm_phase == "vertical"
-                    and str(boot.prearm_vertical_leg) == "descend"
-                    and float(boot.prearm_return_start_s) >= 0.0
-                    and elapsed
-                    >= float(boot.prearm_return_start_s) + PREARM_FORMATION_RAMP_S
-                    and str(boot.prearm_phase_box[0]) == "vertical"
-                ):
-                    boot.prearm_phase_box[0] = "hold_vertical"
-                    boot.prearm_return_start_s = -1.0
-                    boot.prearm_hold_vertical_start_s = float(elapsed)
-                    print(
-                        f"Vertical column at z≈{boot.prearm_takeoff_z:.2f}m; "
-                        f"hovering {PREARM_PRE_LAND_HOVER_S:.1f}s (axswarm on)...",
-                        flush=True,
-                    )
-                elif (
-                    boot.real_executor is not None
-                    and boot.prearm_phase == "hold_vertical"
-                    and float(boot.prearm_hold_vertical_start_s) >= 0.0
-                    and elapsed
-                    >= float(boot.prearm_hold_vertical_start_s) + PREARM_PRE_LAND_HOVER_S
-                ):
-                    boot.real_executor.halt_control()
-                    boot.prearm_hold_vertical_start_s = -1.0
-                    print(
-                        "Axswarm off; high-level land...",
-                        flush=True,
-                    )
-                    boot.real_executor.high_level_land()
-                    boot.prearm_phase_box[0] = "ground"
-                    boot.prearm_climb_enabled_box[0] = False
-                    boot.prearm_vertical_leg_box[0] = "climb"
-                    print("On ground. Press 1 to take off again, or quit.", flush=True)
+                    elif boot.prearm_phase == "ground":
+                        raw_target[:, 2] = float(boot.ground_z)
                 left_swarm_off = ls.left_swarm_off
                 left_swarm_R = ls.left_swarm_R
                 left_pose_dbg = ls.left_pose_dbg
@@ -385,26 +328,12 @@ def run_integrated_online_control(
                     phase = str(boot.prearm_phase)
                     if phase == "formation":
                         boot.prearm_formation_start_s = float(elapsed)
-                        boot.prearm_return_start_s = -1.0
                         print(
                             f"Formation ramp: vertical → hover morph over "
                             f"{PREARM_FORMATION_RAMP_S:.1f}s (axswarm-planned 3D)."
                         )
-                    elif (
-                        phase == "vertical"
-                        and str(boot.prearm_vertical_leg) == "descend"
-                        and boot.real_executor is not None
-                    ):
-                        boot.prearm_return_start_s = float(elapsed)
-                        boot.prearm_formation_start_s = -1.0
-                        print(
-                            f"Return ramp: hover → vertical column over "
-                            f"{PREARM_FORMATION_RAMP_S:.1f}s (axswarm-planned 3D)."
-                        )
                     else:
                         boot.prearm_formation_start_s = -1.0
-                        if phase != "hold_vertical":
-                            boot.prearm_return_start_s = -1.0
                     if phase == "formation":
                         _layout_pos = (
                             axswarm_track_pos
@@ -412,10 +341,6 @@ def run_integrated_online_control(
                             else np.asarray(boot.prearm_vertical_layout, dtype=np.float32)
                         )
                     elif phase == "vertical":
-                        _layout_pos = np.asarray(
-                            boot.prearm_vertical_layout, dtype=np.float32
-                        )
-                    elif phase == "hold_vertical":
                         _layout_pos = np.asarray(
                             boot.prearm_vertical_layout, dtype=np.float32
                         )

@@ -202,6 +202,11 @@ class RealSwarmExecutor:
     def control_halted(self) -> bool:
         return bool(self._control_halted)
 
+    def pause_setpoints_for_hl(self) -> None:
+        """Stop low-level setpoint stream without emergency stop (before HL commander)."""
+        self._control_halted = True
+        self._pending_sim_layout = None
+
     def high_level_takeoff(self, height_m: float, *, duration_s: float = 3.0) -> None:
         """Block until HL takeoff completes; then allow axswarm low-level setpoints."""
         if self._dry_run or self.swarm is None:
@@ -219,6 +224,50 @@ class RealSwarmExecutor:
         self.swarm.takeoff(height=h, duration=dur)
         self._control_halted = False
         self.physical_armed = True
+
+    def high_level_descend(
+        self,
+        distance_m: float,
+        *,
+        duration_s: float = 3.0,
+        settle_s: float | None = None,
+    ) -> None:
+        """Block until HL in-place vertical descent completes (current XY, −Z)."""
+        if self._dry_run or self.swarm is None:
+            self._control_halted = True
+            return
+        self._control_halted = True
+        self._pending_sim_layout = None
+        d = float(distance_m)
+        dur = float(duration_s)
+        hover_s = PREARM_PRE_LAND_HOVER_S if settle_s is None else float(settle_s)
+        targets: dict[str, list[float]] = {}
+        for uri in self._uris:
+            if not self.swarm.is_active(uri):
+                continue
+            obs = self.swarm.get_obs(uri)
+            pos = np.asarray(obs["pos"], dtype=np.float64)
+            rpy = np.asarray(obs.get("rpy", [0.0, 0.0, 0.0]), dtype=np.float64)
+            targets[uri] = [
+                float(pos[0]),
+                float(pos[1]),
+                float(pos[2]) - d,
+                float(rpy[2]),
+            ]
+        if not targets:
+            logger.warning("No active drones for high-level descend")
+            return
+        print(
+            f"Real swarm: high-level descend −{d:.2f}m in place ({dur:.1f}s, no setpoint stream)...",
+            flush=True,
+        )
+        self.swarm.goto(targets, duration=dur)
+        if hover_s > 0.0:
+            print(
+                f"Real swarm: holding {hover_s:.1f}s at descend target before land...",
+                flush=True,
+            )
+            time.sleep(hover_s)
 
     def high_level_land(self, height_m: float = 0.0, *, duration_s: float = 3.0) -> None:
         """Block until HL land completes; keep setpoint stream off afterward."""
@@ -318,15 +367,7 @@ class RealSwarmExecutor:
             elif phase == "formation":
                 print(
                     "Real hover formation: axswarm setpoint stream "
-                    "(press 1 to return to vertical column)."
-                )
-            elif phase == "hold_vertical":
-                z_takeoff = float(
-                    np.median(prearm_vertical_layout[: self.n_physical, 2])
-                ) if prearm_vertical_layout is not None else 0.0
-                print(
-                    f"Real vertical hold z≈{z_takeoff:.2f}m "
-                    f"(hover {PREARM_PRE_LAND_HOVER_S:.1f}s, then auto land)."
+                    "(press 1 for in-place HL descend + land)."
                 )
             elif phase == "ground":
                 z_from = (
