@@ -9,7 +9,7 @@ PREARM_FORMATION_RAMP_S = 3.0
 # Seconds to hold after HL in-place descend before HL land.
 PREARM_PRE_LAND_HOVER_S = 3.0
 # In-place HL descent distance after formation (m, relative −Z from current pose).
-PREARM_HL_DESCEND_M = 0.70
+PREARM_HL_DESCEND_M = 0.50
 
 
 def prearm_formation_setpoint(
