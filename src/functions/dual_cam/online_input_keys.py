@@ -42,15 +42,9 @@ def _real_prearm_key1(ctx: OnlineKeyContext) -> bool:
         ctx.prearm_vertical_leg_box[0] = "descend"
         print(
             f"Return to vertical z≈{ctx.prearm_takeoff_z:.2f}m (axswarm); "
-            "then axswarm stops. Press 1 again for high-level land.",
+            "then hover, axswarm off, auto high-level land.",
             flush=True,
         )
-    elif phase == "hold_vertical":
-        ex.high_level_land()
-        ctx.prearm_phase_box[0] = "ground"
-        ctx.prearm_climb_enabled[0] = False
-        ctx.prearm_vertical_leg_box[0] = "climb"
-        print("On ground. Press 1 to take off again, or quit.", flush=True)
     elif phase == "ground":
         ex.high_level_takeoff(ctx.prearm_takeoff_z)
         ctx.prearm_phase_box[0] = "vertical"
@@ -59,13 +53,13 @@ def _real_prearm_key1(ctx: OnlineKeyContext) -> bool:
         ctx.prearm_has_flown_box[0] = True
         print(
             f"Axswarm vertical hold at z≈{ctx.prearm_takeoff_z:.2f}m. "
-            "Press 1: formation → vertical → land.",
+            "Press 1: formation → vertical (auto land).",
             flush=True,
         )
     else:
         print(
             f"[WARN] Real prearm phase {phase!r}/{leg!r} ignored "
-            "(wait for vertical return to finish, or press 1 from hold_vertical).",
+            "(wait for return/hover/land sequence to finish).",
             flush=True,
         )
     return False

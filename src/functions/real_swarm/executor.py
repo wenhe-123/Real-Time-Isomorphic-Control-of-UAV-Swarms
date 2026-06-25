@@ -10,6 +10,7 @@ import numpy as np
 from swarm_gpt.core.drone_swarm import DroneSwarm
 
 from functions.real_swarm.swarm_config import RealFrameMapping, RealSwarmOptions, load_drones_config
+from functions.swarm_motion.prearm import PREARM_PRE_LAND_HOVER_S
 
 logger = logging.getLogger(__name__)
 
@@ -324,8 +325,8 @@ class RealSwarmExecutor:
                     np.median(prearm_vertical_layout[: self.n_physical, 2])
                 ) if prearm_vertical_layout is not None else 0.0
                 print(
-                    f"Real vertical hold z≈{z_takeoff:.2f}m (axswarm off). "
-                    "Press 1 for high-level land."
+                    f"Real vertical hold z≈{z_takeoff:.2f}m "
+                    f"(hover {PREARM_PRE_LAND_HOVER_S:.1f}s, then auto land)."
                 )
             elif phase == "ground":
                 z_from = (

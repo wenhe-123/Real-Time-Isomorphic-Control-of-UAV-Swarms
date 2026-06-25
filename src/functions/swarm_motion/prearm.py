@@ -6,6 +6,8 @@ import numpy as np
 
 # Seconds to blend vertical-column XY → full hover morph when entering formation.
 PREARM_FORMATION_RAMP_S = 3.0
+# Seconds to hold vertical column (axswarm on) before halting planner and HL land.
+PREARM_PRE_LAND_HOVER_S = 3.0
 
 
 def prearm_formation_setpoint(

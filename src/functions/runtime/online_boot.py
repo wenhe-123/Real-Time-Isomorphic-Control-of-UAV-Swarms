@@ -119,6 +119,7 @@ class OnlineBoot:
     prearm_has_flown: bool = False
     prearm_formation_start_s: float = -1.0
     prearm_return_start_s: float = -1.0
+    prearm_hold_vertical_start_s: float = -1.0
     left_pose_reset_req: bool = False
     left_pose_runtime_armed: bool = False
     frame_idx: int = 0
@@ -261,7 +262,7 @@ def boot_online_control(
             f"plane morph for virtual rows (sim frame, z≈{z_ground:.2f}m, "
             f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
             "Place drones on ground; startup auto takeoff +0.3m → axswarm vertical hold; "
-            "Key1×3: formation → vertical → land."
+            "Key1×2: formation → vertical hover → auto land."
         )
     else:
         ground_layout = plane_ground_layout(prearm_hover_layout, z_ground=z_ground)
@@ -347,7 +348,7 @@ def boot_online_control(
         real_prearm_climb_enabled = True
         print(
             f"Axswarm vertical hold at z≈{prearm_takeoff_z:.2f}m. "
-            "Press 1: hover formation → vertical → land (3 steps).",
+            "Press 1: hover formation → vertical (auto land after hover).",
             flush=True,
         )
     if real_executor is None:

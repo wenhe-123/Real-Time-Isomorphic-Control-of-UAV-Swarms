@@ -60,6 +60,7 @@ from functions.swarm_motion.online_frame_filter import filter_online_targets
 from functions.swarm_motion.online_left_swarm_frame import apply_left_swarm_frame
 from functions.swarm_motion.prearm import (
     PREARM_FORMATION_RAMP_S,
+    PREARM_PRE_LAND_HOVER_S,
     prearm_formation_setpoint,
     prearm_return_to_vertical_setpoint,
     vertical_takeoff_layout,
@@ -316,16 +317,34 @@ def run_integrated_online_control(
                     and float(boot.prearm_return_start_s) >= 0.0
                     and elapsed
                     >= float(boot.prearm_return_start_s) + PREARM_FORMATION_RAMP_S
-                    and not boot.real_executor.control_halted
+                    and str(boot.prearm_phase_box[0]) == "vertical"
                 ):
-                    boot.real_executor.halt_control()
                     boot.prearm_phase_box[0] = "hold_vertical"
                     boot.prearm_return_start_s = -1.0
+                    boot.prearm_hold_vertical_start_s = float(elapsed)
                     print(
-                        f"Vertical column at z≈{boot.prearm_takeoff_z:.2f}m; axswarm off. "
-                        "Press 1 for high-level land.",
+                        f"Vertical column at z≈{boot.prearm_takeoff_z:.2f}m; "
+                        f"hovering {PREARM_PRE_LAND_HOVER_S:.1f}s (axswarm on)...",
                         flush=True,
                     )
+                elif (
+                    boot.real_executor is not None
+                    and boot.prearm_phase == "hold_vertical"
+                    and float(boot.prearm_hold_vertical_start_s) >= 0.0
+                    and elapsed
+                    >= float(boot.prearm_hold_vertical_start_s) + PREARM_PRE_LAND_HOVER_S
+                ):
+                    boot.real_executor.halt_control()
+                    boot.prearm_hold_vertical_start_s = -1.0
+                    print(
+                        "Axswarm off; high-level land...",
+                        flush=True,
+                    )
+                    boot.real_executor.high_level_land()
+                    boot.prearm_phase_box[0] = "ground"
+                    boot.prearm_climb_enabled_box[0] = False
+                    boot.prearm_vertical_leg_box[0] = "climb"
+                    print("On ground. Press 1 to take off again, or quit.", flush=True)
                 left_swarm_off = ls.left_swarm_off
                 left_swarm_R = ls.left_swarm_R
                 left_pose_dbg = ls.left_pose_dbg
