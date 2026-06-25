@@ -24,6 +24,53 @@ _KEY_Q = ord("q")
 _warned_climb_while_gestured = False
 
 
+def _real_prearm_key1(ctx: OnlineKeyContext) -> bool:
+    """Real: vertical hold → formation → vertical return → HL land."""
+    ex = ctx.real_executor
+    assert ex is not None
+    phase = str(ctx.prearm_phase_box[0])
+    leg = str(ctx.prearm_vertical_leg_box[0])
+    if phase == "vertical" and leg == "climb":
+        ctx.prearm_phase_box[0] = "formation"
+        print(
+            f"Hover formation ramp → z≈{ctx.prearm_hover_z:.2f}m (axswarm). "
+            "Press 1 to return to vertical column.",
+            flush=True,
+        )
+    elif phase == "formation":
+        ctx.prearm_phase_box[0] = "vertical"
+        ctx.prearm_vertical_leg_box[0] = "descend"
+        print(
+            f"Return to vertical z≈{ctx.prearm_takeoff_z:.2f}m (axswarm); "
+            "then axswarm stops. Press 1 again for high-level land.",
+            flush=True,
+        )
+    elif phase == "hold_vertical":
+        ex.high_level_land()
+        ctx.prearm_phase_box[0] = "ground"
+        ctx.prearm_climb_enabled[0] = False
+        ctx.prearm_vertical_leg_box[0] = "climb"
+        print("On ground. Press 1 to take off again, or quit.", flush=True)
+    elif phase == "ground":
+        ex.high_level_takeoff(ctx.prearm_takeoff_z)
+        ctx.prearm_phase_box[0] = "vertical"
+        ctx.prearm_vertical_leg_box[0] = "climb"
+        ctx.prearm_climb_enabled[0] = True
+        ctx.prearm_has_flown_box[0] = True
+        print(
+            f"Axswarm vertical hold at z≈{ctx.prearm_takeoff_z:.2f}m. "
+            "Press 1: formation → vertical → land.",
+            flush=True,
+        )
+    else:
+        print(
+            f"[WARN] Real prearm phase {phase!r}/{leg!r} ignored "
+            "(wait for vertical return to finish, or press 1 from hold_vertical).",
+            flush=True,
+        )
+    return False
+
+
 @dataclass
 class OnlineKeyContext:
     """Mutable hotkey state boxes + scalars shared by key handlers."""
@@ -41,6 +88,7 @@ class OnlineKeyContext:
     mode_state: object | None
     left_unwind_s: float
     left_swarm_enabled: bool
+    real_executor: object | None = None
 
     @classmethod
     def from_boot(cls, boot: OnlineBoot) -> OnlineKeyContext:
@@ -58,6 +106,7 @@ class OnlineKeyContext:
             mode_state=boot.mode_state,
             left_unwind_s=float(boot.left_unwind_s),
             left_swarm_enabled=bool(boot.left_pose_state.enabled),
+            real_executor=boot.real_executor,
         )
 
 
@@ -377,6 +426,8 @@ def apply_online_control_key(
                 _warned_climb_while_gestured = True
             return False
         _warned_climb_while_gestured = False
+        if ctx.real_executor is not None:
+            return _real_prearm_key1(ctx)
         phase = str(ctx.prearm_phase_box[0])
         if phase == "ground":
             ctx.prearm_phase_box[0] = "vertical"

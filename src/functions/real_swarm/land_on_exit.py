@@ -35,6 +35,18 @@ def _idle_gesture_result(*, frame_idx: int = 0) -> GestureFrameResult:
     )
 
 
+def halt_real_swarm_control(boot: OnlineBoot) -> None:
+    """Immediately stop setpoints and send Crazyflie emergency stop."""
+    ex = boot.real_executor
+    if ex is None or ex.control_halted:
+        return
+    print("Real swarm: halting control (emergency stop)...", flush=True)
+    try:
+        ex.halt_control()
+    except Exception as exc:
+        print(f"[WARN] Real swarm halt failed: {exc}", flush=True)
+
+
 def stream_real_swarm_land_on_exit(
     boot: OnlineBoot,
     cfg: OnlineRuntimeConfig,

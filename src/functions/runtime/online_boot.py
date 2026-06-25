@@ -118,6 +118,7 @@ class OnlineBoot:
     prearm_vertical_leg: str = "climb"
     prearm_has_flown: bool = False
     prearm_formation_start_s: float = -1.0
+    prearm_return_start_s: float = -1.0
     left_pose_reset_req: bool = False
     left_pose_runtime_armed: bool = False
     frame_idx: int = 0
@@ -259,7 +260,8 @@ def boot_online_control(
             f"Startup layout: TOML home for {real_executor.n_physical} physical drone(s), "
             f"plane morph for virtual rows (sim frame, z≈{z_ground:.2f}m, "
             f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
-            "Place drones near mapped plane XY; press 1: vertical takeoff → formation → ground."
+            "Place drones on ground; startup auto takeoff +0.3m → axswarm vertical hold; "
+            "Key1×3: formation → vertical → land."
         )
     else:
         ground_layout = plane_ground_layout(prearm_hover_layout, z_ground=z_ground)
@@ -302,9 +304,9 @@ def boot_online_control(
     d_v, pi_v, pj_v = closest_pair(prearm_vertical_layout)
     if real_executor is not None:
         print(
-            f"Vertical takeoff target: z={prearm_takeoff_z:.2f}m "
-            f"(TOML home XY fixed for {real_executor.n_physical} drone(s), "
-            f"spacing=({pi_v},{pj_v}) {d_v:.2f}m)."
+            f"High-level takeoff: +{prearm_takeoff_z:.2f}m relative (no setpoint stream); "
+            f"then axswarm formation ramp → z≈{prearm_hover_z:.2f}m "
+            f"(spacing=({pi_v},{pj_v}) {d_v:.2f}m)."
         )
     else:
         print(
@@ -330,11 +332,30 @@ def boot_online_control(
         f"Mode: gesture targets → axswarm → cmd_target; {mode_label}. "
         "Planner: axswarm."
     )
-    print(
-        f"Axswarm active from startup (ground hold_z={z_ground:.2f}m). "
-        f"Press 1: z={prearm_takeoff_z:.2f}m → formation z={prearm_hover_z:.2f}m (before SPACE) "
-        f"→ z={prearm_takeoff_z:.2f}m → ground; SPACE → gesture control."
-    )
+    real_prearm_phase = "ground"
+    real_prearm_has_flown = False
+    real_prearm_climb_enabled = False
+    if real_executor is not None:
+        print(
+            f"Auto high-level takeoff +{prearm_takeoff_z:.2f}m at startup "
+            f"(no setpoint stream during climb)...",
+            flush=True,
+        )
+        real_executor.high_level_takeoff(prearm_takeoff_z)
+        real_prearm_phase = "vertical"
+        real_prearm_has_flown = True
+        real_prearm_climb_enabled = True
+        print(
+            f"Axswarm vertical hold at z≈{prearm_takeoff_z:.2f}m. "
+            "Press 1: hover formation → vertical → land (3 steps).",
+            flush=True,
+        )
+    if real_executor is None:
+        print(
+            f"Axswarm active from startup (ground hold_z={z_ground:.2f}m). "
+            f"Press 1: z={prearm_takeoff_z:.2f}m → formation z={prearm_hover_z:.2f}m (before SPACE) "
+            f"→ z={prearm_takeoff_z:.2f}m → ground; SPACE → gesture control."
+        )
 
     left_cam_preset = str(cfg.left.cam_preset)
     left_cam_y_to_world_z = float(np.clip(cfg.left.cam_y_to_world_z, 0.0, 1.0))
@@ -477,10 +498,10 @@ def boot_online_control(
         left_pose_state=left_pose_state,
         key_queue=key_queue,
         gesture_control_enabled_box=[gesture_control_enabled],
-        prearm_climb_enabled_box=[False],
-        prearm_phase_box=["ground"],
+        prearm_climb_enabled_box=[real_prearm_climb_enabled],
+        prearm_phase_box=[real_prearm_phase],
         prearm_vertical_leg_box=["climb"],
-        prearm_has_flown_box=[False],
+        prearm_has_flown_box=[real_prearm_has_flown],
         left_pose_reset_req_box=[False],
         left_pose_runtime_armed_box=[False],
         orbbec_swap_mp_hands=orbbec_swap_mp_hands,

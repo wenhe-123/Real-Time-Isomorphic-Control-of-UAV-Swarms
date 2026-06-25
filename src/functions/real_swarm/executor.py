@@ -62,6 +62,8 @@ class RealSwarmExecutor:
         self._setpoint_period_s = 1.0 / max(float(opts.ctrl_freq), 1e-6)
         self._setpoint_next_mono = 0.0
         self._pending_sim_layout: np.ndarray | None = None
+        self._control_halted = False
+        self._closed = False
 
         print(
             f"{'[dry-run] ' if self._dry_run else ''}"
@@ -90,6 +92,8 @@ class RealSwarmExecutor:
         missing = self.swarm.missing_uris()
         if missing:
             logger.warning("Inactive URIs after connect: %s", missing)
+        # No low-level setpoints until high-level takeoff (key 1).
+        self._control_halted = True
 
     @property
     def ctrl_freq(self) -> float:
@@ -193,11 +197,65 @@ class RealSwarmExecutor:
         """True when every active drone has a fresh mocap pose."""
         return self.get_positions_for_debug() is not None
 
+    @property
+    def control_halted(self) -> bool:
+        return bool(self._control_halted)
+
+    def high_level_takeoff(self, height_m: float, *, duration_s: float = 3.0) -> None:
+        """Block until HL takeoff completes; then allow axswarm low-level setpoints."""
+        if self._dry_run or self.swarm is None:
+            self._control_halted = False
+            self.physical_armed = True
+            return
+        self._control_halted = True
+        self._pending_sim_layout = None
+        h = float(height_m)
+        dur = float(duration_s)
+        print(
+            f"Real swarm: high-level takeoff +{h:.2f}m ({dur:.1f}s, no setpoint stream)...",
+            flush=True,
+        )
+        self.swarm.takeoff(height=h, duration=dur)
+        self._control_halted = False
+        self.physical_armed = True
+
+    def high_level_land(self, height_m: float = 0.0, *, duration_s: float = 3.0) -> None:
+        """Block until HL land completes; keep setpoint stream off afterward."""
+        if self._dry_run or self.swarm is None:
+            self._control_halted = True
+            self.physical_armed = False
+            return
+        self._control_halted = True
+        self._pending_sim_layout = None
+        h = float(height_m)
+        dur = float(duration_s)
+        print(
+            f"Real swarm: high-level land (z={h:.2f}m, {dur:.1f}s, no setpoint stream)...",
+            flush=True,
+        )
+        self.swarm.land(height=h, duration=dur)
+        self.physical_armed = False
+
+    def halt_control(self) -> None:
+        """Stop setpoint stream immediately and cut Crazyflie low-level control."""
+        if self._control_halted:
+            return
+        self._control_halted = True
+        self._pending_sim_layout = None
+        if self._dry_run or self.swarm is None:
+            return
+        try:
+            self.swarm.emergency_stop()
+        except Exception as exc:
+            logger.warning("Emergency stop failed: %s", exc)
+
     def send_sim_layout(self, sim_layout: np.ndarray, *, force: bool = False) -> bool:
         """Stream one low-level position setpoint batch (throttled to ``ctrl_freq``).
 
         Returns True when a setpoint was sent to the radio.
         """
+        if self._control_halted:
+            return False
         if self._dry_run or self.swarm is None:
             return False
         self._pending_sim_layout = np.asarray(sim_layout, dtype=np.float32)
@@ -236,6 +294,8 @@ class RealSwarmExecutor:
         just_prearm_phase: bool = False,
         prearm_vertical_layout: np.ndarray | None = None,
     ) -> None:
+        if self._control_halted:
+            return
         cmd = np.asarray(cmd_target, dtype=np.float32)
         phase = str(prearm_phase)
 
@@ -252,12 +312,20 @@ class RealSwarmExecutor:
                 else:
                     print(
                         f"Real direct 3D return to vertical layout z≈{z_takeoff:.2f}m "
-                        "(axswarm-planned stream). Press 1 for ground."
+                        "(axswarm-planned stream)."
                     )
             elif phase == "formation":
                 print(
-                    "Real hover formation: direct 3D move to hover layout "
-                    "(axswarm-planned stream; press 1 to shrink to vertical)."
+                    "Real hover formation: axswarm setpoint stream "
+                    "(press 1 to return to vertical column)."
+                )
+            elif phase == "hold_vertical":
+                z_takeoff = float(
+                    np.median(prearm_vertical_layout[: self.n_physical, 2])
+                ) if prearm_vertical_layout is not None else 0.0
+                print(
+                    f"Real vertical hold z≈{z_takeoff:.2f}m (axswarm off). "
+                    "Press 1 for high-level land."
                 )
             elif phase == "ground":
                 z_from = (
@@ -296,6 +364,10 @@ class RealSwarmExecutor:
                 logger.warning("LED update failed: %s", exc)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.halt_control()
         if self.swarm is not None:
             self.swarm.close()
 
