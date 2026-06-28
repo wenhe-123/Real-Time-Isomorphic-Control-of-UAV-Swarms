@@ -308,14 +308,19 @@ def run_integrated_online_control(
 
                 axswarm_track_pos: np.ndarray | None = None
                 axswarm_track_vel: np.ndarray | None = None
-                if boot.real_executor is not None:
-                    axswarm_track_pos = boot.real_executor.get_sim_track_positions(
+                swarm_exec = boot.real_executor if boot.real_executor is not None else boot.sim_executor
+                if swarm_exec is not None:
+                    axswarm_track_pos = swarm_exec.get_sim_track_positions(
                         raw_target,
                         boot.n_drones,
                     )
-                    if axswarm_track_pos is None:
+                    if boot.real_executor is not None and axswarm_track_pos is None:
                         # Mocap gap: keep MPC alive with last cmd (setpoints paused separately).
                         axswarm_track_pos = np.asarray(boot.cmd_target, dtype=np.float32)
+                    if boot.sim_executor is not None and boot.sim is not None:
+                        axswarm_track_vel = np.asarray(
+                            boot.sim.data.states.vel[0], dtype=np.float32
+                        )
                 elif boot.sim is not None:
                     axswarm_track_pos = np.asarray(
                         boot.sim.data.states.pos[0], dtype=np.float32

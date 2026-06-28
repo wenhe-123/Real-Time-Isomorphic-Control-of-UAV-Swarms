@@ -12,6 +12,7 @@ from debug.online_control_debug import (
     print_center_trace,
     print_drone_position_debug,
 )
+from functions.display_sim.axswarm_safety_box import draw_axswarm_safety_box_from_settings
 from functions.display_sim.crazyflow_render import render_sim, step_sim_to_cmd
 from functions.display_sim.morph_led_materials import apply_morph_led_theme
 from functions.display_sim.online_present_input import PresentFrameInput
@@ -34,12 +35,9 @@ def _draw_online_hud_overlay(inp: PresentFrameInput, *, label: str, color: tuple
     if boot.gesture_control_enabled_box[0]:
         phase = "ARMED (Space disarm)"
     elif boot.prearm_phase_box[0] == "formation":
-        phase = "HOVER FORM - press 1 shrink vertical"
+        phase = "HOVER FORM - press 1 HL descend+land"
     elif boot.prearm_phase_box[0] == "vertical":
-        if boot.prearm_vertical_leg_box[0] == "descend":
-            phase = "VERT DESC - press 1 ground"
-        else:
-            phase = "VERT CLIMB - press 1 formation"
+        phase = "VERT HOLD - press 1 formation"
     else:
         phase = "GROUND - press 1 takeoff"
     cv2.putText(
@@ -124,7 +122,24 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
                 print(f"[WARN] Disabled Crazyflow trail drawing after render error: {exc}")
                 break
     _sec("trail")
-    if boot.sim is not None:
+    if boot.sim_executor is not None:
+        ctl_hz = float(boot.control_freq_hz)
+        step_every = max(1, int(round(float(cfg.fps) / max(ctl_hz, 1e-6))))
+        if (frame_idx % step_every) == 0:
+            try:
+                boot.sim_executor.track_frame(
+                    filt.cmd_target,
+                    control_hz=ctl_hz,
+                    max_substeps=int(cfg.max_sim_substeps),
+                    prearm_phase=str(boot.prearm_phase),
+                    prearm_vertical_leg=str(boot.prearm_vertical_leg),
+                    just_prearm_phase=bool(inp.just_prearm_phase),
+                    prearm_vertical_layout=boot.prearm_vertical_layout,
+                )
+            except Exception as exc:
+                render_enabled = False
+                print(f"[WARN] Disabled Crazyflow sim step after error: {exc}")
+    elif boot.sim is not None:
         ctl_hz = float(boot.control_freq_hz)
         step_every = max(1, int(round(float(cfg.fps) / max(ctl_hz, 1e-6))))
         if (frame_idx % step_every) == 0:
@@ -175,6 +190,7 @@ def present_online_frame(inp: PresentFrameInput) -> bool:
         and boot.sim is not None
     ):
         try:
+            draw_axswarm_safety_box_from_settings(boot.sim, boot.axswarm_rt.settings)
             render_sim(boot.sim)
         except Exception as exc:
             render_enabled = False

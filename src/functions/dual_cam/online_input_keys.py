@@ -24,10 +24,8 @@ _KEY_Q = ord("q")
 _warned_climb_while_gestured = False
 
 
-def _real_prearm_key1(ctx: OnlineKeyContext) -> bool:
-    """Real: vertical hold → formation → HL descend in place → HL land."""
-    ex = ctx.real_executor
-    assert ex is not None
+def _hl_prearm_key1(ctx: OnlineKeyContext, ex: object) -> bool:
+    """Vertical hold → formation → HL descend in place → HL land (real or sim executor)."""
     phase = str(ctx.prearm_phase_box[0])
     leg = str(ctx.prearm_vertical_leg_box[0])
     if phase == "vertical" and leg == "climb":
@@ -88,6 +86,7 @@ class OnlineKeyContext:
     left_unwind_s: float
     left_swarm_enabled: bool
     real_executor: object | None = None
+    sim_executor: object | None = None
 
     @classmethod
     def from_boot(cls, boot: OnlineBoot) -> OnlineKeyContext:
@@ -107,6 +106,7 @@ class OnlineKeyContext:
             left_unwind_s=float(boot.left_unwind_s),
             left_swarm_enabled=bool(boot.left_pose_state.enabled),
             real_executor=boot.real_executor,
+            sim_executor=boot.sim_executor,
         )
 
 
@@ -426,48 +426,16 @@ def apply_online_control_key(
                 _warned_climb_while_gestured = True
             return False
         _warned_climb_while_gestured = False
-        if ctx.real_executor is not None:
-            return _real_prearm_key1(ctx)
-        phase = str(ctx.prearm_phase_box[0])
-        if phase == "ground":
-            ctx.prearm_phase_box[0] = "vertical"
-            ctx.prearm_vertical_leg_box[0] = "climb"
-            ctx.prearm_climb_enabled[0] = True
-            ctx.prearm_has_flown_box[0] = True
-            print(
-                f"Vertical takeoff: axswarm-planned climb to z={ctx.prearm_takeoff_z:.2f}m "
-                "(ground XY fixed). Press 1 again for hover formation."
-            )
-        elif phase == "vertical":
-            if str(ctx.prearm_vertical_leg_box[0]) == "climb":
-                ctx.prearm_phase_box[0] = "formation"
-                print(
-                    f"Hover formation: direct 3D move to hover layout "
-                    f"(z≈{ctx.prearm_hover_z:.2f}m, axswarm-planned). "
-                    "Press 1 to shrink back to vertical."
-                )
-            else:
-                ctx.prearm_phase_box[0] = "ground"
-                ctx.prearm_climb_enabled[0] = False
-                print(
-                    f"Axswarm-planned descent to ground layout "
-                    f"(from z≈{ctx.prearm_takeoff_z:.2f}m). Press 1 for next takeoff."
-                )
-        elif phase == "formation":
-            ctx.prearm_phase_box[0] = "vertical"
-            ctx.prearm_vertical_leg_box[0] = "descend"
-            print(
-                f"Hover formation: direct 3D return to vertical layout "
-                f"(z≈{ctx.prearm_takeoff_z:.2f}m, axswarm-planned). "
-                "Press 1 again for ground."
-            )
+        ex = ctx.real_executor if ctx.real_executor is not None else ctx.sim_executor
+        if ex is not None:
+            return _hl_prearm_key1(ctx, ex)
         return False
     if key == _KEY_SPACE:
         if ctx.gesture_control_enabled[0]:
             ctx.gesture_control_enabled[0] = False
             _warned_climb_while_gestured = False
             print(
-                "Gesture control disarmed. Press 1 to descend: formation → vertical → ground, "
+                "Gesture control disarmed. Press 1 to land: formation → HL descend + land, "
                 "then q to quit."
             )
             return False
