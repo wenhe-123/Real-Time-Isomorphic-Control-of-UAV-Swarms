@@ -836,12 +836,25 @@ def _project_onto_plane(v: np.ndarray, plane_normal: np.ndarray) -> np.ndarray:
     return np.asarray(v, dtype=np.float64).reshape(3) - float(np.dot(v, n)) * n
 
 
+def _palm_z_unit_from_y_and_thumb(ey_u: np.ndarray, thumb_vec: np.ndarray, *, min_cross_mm: float = 1e-6) -> np.ndarray | None:
+    """+Z: unit ``Y × (wrist→thumb)`` — normal to the plane spanned by Y and thumb."""
+    z = np.cross(np.asarray(ey_u, dtype=np.float64).reshape(3), np.asarray(thumb_vec, dtype=np.float64).reshape(3))
+    nz = float(np.linalg.norm(z))
+    if nz < float(min_cross_mm):
+        return None
+    return z / nz
+
+
 def _build_palm_basis_middle_y_thumb_x(
     ey: np.ndarray,
     h: np.ndarray,
     wrist: np.ndarray,
 ) -> np.ndarray | None:
-    """Orthonormal palm basis (camera mm): **+Y** wrist→middle; **+X** wrist→thumb in ⊥Y; **+Z** = X×Y."""
+    """Orthonormal palm basis (camera mm).
+
+    **+Y** wrist→middle (unchanged). **+Z** = ``Y × (wrist→thumb)``. **+X** is wrist→thumb
+    projected onto the plane ⊥Y (lies in the Y–thumb plane). Right-handed: ``Z ≈ X × Y``.
+    """
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
     ney = float(np.linalg.norm(ey_u))
     if ney < 1e-9:
@@ -850,14 +863,14 @@ def _build_palm_basis_middle_y_thumb_x(
     thumb_vec = _wrist_to_thumb_vector_mm(h, wrist)
     if thumb_vec is None:
         return None
+    ez = _palm_z_unit_from_y_and_thumb(ey_u, thumb_vec)
+    if ez is None:
+        return None
     ex = _palm_x_unit_perp_y(thumb_vec, ey_u)
     if ex is None:
         return None
-    ez = np.cross(ex, ey_u)
-    nez = float(np.linalg.norm(ez))
-    if nez < 1e-9:
-        return None
-    ez = ez / nez
+    if float(np.dot(np.cross(ex, ey_u), ez)) < 0.0:
+        ex = -ex
     return np.stack([ex, ey_u, ez], axis=1)
 
 
@@ -882,7 +895,7 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Palm frame (camera mm): **+Y** wrist→middle; **+X** wrist→thumb in plane ⊥Y; **+Z** = X×Y."""
+    """Palm frame (camera mm): **+Y** wrist→middle; **+Z** = Y×(wrist→thumb); **+X** thumb in ⊥Y."""
     wrist = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
     ey = _middle_finger_axis(h, wrist)
     if ey is None:
