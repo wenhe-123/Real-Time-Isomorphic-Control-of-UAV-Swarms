@@ -25,6 +25,26 @@ _LM_DISPLAY_LIM_MM = 160.0
 _PALM_AXIS_LEN_FRAC = 0.42
 _PALM_LIMIT_PAD_FRAC = 0.22
 _PALM_LIMIT_MIN_PAD_MM = 8.0
+# Camera mm (X right, Y down, Z fwd) → plot mm so palm +Y (finger) is vertical on screen.
+# plot = (cam_x, cam_z, -cam_y): mpl Z is vertical; palm Y maps to +plot Z.
+_PALM_POSE_CAM_TO_DISPLAY = np.array(
+    [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]],
+    dtype=np.float64,
+)
+
+
+def _palm_pose_cam_to_display(p: np.ndarray) -> np.ndarray:
+    """Map depth-camera mm to palm-pose debug plot coords (Y triad vertical)."""
+    pts = np.asarray(p, dtype=np.float64)
+    if pts.ndim == 1:
+        return (_PALM_POSE_CAM_TO_DISPLAY @ pts.reshape(3)).reshape(3)
+    return pts @ _PALM_POSE_CAM_TO_DISPLAY.T
+
+
+def _palm_pose_basis_cam_to_display(basis: np.ndarray) -> np.ndarray:
+    B = np.asarray(basis, dtype=np.float64).reshape(3, 3)
+    return _PALM_POSE_CAM_TO_DISPLAY @ B
+
 
 # (key, title, x, y)
 _WINDOW_SPECS: tuple[tuple[str, str, int, int], ...] = (
@@ -502,8 +522,11 @@ def update_report_palm_pose_figure(
     origin_cam = np.asarray(pc if origin_cam is None else origin_cam, dtype=np.float64).reshape(3)
 
     def _rel(pts: np.ndarray) -> np.ndarray:
-        return np.asarray(pts, dtype=np.float64).reshape(-1, 3) - origin_cam.reshape(1, 3)
+        return _palm_pose_cam_to_display(
+            np.asarray(pts, dtype=np.float64).reshape(-1, 3) - origin_cam.reshape(1, 3)
+        )
 
+    basis = _palm_pose_basis_cam_to_display(basis)
     palm_ids = [WRIST_ID] + list(MCP_IDS)
     palm_pts = np.array([h[i] for i in palm_ids if i < len(h)], dtype=np.float64)
     palm_pts_d = _rel(palm_pts)
@@ -549,7 +572,9 @@ def update_report_palm_pose_figure(
 
     if left_pose_state is not None and bool(getattr(left_pose_state, "initialized", False)):
         ref_o_cam = np.asarray(left_pose_state.ref_palm_center, dtype=np.float64).reshape(3)
-        ref_b = np.asarray(left_pose_state.ref_basis, dtype=np.float64).reshape(3, 3)
+        ref_b = _palm_pose_basis_cam_to_display(
+            np.asarray(left_pose_state.ref_basis, dtype=np.float64).reshape(3, 3)
+        )
         ref_o_d = _rel(ref_o_cam).reshape(3)
         ref_len = axis_len * 0.92
         _draw_basis_triad(ax_palm, ref_o_d, ref_b, scale=ref_len, dashed=True)
@@ -581,7 +606,7 @@ def update_report_palm_pose_figure(
         color="0.45",
         va="bottom",
     )
-    ax_palm.view_init(elev=18, azim=-72)
+    ax_palm.view_init(elev=22, azim=-58)
     ax_palm.set_box_aspect((1.0, 1.0, 1.0))
     ax_palm.legend(loc="upper left", fontsize=7)
 
