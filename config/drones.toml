@@ -2,7 +2,7 @@
 # URIs are built from addr/channel via ``config/settings.yaml`` → radio.uri_base.
 # Trim ``active`` to the drones you fly.
 
-active = ["cf34", "cf21", "cf15", "cf12", "cf24", "cf11", "cf13", "cf14"]
+active = ["cf12", "cf15", "cf22", "cf33", "cf11", "cf24", "cf25", "cf13"]
 
 [swarm]
 ctrl_freq = 10.0
@@ -19,27 +19,27 @@ yaw_deg = 90.0
 [cf11]
 addr = 11
 channel = 10
-pos = [1.26, 0.19, 0.0]
+pos = [-0.49, 1.39, 0.0]
 
 [cf12]
 addr = 12
 channel = 10
-pos = [1.26, -0.74, 0.0]
+pos = [-1.43, 0.51, 0.0]
 
 [cf13]
 addr = 13
 channel = 10
-pos = [-1.15, -0.74, 0.0]
+pos = [-0.13, 0.20, 0.0]
 
 [cf14]
 addr = 14
 channel = 10
-pos = [-0.94, 0.14, 0.0]
+pos = [0.76, 0.25, 0.0]
 
 [cf15]
 addr = 15
 channel = 10
-pos = [-0.13, -0.94, 0.0]
+pos = [0.78, 1.13, 0.0]
 
 [cf21]
 addr = 21
@@ -49,22 +49,22 @@ pos = [0.90, 0.89, 0.0]
 [cf22]
 addr = 22
 channel = 20
-pos = [1.22, 0.89, 0.0]
+pos = [-0.15, -1.32, 0.0]
 
 [cf23]
 addr = 23
 channel = 20
-pos = [0.0, 1.0, 0.0]
+pos = [-0.09, -0.16, 0.0]
 
 [cf24]
 addr = 24
 channel = 20
-pos = [-0.08, 1.13, 0.0]
+pos = [1.40, 0.49, 0.0]
 
 [cf25]
 addr = 25
 channel = 20
-pos = [-1.5, 1.0, 0.0]
+pos = [-1.23, -0.78, 0.0]
 
 [cf31]
 addr = 31
@@ -79,12 +79,12 @@ pos = [1.1, -1.0, 0.0]
 [cf33]
 addr = 33
 channel = 30
-pos = [1.1, 0.0, 0.0]
+pos = [1.11, -0.80, 0.0]
 
 [cf34]
 addr = 34
 channel = 30
-pos = [-1.55, 0.17, 0.0]
+pos = [0.13, 1.35, 0.0]
 
 [cf35]
 addr = 35
@@ -99,12 +99,12 @@ pos = [-1.1, -2.0, 0.0]
 [cf42]
 addr = 42
 channel = 40
-pos = [-1.1, -1.0, 0.0]
+pos = [-0.09, -0.16, 0.0]
 
 [cf43]
 addr = 43
 channel = 40
-pos = [-1.1, 0.0, 0.0]
+pos = [1.62, -0.09, 0.0]
 
 [cf44]
 addr = 44

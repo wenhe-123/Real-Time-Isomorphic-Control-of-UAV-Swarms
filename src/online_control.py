@@ -424,11 +424,12 @@ def run_integrated_online_control(
                 else:
                     boot.render_enabled = present_online_frame(present_inp)
 
+                _orbbec_disp = cv2.flip(cap.frame, 1)
                 ui_key = poll_cv_key(
                     cv_poll_key=cv_poll_key,
                     imshow=(boot.frame_idx % cfg.imshow_every) == 0,
                     window=ocv_window_title,
-                    frame=cap.frame,
+                    frame=_orbbec_disp,
                 )
                 if _poll_keys(ui_key):
                     break

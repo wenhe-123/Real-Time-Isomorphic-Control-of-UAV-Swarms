@@ -43,7 +43,7 @@ def build_online_control_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--z-amplitude",
         type=float,
-        default=0.35,
+        default=0.55,
         help="Max ±Z thickness around hover_z for morph mapping (m).",
     )
     parser.add_argument("--reference-xy-extent-mm", type=float, default=100.0)

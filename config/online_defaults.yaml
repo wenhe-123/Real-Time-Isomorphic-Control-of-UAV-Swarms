@@ -59,7 +59,7 @@ LeftHandPose:
   left_max_offset_m: 1.35
   left_lost_decay: 1.0  # Hold last pose when hand lost (1.0 = no decay)
   left_rot_scale: 1.0
-  left_rot_gain: 1.35
+  left_rot_gain: 1.0
   left_rot_gate_rad: 0.008  # Min |rotvec| before applying formation rotation
   left_max_rot_rad: 3.14  # Max press-0 relative rotation (rad, ~180°)
   left_rot_trans_tau_mm: 0.0  # Rotation suppression during pans (0 = off)

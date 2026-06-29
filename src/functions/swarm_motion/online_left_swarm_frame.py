@@ -123,6 +123,7 @@ def apply_left_swarm_frame(
                 2,
                 cv2.LINE_AA,
             )
+            _wdisp = cv2.flip(_wdisp, 1)
             cv2.imshow(ONLINE_DEFAULTS.display.wcam_preview_window, _wdisp)
         _left_pose_hold = gest.idx_l is None or (
             gest.orbbec_vis_min_now is not None

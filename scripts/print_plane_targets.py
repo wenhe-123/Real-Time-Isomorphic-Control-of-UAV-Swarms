@@ -42,7 +42,7 @@ def main() -> None:
     scale = ScaleConfig(
         xy_radius=3.0,
         hover_z=float(ONLINE_DEFAULTS.prearm.prearm_hover_z),
-        z_amplitude=0.35,
+        z_amplitude=0.55,
         reference_xy_extent_mm=100.0,
         reference_z_extent_mm=100.0,
         morph_world_scale=float(ONLINE_DEFAULTS.morph.morph_world_scale),
