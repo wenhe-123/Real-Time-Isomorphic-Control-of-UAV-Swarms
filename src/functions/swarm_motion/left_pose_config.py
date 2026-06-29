@@ -18,7 +18,7 @@ from functions.mode_switch.hand_constants import (
 )
 
 LEFT_PALM_BASIS_PRESETS: dict[str, tuple[int, int]] = {
-    # Default: X/Y in screen plane; Y is wrist→middle fingertip, X thumb side; Z flips for palm/back.
+    # Default: Y wrist→middle fingertip, X thumb lateral; Z = X×Y only (SVD plane is for palm center).
     "middle_thumb": (MIDDLE_MCP_ID, THUMB_MCP_ID),
     "index_middle": (MIDDLE_MCP_ID, INDEX_MCP_ID),
     "index_ring": (RING_MCP_ID, INDEX_MCP_ID),

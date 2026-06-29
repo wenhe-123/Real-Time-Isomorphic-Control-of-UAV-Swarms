@@ -20,6 +20,7 @@ from functions.display_sim.online_frame_present import present_online_frame
 from debug.gesture_report_debug import close_report_debug_figures
 from functions.display_sim.online_plot import close_3d_plot, init_3d_plot
 from functions.display_sim.online_plot_frame import update_online_plot_frame
+from functions.display_sim.orbbec_depth_fov_display import crop_orbbec_display_frame
 from functions.display_sim.orbbec_hand import create_hand_landmarker
 from functions.dual_cam.dual_view_utils import open_webcam_capture
 from functions.dual_cam.online_frame_capture import CaptureFrameInput, grab_orbbec_mp_frame
@@ -424,7 +425,13 @@ def run_integrated_online_control(
                 else:
                     boot.render_enabled = present_online_frame(present_inp)
 
-                _orbbec_disp = cv2.flip(cap.frame, 1)
+                _orbbec_disp = cv2.flip(
+                    crop_orbbec_display_frame(
+                        cap.frame,
+                        boot.orbbec_depth_fov_crop if cfg.orbbec_display_depth_fov_only else None,
+                    ),
+                    1,
+                )
                 ui_key = poll_cv_key(
                     cv_poll_key=cv_poll_key,
                     imshow=(boot.frame_idx % cfg.imshow_every) == 0,

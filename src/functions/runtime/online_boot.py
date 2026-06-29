@@ -113,6 +113,7 @@ class OnlineBoot:
     control_freq_hz: float
     render_enabled: bool = True
     orbbec_flip_depth_warned: bool = False
+    orbbec_depth_fov_crop: tuple[int, int, int, int] | None = None
     gesture_control_enabled: bool = False
     prev_gesture_control_enabled: bool = False
     prearm_climb_enabled: bool = False
@@ -164,6 +165,29 @@ def boot_online_control(
     )
     k4a.start()
     calib = k4a.calibration
+
+    from functions.display_sim.orbbec_depth_fov_display import compute_depth_fov_crop_rect
+
+    orbbec_depth_fov_crop: tuple[int, int, int, int] | None = None
+    if bool(cfg.orbbec_display_depth_fov_only):
+        color_h, color_w = 720, 1280
+        depth_h, depth_w = 576, 640
+        try:
+            probe = k4a.get_capture()
+            if probe is not None:
+                if getattr(probe, "color", None) is not None:
+                    color_h, color_w = int(probe.color.shape[0]), int(probe.color.shape[1])
+                if getattr(probe, "depth", None) is not None:
+                    depth_h, depth_w = int(probe.depth.shape[0]), int(probe.depth.shape[1])
+        except Exception:
+            pass
+        orbbec_depth_fov_crop = compute_depth_fov_crop_rect(
+            calib,
+            color_w=color_w,
+            color_h=color_h,
+            depth_w=depth_w,
+            depth_h=depth_h,
+        )
 
     n_drones = int(cfg.point_count)
     real_executor: RealSwarmExecutor | None = None
@@ -425,6 +449,13 @@ def boot_online_control(
             "Orbbec transformed_depth is ON (K4A alignment). If the process aborts, set "
             "orbbec_use_transformed_depth: false in config/online_defaults.yaml."
         )
+    if orbbec_depth_fov_crop is not None:
+        x0, y0, x1, y1 = orbbec_depth_fov_crop
+        print(
+            f"Orbbec preview: cropped to depth-camera FOV "
+            f"(color px x=[{x0},{x1}) y=[{y0},{y1})). "
+            "Set orbbec_display_depth_fov_only: false to show full RGB."
+        )
     if orbbec_swap_mp_hands:
         print(
             "Orbbec: swapping MediaPipe left/right for mode vs open hand "
@@ -542,6 +573,7 @@ def boot_online_control(
         left_pose_tuning=left_pose_tuning,
         start_time=time.monotonic(),
         control_freq_hz=control_freq_hz,
+        orbbec_depth_fov_crop=orbbec_depth_fov_crop,
         extras={
             "report_debug_figs": report_debug_figs,
             "report_panels": panels if panels.any_enabled() else None,

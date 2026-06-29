@@ -19,6 +19,7 @@ class DisplayDefaults:
     led_apply_every_frames: int
     sim_render_every: int
     online_imshow_every: int
+    orbbec_display_depth_fov_only: bool
     trail_buffer_maxlen: int
     wcam_preview_window: str
 
@@ -137,6 +138,7 @@ class OnlineDefaults:
                 led_apply_every_frames=int(d["led_apply_every_frames"]),
                 sim_render_every=int(d["sim_render_every"]),
                 online_imshow_every=int(d["online_imshow_every"]),
+                orbbec_display_depth_fov_only=bool(d.get("orbbec_display_depth_fov_only", True)),
                 trail_buffer_maxlen=int(d["trail_buffer_maxlen"]),
                 wcam_preview_window=str(d["wcam_preview_window"]),
             ),

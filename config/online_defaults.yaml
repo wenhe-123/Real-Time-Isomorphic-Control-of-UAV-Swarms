@@ -8,6 +8,7 @@ Display:
   led_apply_every_frames: 3  # LED material refresh stride
   sim_render_every: 2  # Crazyflow render window stride (0 = off)
   online_imshow_every: 4  # OpenCV Orbbec window refresh stride
+  orbbec_display_depth_fov_only: true  # Crop Orbbec preview to depth-camera FOV
   trail_buffer_maxlen: 6  # MuJoCo trail history length
   wcam_preview_window: "Online Control Webcam (dual rotation)"
 

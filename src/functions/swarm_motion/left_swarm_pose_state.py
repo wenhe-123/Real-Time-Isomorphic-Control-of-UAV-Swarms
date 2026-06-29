@@ -9,7 +9,7 @@ import numpy as np
 
 from functions.mode_switch.hand_constants import WRIST_ID
 from functions.swarm_motion.left_pose_config import DEFAULT_LEFT_PALM_BASIS
-from functions.swarm_motion.left_palm_geom import _enforce_thumb_positive_x, palm_orthonormal_basis
+from functions.swarm_motion.left_palm_geom import palm_orthonormal_basis
 
 
 @dataclass
@@ -103,7 +103,6 @@ class LeftSwarmPoseState:
                 return False
             origin, B = out
             pc = np.asarray(origin, dtype=np.float64).reshape(3)
-        B = _enforce_thumb_positive_x(B, h, wrist_mm)
         if palm_center_override is not None:
             pc_ov = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
             if np.all(np.isfinite(pc_ov)):

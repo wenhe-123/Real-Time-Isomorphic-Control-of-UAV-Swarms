@@ -751,11 +751,7 @@ def palm_basis_from_mp_image_plane(
     if ne3 < 1e-6:
         return None
     e3 = e3 / ne3
-    B = np.stack([e1, e2, e3], axis=1)
-    h2 = np.zeros((21, 3), dtype=np.float64)
-    for j in range(21):
-        h2[j] = xy(j)
-    return _enforce_thumb_positive_x(B, h2, wrist)
+    return np.stack([e1, e2, e3], axis=1)
 
 
 def orthonormal_basis_from_landmark_pair(
@@ -808,21 +804,6 @@ def _thumb_lateral_axis(h: np.ndarray, wrist: np.ndarray) -> np.ndarray | None:
     return _segment_axis(h, wrist, THUMB_MCP_ID, THUMB_TIP_ID)
 
 
-def _enforce_thumb_positive_x(B: np.ndarray, h: np.ndarray, wrist: np.ndarray) -> np.ndarray:
-    """Palm +X toward thumb; keep +Y fixed and recompute +Z = X×Y (right-handed)."""
-    out = np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
-    thumb = _thumb_lateral_axis(h, wrist)
-    if thumb is None:
-        thumb = np.asarray(h[THUMB_MCP_ID, :3], dtype=np.float64).reshape(3) - wrist
-    if float(np.dot(out[:, 0], thumb)) < 0.0:
-        out[:, 0] *= -1.0
-    ez = np.cross(out[:, 0], out[:, 1])
-    nez = float(np.linalg.norm(ez))
-    if nez > 1e-9:
-        out[:, 2] = ez / nez
-    return out
-
-
 def _project_onto_plane(v: np.ndarray, plane_normal: np.ndarray) -> np.ndarray:
     """Remove component along ``plane_normal``."""
     n = np.asarray(plane_normal, dtype=np.float64).reshape(3)
@@ -837,20 +818,13 @@ def _build_palm_basis_middle_y_thumb_x(
     ey: np.ndarray,
     h: np.ndarray,
     wrist: np.ndarray,
-    *,
-    plane_n: np.ndarray | None = None,
 ) -> np.ndarray | None:
     """Orthonormal palm basis (camera mm): **+Y** wrist→middle fingertip, **+X** thumb lateral, **+Z** = X×Y.
 
-    When ``plane_n`` is set, +X/+Y are built in the fitted palm plane (reduces depth-noise tilt).
-    ``+Y`` is never flipped to chase camera/ref continuity; palm vs back is represented by
-    the resulting ``+Z`` sign. ``+X`` is chosen on the thumb side.
+    +X/+Y come from 3D finger axes only (Gram–Schmidt). SVD palm plane is **not** used here.
+    Palm vs back is represented solely by the ``+Z`` sign from ``ex × ey``.
     """
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
-    if plane_n is not None:
-        pn = np.asarray(plane_n, dtype=np.float64).reshape(3)
-        pn = pn / max(float(np.linalg.norm(pn)), 1e-9)
-        ey_u = _project_onto_plane(ey_u, pn)
     ney = float(np.linalg.norm(ey_u))
     if ney < 1e-9:
         return None
@@ -858,10 +832,6 @@ def _build_palm_basis_middle_y_thumb_x(
     thumb = _thumb_lateral_axis(h, wrist)
     if thumb is None:
         thumb = np.asarray(h[THUMB_MCP_ID, :3], dtype=np.float64).reshape(3) - wrist
-    if plane_n is not None:
-        pn = np.asarray(plane_n, dtype=np.float64).reshape(3)
-        pn = pn / max(float(np.linalg.norm(pn)), 1e-9)
-        thumb = _project_onto_plane(thumb, pn)
     ex = _project_onto_plane(thumb, ey_u)
     nex = float(np.linalg.norm(ex))
     if nex < 1e-6:
@@ -876,8 +846,7 @@ def _build_palm_basis_middle_y_thumb_x(
     if nez < 1e-9:
         return None
     ez = ez / nez
-    B = np.stack([ex, ey_u, ez], axis=1)
-    return _enforce_thumb_positive_x(B, h, wrist)
+    return np.stack([ex, ey_u, ez], axis=1)
 
 
 def align_palm_basis_to_reference(
@@ -885,16 +854,14 @@ def align_palm_basis_to_reference(
     B_ref: np.ndarray,
     h: np.ndarray,
     wrist: np.ndarray,
-    *,
-    plane_n: np.ndarray | None = None,
 ) -> np.ndarray:
     """Rebuild with physical +Y preserved; palm/back changes appear as +Z changes."""
     del B_ref
     ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
-    rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, wrist, plane_n=plane_n)
+    rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, wrist)
     if rebuilt is not None:
         return rebuilt
-    return _enforce_thumb_positive_x(B, h, wrist)
+    return np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
 
 
 def palm_orthonormal_basis_middle_y_thumb_x(
@@ -908,24 +875,16 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     ey = _middle_finger_axis(h, wrist)
     if ey is None:
         return None
-    plane_n: np.ndarray | None = None
-    fit = palm_plane_fit_mm(h)
-    if fit is not None:
-        plane_n, _, _ = fit
-    B = _build_palm_basis_middle_y_thumb_x(ey, h, wrist, plane_n=plane_n)
+    B = _build_palm_basis_middle_y_thumb_x(ey, h, wrist)
     if B is None:
         return None
     if ref_basis is not None:
-        B = align_palm_basis_to_reference(B, ref_basis, h, wrist, plane_n=plane_n)
-    pc = palm_frame_origin_mm(h)
+        B = align_palm_basis_to_reference(B, ref_basis, h, wrist)
     if palm_center_override is not None:
         pc_ov = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
-        if np.all(np.isfinite(pc_ov)):
-            if plane_n is not None and fit is not None:
-                _, hp, _ = fit
-                pc = _project_point_onto_plane(pc_ov, plane_n, hp)
-            else:
-                pc = pc_ov
+        pc = pc_ov if np.all(np.isfinite(pc_ov)) else palm_frame_origin_mm(h)
+    else:
+        pc = palm_frame_origin_mm(h)
     if pc is None:
         pc = wrist
     return np.asarray(pc, dtype=np.float64).reshape(3), B

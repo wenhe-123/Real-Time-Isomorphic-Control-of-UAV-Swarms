@@ -46,6 +46,7 @@ class OnlineRuntimeConfig:
     led_every_n: int
     sim_render_every: int
     imshow_every: int
+    orbbec_display_depth_fov_only: bool
     mp_detect_every: int
     debug_drone_targets_every: int
     debug_drone_pos_every: int
@@ -136,6 +137,7 @@ def build_online_runtime_config(
             else max(0, int(d.display.sim_render_every))
         ),
         imshow_every=max(1, int(d.display.online_imshow_every)),
+        orbbec_display_depth_fov_only=bool(d.display.orbbec_display_depth_fov_only),
         mp_detect_every=max(1, int(d.camera.mp_detect_every)),
         debug_drone_targets_every=max(0, int(args.debug_drone_targets_every)),
         debug_drone_pos_every=debug_drone_pos_every,
