@@ -799,9 +799,31 @@ def _middle_finger_axis(h: np.ndarray, wrist: np.ndarray) -> np.ndarray | None:
     return _segment_axis(h, wrist, MIDDLE_MCP_ID, MIDDLE_TIP_ID)
 
 
-def _thumb_lateral_axis(h: np.ndarray, wrist: np.ndarray) -> np.ndarray | None:
-    """+X palm: thumb direction (tip when reliable)."""
-    return _segment_axis(h, wrist, THUMB_MCP_ID, THUMB_TIP_ID)
+def _landmark_mm_if_finite(h: np.ndarray, jidx: int, wrist: np.ndarray) -> np.ndarray | None:
+    p = np.asarray(h[int(jidx), :3], dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(p)):
+        return None
+    return p - np.asarray(wrist, dtype=np.float64).reshape(3)
+
+
+def _wrist_to_thumb_vector_mm(h: np.ndarray, wrist: np.ndarray) -> np.ndarray | None:
+    """Wrist → thumb in camera mm (MCP; tip only when MCP missing)."""
+    v = _landmark_mm_if_finite(h, THUMB_MCP_ID, wrist)
+    if v is not None and float(np.linalg.norm(v)) >= 1e-6:
+        return v
+    v = _landmark_mm_if_finite(h, THUMB_TIP_ID, wrist)
+    if v is not None and float(np.linalg.norm(v)) >= 1e-6:
+        return v
+    return None
+
+
+def _palm_x_unit_perp_y(thumb_vec: np.ndarray, ey_u: np.ndarray, *, min_lat_mm: float = 1e-6) -> np.ndarray | None:
+    """+X: unit vector of wrist→thumb projected onto the plane perpendicular to ``ey_u`` (+Y)."""
+    lat = _project_onto_plane(np.asarray(thumb_vec, dtype=np.float64).reshape(3), ey_u)
+    nlat = float(np.linalg.norm(lat))
+    if nlat < float(min_lat_mm):
+        return None
+    return lat / nlat
 
 
 def _project_onto_plane(v: np.ndarray, plane_normal: np.ndarray) -> np.ndarray:
@@ -819,28 +841,18 @@ def _build_palm_basis_middle_y_thumb_x(
     h: np.ndarray,
     wrist: np.ndarray,
 ) -> np.ndarray | None:
-    """Orthonormal palm basis (camera mm): **+Y** wrist→middle fingertip, **+X** thumb lateral, **+Z** = X×Y.
-
-    +X/+Y come from 3D finger axes only (Gram–Schmidt). SVD palm plane is **not** used here.
-    Palm vs back is represented solely by the ``+Z`` sign from ``ex × ey``.
-    """
+    """Orthonormal palm basis (camera mm): **+Y** wrist→middle; **+X** wrist→thumb in ⊥Y; **+Z** = X×Y."""
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
     ney = float(np.linalg.norm(ey_u))
     if ney < 1e-9:
         return None
     ey_u = ey_u / ney
-    thumb = _thumb_lateral_axis(h, wrist)
-    if thumb is None:
-        thumb = np.asarray(h[THUMB_MCP_ID, :3], dtype=np.float64).reshape(3) - wrist
-    ex = _project_onto_plane(thumb, ey_u)
-    nex = float(np.linalg.norm(ex))
-    if nex < 1e-6:
-        index = np.asarray(h[INDEX_MCP_ID, :3], dtype=np.float64).reshape(3) - wrist
-        ex = _project_onto_plane(index, ey_u)
-        nex = float(np.linalg.norm(ex))
-    if nex < 1e-9:
+    thumb_vec = _wrist_to_thumb_vector_mm(h, wrist)
+    if thumb_vec is None:
         return None
-    ex = ex / nex
+    ex = _palm_x_unit_perp_y(thumb_vec, ey_u)
+    if ex is None:
+        return None
     ez = np.cross(ex, ey_u)
     nez = float(np.linalg.norm(ez))
     if nez < 1e-9:
@@ -870,7 +882,7 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Palm frame (camera mm): **+Y** wrist→middle fingertip, **+X** thumb lateral, **+Z** = X×Y."""
+    """Palm frame (camera mm): **+Y** wrist→middle; **+X** wrist→thumb in plane ⊥Y; **+Z** = X×Y."""
     wrist = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
     ey = _middle_finger_axis(h, wrist)
     if ey is None:
