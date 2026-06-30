@@ -140,6 +140,7 @@ def update_left_swarm_pose(
         palm_basis=sensor.palm_basis,
         ref_basis=ref_b,
         palm_center_override=sensor.palm_center_depth_mm,
+        mp_middle_xy_dir=sensor.mp_middle_y_xy_dir,
     )
     if sensor.palm_center_color_px is not None:
         state.last_palm_center_color_px = sensor.palm_center_color_px

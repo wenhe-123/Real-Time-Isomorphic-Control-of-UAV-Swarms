@@ -162,3 +162,30 @@ def orbbec_resolve_swap_mp_hands(*, hand_swap: str, flip_horizontal: bool, use_o
         return bool(flip_horizontal)
     return hs == "on"
 
+
+def middle_finger_mp_xy_dir(result, hand_idx: int | None) -> np.ndarray | None:
+    """Unit 2D wrist → middle MCP (MP normalized image; used for +Y sign only)."""
+    if (
+        result is None
+        or hand_idx is None
+        or not getattr(result, "hand_landmarks", None)
+        or int(hand_idx) >= len(result.hand_landmarks)
+    ):
+        return None
+    from functions.mode_switch.hand_constants import MIDDLE_MCP_ID, WRIST_ID
+
+    hlm = result.hand_landmarks[int(hand_idx)]
+    if len(hlm) <= int(MIDDLE_MCP_ID):
+        return None
+    v = np.array(
+        [
+            float(hlm[MIDDLE_MCP_ID].x) - float(hlm[WRIST_ID].x),
+            float(hlm[MIDDLE_MCP_ID].y) - float(hlm[WRIST_ID].y),
+        ],
+        dtype=np.float64,
+    )
+    n = float(np.linalg.norm(v))
+    if n < 1e-8:
+        return None
+    return v / n
+
