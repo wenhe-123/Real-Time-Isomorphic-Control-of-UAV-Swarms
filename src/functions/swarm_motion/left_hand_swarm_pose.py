@@ -135,11 +135,19 @@ def update_left_swarm_pose(
         state.last_depth_outlier_prev = False
 
     ref_b = state.ref_basis if state.initialized and not sensor.force_reset else None
+    prev_y: np.ndarray | None = None
+    if (
+        state.prev_rot_basis is not None
+        and not sensor.force_reset
+        and str(getattr(state, "prev_rot_source", "depth")) == "depth"
+    ):
+        prev_y = np.asarray(state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
     out = palm_orthonormal_basis(
         h,
         palm_basis=sensor.palm_basis,
         ref_basis=ref_b,
         palm_center_override=sensor.palm_center_depth_mm,
+        prev_y=prev_y,
     )
     if sensor.palm_center_color_px is not None:
         state.last_palm_center_color_px = sensor.palm_center_color_px
