@@ -20,8 +20,8 @@ SolverSettings:
 
   # Limits
   pos_min: [-2, -2, 0.2]  # Minimum position of the AMSwarm drones
-  pos_max: [2, 2, 2]  # Maximum position of the AMSwarm drones
-  vel_max: 1.0 # Maximum velocity of the AMSwarm drones
+  pos_max: [2, 2, 2.5]  # Maximum position of the AMSwarm drones
+  vel_max: 2.0 # Maximum velocity of the AMSwarm drones
   acc_max: 1.0  # Maximum force of the AMSwarm drones (0.75 gs)
   collision_envelope: [0.25, 0.25, 0.25]  # Collision envelope width in x, y, z
 
