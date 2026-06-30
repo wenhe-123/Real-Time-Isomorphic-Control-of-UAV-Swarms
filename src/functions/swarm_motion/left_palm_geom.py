@@ -864,91 +864,51 @@ def _origin_to_joint_vector_mm(
     return None
 
 
-def _middle_y_unit_geom(h: np.ndarray, origin: np.ndarray) -> np.ndarray | None:
-    """Unit vector palm origin → middle MCP (exact 3D chord in ``h``)."""
-    v = _landmark_mm_if_finite(h, MIDDLE_MCP_ID, origin)
-    if v is None:
-        return None
-    n = float(np.linalg.norm(v))
-    if n < 1e-6:
-        return None
-    return np.asarray(v / n, dtype=np.float64).reshape(3)
-
-
-def _flip_y_to_match_cam_xy(ey: np.ndarray, mp_middle_xy_dir: np.ndarray) -> np.ndarray:
-    """Flip ``ey`` so its camera-XY projection agrees with the MP image direction."""
-    ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
-    m = np.asarray(mp_middle_xy_dir, dtype=np.float64).reshape(2)
-    mn = float(np.linalg.norm(m))
-    if mn < 1e-8:
-        return ey_u
-    mp_xy = m / mn
-    exy = ey_u[:2]
-    en = float(np.linalg.norm(exy))
-    if en < 1e-8:
-        return ey_u
-    if float(np.dot(exy / en, mp_xy)) < 0.0:
-        return -ey_u
-    return ey_u
-
-
-def _wrist_to_middle_bone_unit(h: np.ndarray) -> np.ndarray | None:
-    """Unit wrist → middle MCP in depth-camera mm (3D sign fallback)."""
+def _middle_y_unit_wrist_to_mcp(h: np.ndarray) -> np.ndarray | None:
+    """Unit vector wrist → middle MCP (+Y direction in depth-camera mm)."""
     wrist = _landmark_mm_if_valid(h, WRIST_ID)
     mcp = _landmark_mm_if_valid(h, MIDDLE_MCP_ID)
     if wrist is None or mcp is None:
         return None
-    bv = np.asarray(mcp, dtype=np.float64).reshape(3) - np.asarray(wrist, dtype=np.float64).reshape(3)
-    bn = float(np.linalg.norm(bv))
-    if bn < 1e-6:
+    v = np.asarray(mcp, dtype=np.float64).reshape(3) - np.asarray(wrist, dtype=np.float64).reshape(3)
+    n = float(np.linalg.norm(v))
+    if n < 1e-6:
         return None
-    return bv / bn
+    return v / n
 
 
-def _choose_middle_y_signed(
-    ey_geom: np.ndarray,
-    h: np.ndarray,
-    *,
-    ref_y: np.ndarray | None = None,
-    mp_middle_xy_dir: np.ndarray | None = None,
-) -> np.ndarray:
-    """Direction from 3D palm→middle-MCP; sign from 2D MP (else 3D wrist bone, else ref)."""
-    ey = np.asarray(ey_geom, dtype=np.float64).reshape(3)
-    ney = float(np.linalg.norm(ey))
+def _middle_mcp_to_tip_unit(h: np.ndarray) -> np.ndarray | None:
+    """Unit vector middle MCP → tip (sign auxiliary for +Y only)."""
+    mcp = _landmark_mm_if_valid(h, MIDDLE_MCP_ID)
+    tip = _landmark_mm_if_valid(h, MIDDLE_TIP_ID)
+    if mcp is None or tip is None:
+        return None
+    v = np.asarray(tip, dtype=np.float64).reshape(3) - np.asarray(mcp, dtype=np.float64).reshape(3)
+    n = float(np.linalg.norm(v))
+    if n < 1e-6:
+        return None
+    return v / n
+
+
+def _lock_middle_y_sign_from_tip(ey: np.ndarray, h: np.ndarray) -> np.ndarray:
+    """Flip +Y to match middle MCP→tip when tip depth is available (sign only)."""
+    ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
+    ney = float(np.linalg.norm(ey_u))
     if ney < 1e-9:
-        return ey
-    ey = ey / ney
-
-    if mp_middle_xy_dir is not None:
-        return _flip_y_to_match_cam_xy(ey, mp_middle_xy_dir)
-
-    bone = _wrist_to_middle_bone_unit(h)
-    if bone is not None and float(np.dot(ey, bone)) < 0.0:
-        ey = -ey
-        return ey
-
-    if ref_y is not None:
-        r = np.asarray(ref_y, dtype=np.float64).reshape(3)
-        rn = float(np.linalg.norm(r))
-        if rn >= 1e-9 and float(np.dot(ey, r / rn)) < 0.0:
-            ey = -ey
-    return ey
+        return ey_u
+    ey_u = ey_u / ney
+    tip_seg = _middle_mcp_to_tip_unit(h)
+    if tip_seg is not None and float(np.dot(ey_u, tip_seg)) < 0.0:
+        ey_u = -ey_u
+    return ey_u
 
 
-def _middle_finger_axis(
-    h: np.ndarray,
-    origin: np.ndarray,
-    *,
-    ref_y: np.ndarray | None = None,
-    mp_middle_xy_dir: np.ndarray | None = None,
-) -> np.ndarray | None:
-    """+Y direction: 3D palm→middle MCP; sign: 2D wrist→middle MCP in MP image."""
-    ey = _middle_y_unit_geom(h, origin)
+def _middle_finger_axis(h: np.ndarray) -> np.ndarray | None:
+    """+Y: wrist → middle MCP (3D); sign corrected by MCP → tip only."""
+    ey = _middle_y_unit_wrist_to_mcp(h)
     if ey is None:
         return None
-    return _choose_middle_y_signed(
-        ey, h, ref_y=ref_y, mp_middle_xy_dir=mp_middle_xy_dir
-    )
+    return _lock_middle_y_sign_from_tip(ey, h)
 
 
 def _landmark_mm_if_finite(h: np.ndarray, jidx: int, origin: np.ndarray) -> np.ndarray | None:
@@ -1004,7 +964,7 @@ def _build_palm_basis_middle_y_thumb_x(
     h: np.ndarray,
     origin: np.ndarray,
 ) -> np.ndarray | None:
-    """Orthonormal palm basis (camera mm); ``ey`` is the fixed +Y (palm → middle finger).
+    """Orthonormal palm basis (camera mm); ``ey`` is fixed +Y (wrist → middle MCP).
 
     **+Z** = ``Y × (palm→thumb chain)``. **+X** = palm→thumb **tip** in plane ⊥Y.
     Right-handed: ``Z ≈ X × Y``.
@@ -1034,18 +994,12 @@ def align_palm_basis_to_reference(
     B_ref: np.ndarray,
     h: np.ndarray,
     origin: np.ndarray,
-    *,
-    mp_middle_xy_dir: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Rebuild +X/+Z from thumb; +Y stays on palm→middle-MCP with voted sign."""
-    ref_y = np.asarray(B_ref[:, 1], dtype=np.float64).reshape(3)
-    ey_geom = _middle_y_unit_geom(h, origin)
-    if ey_geom is None:
+    """Rebuild +X/+Z from thumb; +Y from wrist→middle MCP with MCP→tip sign."""
+    del B_ref
+    ey = _middle_finger_axis(h)
+    if ey is None:
         ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
-    else:
-        ey = _choose_middle_y_signed(
-            ey_geom, h, ref_y=ref_y, mp_middle_xy_dir=mp_middle_xy_dir
-        )
     rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, origin)
     if rebuilt is not None:
         return rebuilt
@@ -1057,32 +1011,22 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     *,
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
-    mp_middle_xy_dir: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Palm frame: +Y is exactly palm geom origin → middle MCP; X/Z derived from Y."""
+    """Palm frame: +Y wrist→middle MCP; sign from MCP→tip; X/Z from palm origin."""
     pc_geom = _palm_basis_origin_mm(h, palm_center_override=palm_center_override)
     if pc_geom is None:
         return None
     pc_out = _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
     if pc_out is None:
         pc_out = pc_geom
-    ref_y = (
-        np.asarray(ref_basis[:, 1], dtype=np.float64).reshape(3)
-        if ref_basis is not None
-        else None
-    )
-    ey = _middle_finger_axis(
-        h, pc_geom, ref_y=ref_y, mp_middle_xy_dir=mp_middle_xy_dir
-    )
+    ey = _middle_finger_axis(h)
     if ey is None:
         return None
     B = _build_palm_basis_middle_y_thumb_x(ey, h, pc_geom)
     if B is None:
         return None
     if ref_basis is not None:
-        B = align_palm_basis_to_reference(
-            B, ref_basis, h, pc_geom, mp_middle_xy_dir=mp_middle_xy_dir
-        )
+        B = align_palm_basis_to_reference(B, ref_basis, h, pc_geom)
     return np.asarray(pc_out, dtype=np.float64).reshape(3), B
 
 
@@ -1092,7 +1036,6 @@ def palm_orthonormal_basis(
     palm_basis: str = DEFAULT_LEFT_PALM_BASIS,
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
-    mp_middle_xy_dir: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Return (palm_center_mm, B) with B columns = palm X (thumb), Y (fingertip), Z."""
     key = str(palm_basis).strip().lower()
@@ -1101,7 +1044,6 @@ def palm_orthonormal_basis(
             h,
             ref_basis=ref_basis,
             palm_center_override=palm_center_override,
-            mp_middle_xy_dir=mp_middle_xy_dir,
         )
     ia, ib = palm_basis_pair_indices(palm_basis)
     out = orthonormal_basis_from_landmark_pair(
@@ -1111,7 +1053,5 @@ def palm_orthonormal_basis(
         return None
     pc, B = out
     if ref_basis is not None:
-        B = align_palm_basis_to_reference(
-            B, ref_basis, h, pc, mp_middle_xy_dir=mp_middle_xy_dir
-        )
+        B = align_palm_basis_to_reference(B, ref_basis, h, pc)
     return np.asarray(pc, dtype=np.float64).reshape(3), B

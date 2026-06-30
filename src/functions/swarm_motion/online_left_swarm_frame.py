@@ -12,7 +12,6 @@ from functions.display_sim.left_pose_frame_viz import draw_left_pose_frame_overl
 from functions.display_sim.orbbec_hand import DEPTH_MEDIAN_PATCH_RADIUS
 from functions.dual_cam.dual_view_utils import draw_hand_webcam
 from functions.dual_cam.left_hand_rotation_dual import resolve_dual_left_rotation
-from functions.dual_cam.mp_hand_utils import middle_finger_mp_xy_dir
 from functions.dual_cam.online_frame_capture import OrbbecCaptureFrame
 from functions.mode_switch.online_frame_gesture import GestureFrameResult
 from functions.runtime.online_boot import OnlineBoot
@@ -135,11 +134,6 @@ def apply_left_swarm_frame(
             R_pose = rotvec_to_R(left_pose_state.ema_rotvec)
             _sec("left_pose_hold")
         else:
-            _mp_y_xy = (
-                middle_finger_mp_xy_dir(cap.result, gest.idx_l)
-                if gest.idx_l is not None
-                else None
-            )
             off, R_pose = update_left_swarm_pose(
                 left_pose_state,
                 sensor=LeftPoseSensorInput(
@@ -163,7 +157,6 @@ def apply_left_swarm_frame(
                     palm_basis=boot.left_palm_basis,
                     force_reset=_do_arm,
                     plane_rot_mul=_plane_rot_mul,
-                    mp_middle_y_xy_dir=_mp_y_xy,
                 ),
                 tuning=tuning,
             )

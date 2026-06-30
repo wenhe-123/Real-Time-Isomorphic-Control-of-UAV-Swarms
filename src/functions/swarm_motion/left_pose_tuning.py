@@ -201,4 +201,3 @@ class LeftPoseSensorInput:
     palm_basis: str = ""
     force_reset: bool = False
     plane_rot_mul: float = 1.0
-    mp_middle_y_xy_dir: Any = None

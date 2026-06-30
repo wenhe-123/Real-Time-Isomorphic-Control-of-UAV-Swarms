@@ -559,21 +559,27 @@ def update_report_palm_pose_figure(
     palm_pts = np.array([h[i] for i in palm_ids if i < len(h)], dtype=np.float64)
     palm_pts_d = _rel(palm_pts)
     origin_d = np.zeros(3, dtype=np.float64)
+    wrist_pt = (
+        np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
+        if np.all(np.isfinite(h[WRIST_ID, :3]))
+        else None
+    )
     mcp_mid = (
         np.asarray(h[MIDDLE_MCP_ID, :3], dtype=np.float64).reshape(3)
         if np.all(np.isfinite(h[MIDDLE_MCP_ID, :3]))
         else None
     )
-    if mcp_mid is not None:
+    if wrist_pt is not None and mcp_mid is not None:
+        w_d = _rel(wrist_pt.reshape(1, 3)).reshape(3)
         mcp_d = _rel(mcp_mid.reshape(1, 3)).reshape(3)
         ax_palm.plot(
-            [origin_d[0], mcp_d[0]],
-            [origin_d[1], mcp_d[1]],
-            [origin_d[2], mcp_d[2]],
+            [w_d[0], mcp_d[0]],
+            [w_d[1], mcp_d[1]],
+            [w_d[2], mcp_d[2]],
             color="0.35",
             linewidth=1.5,
             linestyle=":",
-            label="origin→mid MCP",
+            label="wrist→mid MCP (+Y)",
         )
         ax_palm.scatter(
             [mcp_d[0]],
