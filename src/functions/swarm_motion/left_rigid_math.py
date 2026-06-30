@@ -42,19 +42,6 @@ def palm_world_rotvec_from_local_delta(
     return np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
 
 
-def stabilize_palm_basis_continuity(B: np.ndarray, B_ref: np.ndarray) -> np.ndarray:
-    """Keep palm basis near the arm reference — removes 180° palm/back Z flips from depth noise."""
-    out = np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
-    ref = np.asarray(B_ref, dtype=np.float64).reshape(3, 3)
-    if float(np.dot(out[:, 2], ref[:, 2])) < 0.0:
-        out[:, 0] *= -1.0
-        out[:, 2] *= -1.0
-    if float(np.dot(out[:, 0], ref[:, 0])) < 0.0:
-        out[:, 0] *= -1.0
-        out[:, 2] *= -1.0
-    return out
-
-
 def palm_cam_rotvec_from_basis_delta(B_current: np.ndarray, B_arm: np.ndarray) -> np.ndarray:
     """Intrinsic palm rotation in camera frame (for classify; less false rot on 3D translation)."""
     R = np.asarray(B_current, dtype=np.float64).reshape(3, 3) @ np.asarray(B_arm, dtype=np.float64).reshape(

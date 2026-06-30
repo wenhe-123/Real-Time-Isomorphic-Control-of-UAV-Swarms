@@ -25,10 +25,10 @@ _LM_DISPLAY_LIM_MM = 160.0
 _PALM_AXIS_LEN_FRAC = 0.42
 _PALM_LIMIT_PAD_FRAC = 0.22
 _PALM_LIMIT_MIN_PAD_MM = 8.0
-# Camera mm (X right, Y down, Z fwd) → plot mm so palm +Y (finger) is vertical on screen.
-# plot = (cam_x, cam_z, -cam_y): mpl Z is vertical; palm Y maps to +plot Z.
+# Camera mm (X right, Y down, Z fwd) → plot mm: origin at palm center, +Y finger up on screen.
+# display = (cam_x, -cam_y, cam_z); use view_init(elev=90, azim=-90).
 _PALM_POSE_CAM_TO_DISPLAY = np.array(
-    [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]],
+    [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
     dtype=np.float64,
 )
 
@@ -52,7 +52,7 @@ _WINDOW_SPECS: tuple[tuple[str, str, int, int], ...] = (
     ("hand", "Report: Hand landmarks", 580, 40),
     ("pca", "Report: Hand PCA", 1120, 40),
     ("landmarks", "Report: Open vs Close landmarks", 40, 520),
-    ("palm", "Report: Palm pose (rel mm)", 580, 520),
+    ("palm", "Report: Palm pose (origin, Y up)", 580, 520),
 )
 _FIG_SIZE = (5.4, 4.8)
 
@@ -272,6 +272,32 @@ def _fit_3d_axis_limits(
     ax.set_xlim(lo[0] - pad[0], hi[0] + pad[0])
     ax.set_ylim(lo[1] - pad[1], hi[1] + pad[1])
     ax.set_zlim(lo[2] - pad[2], hi[2] + pad[2])
+
+
+def _symmetric_3d_axis_limits_about_origin(
+    ax,
+    arrays: list[np.ndarray],
+    *,
+    pad_frac: float = 0.22,
+    min_pad_mm: float = 8.0,
+) -> None:
+    """Equal limits [-r, r] on each axis so the palm origin stays at the plot center."""
+    chunks = [np.asarray(a, dtype=np.float64).reshape(-1, 3) for a in arrays if a is not None]
+    chunks = [c for c in chunks if c.size > 0]
+    if not chunks:
+        return
+    pts = np.vstack(chunks)
+    finite = np.all(np.isfinite(pts), axis=1)
+    pts = pts[finite]
+    if pts.shape[0] == 0:
+        return
+    extent = np.max(np.abs(pts), axis=0)
+    r = float(np.max(extent))
+    pad = max(r * float(pad_frac), float(min_pad_mm))
+    lim = r + pad
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_zlim(-lim, lim)
 
 
 def _draw_thick_axis_line(ax, origin: np.ndarray, direction: np.ndarray, length: float, color: str, label: str) -> None:
@@ -497,11 +523,11 @@ def update_report_palm_pose_figure(
     *,
     left_pose_state: Any | None = None,
 ) -> None:
-    """Palm plane + basis in mm relative to current palm origin (small readable coords)."""
+    """Palm plane + basis at plot origin; palm +Y is vertical (display Y up)."""
     ax_palm.clear()
-    ax_palm.set_title("Palm pose (mm, rel. palm origin)")
+    ax_palm.set_title("Palm pose (origin = palm center, Y up)")
     ax_palm.set_xlabel("X (mm)")
-    ax_palm.set_ylabel("Y (mm)")
+    ax_palm.set_ylabel("Y (finger up, mm)")
     ax_palm.set_zlabel("Z (mm)")
 
     if pts_l_pose_mm is None:
@@ -571,27 +597,14 @@ def update_report_palm_pose_figure(
     limit_pts.append(origin_d + basis * axis_len)
 
     if left_pose_state is not None and bool(getattr(left_pose_state, "initialized", False)):
-        ref_o_cam = np.asarray(left_pose_state.ref_palm_center, dtype=np.float64).reshape(3)
         ref_b = _palm_pose_basis_cam_to_display(
             np.asarray(left_pose_state.ref_basis, dtype=np.float64).reshape(3, 3)
         )
-        ref_o_d = _rel(ref_o_cam).reshape(3)
         ref_len = axis_len * 0.92
-        _draw_basis_triad(ax_palm, ref_o_d, ref_b, scale=ref_len, dashed=True)
-        ax_palm.scatter(
-            [ref_o_d[0]],
-            [ref_o_d[1]],
-            [ref_o_d[2]],
-            c="0.45",
-            s=55,
-            marker="o",
-            depthshade=False,
-            label="ref origin",
-        )
-        limit_pts.append(ref_o_d.reshape(1, 3))
-        limit_pts.append(ref_o_d + ref_b * ref_len)
+        _draw_basis_triad(ax_palm, origin_d, ref_b, scale=ref_len, dashed=True)
+        limit_pts.append(origin_d + ref_b * ref_len)
 
-    _fit_3d_axis_limits(
+    _symmetric_3d_axis_limits_about_origin(
         ax_palm,
         limit_pts,
         pad_frac=_PALM_LIMIT_PAD_FRAC,
@@ -600,13 +613,13 @@ def update_report_palm_pose_figure(
     ax_palm.text2D(
         0.02,
         0.02,
-        f"cam origin ({origin_cam[0]:.0f},{origin_cam[1]:.0f},{origin_cam[2]:.0f}) mm",
+        f"cam palm ({origin_cam[0]:.0f},{origin_cam[1]:.0f},{origin_cam[2]:.0f}) mm",
         transform=ax_palm.transAxes,
         fontsize=7,
         color="0.45",
         va="bottom",
     )
-    ax_palm.view_init(elev=22, azim=-58)
+    ax_palm.view_init(elev=90, azim=-90)
     ax_palm.set_box_aspect((1.0, 1.0, 1.0))
     ax_palm.legend(loc="upper left", fontsize=7)
 

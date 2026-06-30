@@ -26,7 +26,6 @@ from functions.swarm_motion.left_rigid_math import (
     rotvec_to_R,
     sanitize_palm_rotvec_apply,
     scale_rotation_matrix,
-    stabilize_palm_basis_continuity,
     sync_left_swarm_pose_output,
 )
 from functions.swarm_motion.left_swarm_pose_state import LeftSwarmPoseState
@@ -227,8 +226,7 @@ def update_left_swarm_pose(
     )
 
     ref_b_depth = np.asarray(state.ref_basis, dtype=np.float64).reshape(3, 3)
-    B_depth_stable = stabilize_palm_basis_continuity(B_depth, ref_b_depth)
-    B = B_depth_stable
+    B = B_depth
     ref_b_rot = ref_b_depth
     rot_source = "depth"
     rv_world_override = None
@@ -236,8 +234,7 @@ def update_left_swarm_pose(
         B_img = np.asarray(sensor.B_rot, dtype=np.float64).reshape(3, 3)
         ref_img = np.asarray(state.ref_basis_image, dtype=np.float64).reshape(3, 3)
         if np.all(np.isfinite(B_img)) and np.all(np.isfinite(ref_img)):
-            B_img = stabilize_palm_basis_continuity(B_img, ref_img)
-            rv_depth_local = palm_local_rotvec_from_basis_delta(B_depth_stable, ref_b_depth)
+            rv_depth_local = palm_local_rotvec_from_basis_delta(B_depth, ref_b_depth)
             rv_img_local = palm_local_rotvec_from_basis_delta(B_img, ref_img)
             rv_hybrid_local = np.array(
                 [rv_depth_local[0], rv_depth_local[1], rv_img_local[2]],
