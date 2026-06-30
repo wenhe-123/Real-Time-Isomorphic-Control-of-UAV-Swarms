@@ -25,8 +25,10 @@ _LM_DISPLAY_LIM_MM = 160.0
 _PALM_AXIS_LEN_FRAC = 0.42
 _PALM_LIMIT_PAD_FRAC = 0.22
 _PALM_LIMIT_MIN_PAD_MM = 8.0
-# Camera mm (X right, Y down, Z fwd) → plot mm: origin at palm center, +Y finger up on screen.
-# display = (cam_x, -cam_y, cam_z); use view_init(elev=90, azim=-90).
+_PALM_VIEW_ELEV = 22.0
+_PALM_VIEW_AZIM = -58.0
+# Camera mm → plot mm: palm origin at (0,0,0); display Y = finger up; XZ = floor plane.
+# display = (cam_x, -cam_y, cam_z); oblique view elev≈22 azim≈-58 (XZ base, Y up).
 _PALM_POSE_CAM_TO_DISPLAY = np.array(
     [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
     dtype=np.float64,
@@ -274,14 +276,14 @@ def _fit_3d_axis_limits(
     ax.set_zlim(lo[2] - pad[2], hi[2] + pad[2])
 
 
-def _symmetric_3d_axis_limits_about_origin(
+def _corner_origin_3d_axis_limits(
     ax,
     arrays: list[np.ndarray],
     *,
     pad_frac: float = 0.22,
     min_pad_mm: float = 8.0,
 ) -> None:
-    """Equal limits [-r, r] on each axis so the palm origin stays at the plot center."""
+    """Axis limits with (0,0,0) at the min-X/min-Y/min-Z corner; +Y finger up, XZ floor."""
     chunks = [np.asarray(a, dtype=np.float64).reshape(-1, 3) for a in arrays if a is not None]
     chunks = [c for c in chunks if c.size > 0]
     if not chunks:
@@ -291,13 +293,13 @@ def _symmetric_3d_axis_limits_about_origin(
     pts = pts[finite]
     if pts.shape[0] == 0:
         return
-    extent = np.max(np.abs(pts), axis=0)
-    r = float(np.max(extent))
-    pad = max(r * float(pad_frac), float(min_pad_mm))
-    lim = r + pad
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.set_zlim(-lim, lim)
+    hi = np.maximum(pts.max(axis=0), 0.0)
+    lo_neg = np.maximum(-pts.min(axis=0), 0.0)
+    pad = np.maximum(hi * float(pad_frac), float(min_pad_mm))
+    margin = pad * 0.12
+    ax.set_xlim(-lo_neg[0] - margin, hi[0] + pad[0])
+    ax.set_ylim(-lo_neg[1] - margin, hi[1] + pad[1])
+    ax.set_zlim(-lo_neg[2] - margin, hi[2] + pad[2])
 
 
 def _draw_thick_axis_line(ax, origin: np.ndarray, direction: np.ndarray, length: float, color: str, label: str) -> None:
@@ -523,9 +525,9 @@ def update_report_palm_pose_figure(
     *,
     left_pose_state: Any | None = None,
 ) -> None:
-    """Palm plane + basis at plot origin; palm +Y is vertical (display Y up)."""
+    """Palm plane + basis at plot origin; Y up, XZ floor, oblique view."""
     ax_palm.clear()
-    ax_palm.set_title("Palm pose (origin = palm center, Y up)")
+    ax_palm.set_title("Palm pose (origin corner, Y up, XZ floor)")
     ax_palm.set_xlabel("X (mm)")
     ax_palm.set_ylabel("Y (finger up, mm)")
     ax_palm.set_zlabel("Z (mm)")
@@ -582,14 +584,31 @@ def update_report_palm_pose_figure(
     )
 
     limit_pts: list[np.ndarray] = [palm_pts_d, origin_d.reshape(1, 3)]
+    floor_lim = axis_len * 1.05
+    fx = np.linspace(0.0, floor_lim, 4)
+    fz = np.linspace(0.0, floor_lim, 4)
+    floor_x, floor_z = np.meshgrid(fx, fz)
+    floor_y = np.zeros_like(floor_x)
+    ax_palm.plot_surface(
+        floor_x,
+        floor_y,
+        floor_z,
+        color="0.88",
+        alpha=0.28,
+        linewidth=0,
+        label="XZ floor",
+    )
+    limit_pts.append(np.stack([floor_x.ravel(), floor_y.ravel(), floor_z.ravel()], axis=1))
+
     if fit is not None:
         _n, _hp, _inliers = fit
         u = basis[:, 0]
         v = basis[:, 1]
-        g = np.linspace(-0.5, 0.5, 5) * axis_len
-        X = g[:, None] * u[0] + g[None, :] * v[0]
-        Y = g[:, None] * u[1] + g[None, :] * v[1]
-        Z = g[:, None] * u[2] + g[None, :] * v[2]
+        g = np.linspace(0.0, 1.0, 5) * axis_len
+        h = np.linspace(0.0, 1.0, 5) * axis_len
+        X = g[:, None] * u[0] + h[None, :] * v[0]
+        Y = g[:, None] * u[1] + h[None, :] * v[1]
+        Z = g[:, None] * u[2] + h[None, :] * v[2]
         ax_palm.plot_surface(X, Y, Z, color="wheat", alpha=0.35, linewidth=0)
         limit_pts.append(np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=1))
 
@@ -604,7 +623,7 @@ def update_report_palm_pose_figure(
         _draw_basis_triad(ax_palm, origin_d, ref_b, scale=ref_len, dashed=True)
         limit_pts.append(origin_d + ref_b * ref_len)
 
-    _symmetric_3d_axis_limits_about_origin(
+    _corner_origin_3d_axis_limits(
         ax_palm,
         limit_pts,
         pad_frac=_PALM_LIMIT_PAD_FRAC,
@@ -619,7 +638,7 @@ def update_report_palm_pose_figure(
         color="0.45",
         va="bottom",
     )
-    ax_palm.view_init(elev=90, azim=-90)
+    ax_palm.view_init(elev=_PALM_VIEW_ELEV, azim=_PALM_VIEW_AZIM)
     ax_palm.set_box_aspect((1.0, 1.0, 1.0))
     ax_palm.legend(loc="upper left", fontsize=7)
 
