@@ -147,7 +147,7 @@ def update_left_swarm_pose(
         if sensor.force_reset
         else getattr(state, "prev_middle_y_raw", None)
     )
-    from debug.middle_y_sign_debug import MiddleYSignDebug, print_middle_y_sign_debug
+    from debug.middle_y_sign_debug import MiddleYSignDebug, print_middle_y_sign_debug, middle_y_trusted_for_rotation
 
     y_dbg = MiddleYSignDebug()
     out = palm_orthonormal_basis(
@@ -166,8 +166,6 @@ def update_left_swarm_pose(
             frame_idx=int(getattr(sensor, "frame_idx", -1)),
             force=bool(getattr(tuning, "y_sign_debug", False)),
         )
-    if y_dbg.ey_raw is not None and np.all(np.isfinite(y_dbg.ey_raw)):
-        state.prev_middle_y_raw = np.asarray(y_dbg.ey_raw, dtype=np.float64).reshape(3).copy()
     if sensor.palm_center_color_px is not None:
         state.last_palm_center_color_px = sensor.palm_center_color_px
     if out is None:
@@ -289,6 +287,22 @@ def update_left_swarm_pose(
         delta_cam_mm=delta_cam,
         max_step_rad=step_cap,
     )
+    y_rot_ok, y_rot_reason = middle_y_trusted_for_rotation(
+        y_dbg,
+        depth_hold=bool(state.last_depth_outlier),
+        mcp_valid=int(mcp_n),
+    )
+    if (
+        state.prev_rot_basis is not None
+        and str(state.prev_rot_source) == str(rot_source)
+    ):
+        prev_y_col = np.asarray(state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
+        cur_y_col = np.asarray(B[:, 1], dtype=np.float64).reshape(3)
+        pn = float(np.linalg.norm(prev_y_col))
+        cn = float(np.linalg.norm(cur_y_col))
+        if pn >= 1e-9 and cn >= 1e-9 and float(np.dot(cur_y_col / cn, prev_y_col / pn)) < 0.0:
+            y_rot_ok = False
+            y_rot_reason = "basis_y_flip"
     if float(np.linalg.norm(rv_apply - rv_world)) > 1e-9:
         R_world = rotvec_to_R(rv_apply)
         zsc = tuning.rot_world_z_scale
@@ -318,6 +332,12 @@ def update_left_swarm_pose(
             motion = "rigid"
     else:
         w_rot = 0.0
+    if not y_rot_ok:
+        w_rot = 0.0
+        rv_apply = np.zeros(3, dtype=np.float64)
+        R_tgt = np.eye(3, dtype=np.float64)
+        if motion == "rigid":
+            motion = "hold_y"
     if motion == "rotate" and tuning.rot_trans_tau_mm > 0.0:
         if float(np.linalg.norm(delta_cam_arm)) < tuning.rot_trans_tau_mm:
             w_trans = 0.0
@@ -343,6 +363,9 @@ def update_left_swarm_pose(
     if rejected:
         state.last_pose_rejected = True
         state.last_reject_reason = _reject_reason
+    elif not y_rot_ok:
+        state.last_pose_rejected = True
+        state.last_reject_reason = y_rot_reason
     else:
         state.last_pose_rejected = False
         state.last_reject_reason = ""
@@ -359,10 +382,12 @@ def update_left_swarm_pose(
     sync_left_swarm_pose_output(state, off_out, R_out)
 
     state.last_depth_outlier_prev = state.last_depth_outlier
-    if not rejected or _reject_reason != "jump":
+    if (not rejected or _reject_reason != "jump") and y_rot_ok:
         state.prev_palm_mm = palm_center.copy()
         state.prev_rot_basis = B.copy()
         state.prev_rot_source = rot_source
+        if y_dbg.ey_raw is not None and np.all(np.isfinite(y_dbg.ey_raw)):
+            state.prev_middle_y_raw = np.asarray(y_dbg.ey_raw, dtype=np.float64).reshape(3).copy()
 
     return _pose_return(state)
 

@@ -955,7 +955,16 @@ def _pick_y_halfspace(
             return minus, f"aux<=-{_MIDDLE_Y_AUX_FLIP_MM:g}mm→−", "aux"
         if abs(a) >= float(_MIDDLE_Y_AUX_DEAD_MM):
             side = "+" if a > 0.0 else "−"
-            return (plus if a > 0.0 else minus), f"aux_mid({a:+.1f}mm)→{side}", "aux"
+            cand = plus if a > 0.0 else minus
+            if prev_y is not None:
+                py = np.asarray(prev_y, dtype=np.float64).reshape(3)
+                pn = float(np.linalg.norm(py))
+                if pn >= 1e-9 and float(np.dot(cand, py / pn)) < 0.0:
+                    pass  # weak aux vs prev — fall through to prev_hyst / geom
+                else:
+                    return cand, f"aux_mid({a:+.1f}mm)→{side}", "aux"
+            else:
+                return cand, f"aux_mid({a:+.1f}mm)→{side}", "aux"
 
     if prev_y is not None:
         py = np.asarray(prev_y, dtype=np.float64).reshape(3)
