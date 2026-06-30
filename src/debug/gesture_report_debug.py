@@ -13,7 +13,7 @@ from functions.display_sim.plot_3d_utils import (
     plot_hand_points_connections,
     setup_hand_axis,
 )
-from functions.mode_switch.hand_constants import HAND_CONNECTIONS, MCP_IDS, WRIST_ID
+from functions.mode_switch.hand_constants import HAND_CONNECTIONS, MCP_IDS, MIDDLE_MCP_ID, WRIST_ID
 from functions.swarm_motion.left_hand_swarm_pose import (
     palm_frame_origin_mm,
     palm_orthonormal_basis,
@@ -547,7 +547,7 @@ def update_report_palm_pose_figure(
         ax_palm.text2D(0.25, 0.5, "palm basis unavailable", transform=ax_palm.transAxes)
         return
     pc, basis = basis_out
-    origin_cam = np.asarray(pc if origin_cam is None else origin_cam, dtype=np.float64).reshape(3)
+    origin_cam = np.asarray(origin_cam if origin_cam is not None else pc, dtype=np.float64).reshape(3)
 
     def _rel(pts: np.ndarray) -> np.ndarray:
         return _palm_pose_cam_to_display(
@@ -559,6 +559,31 @@ def update_report_palm_pose_figure(
     palm_pts = np.array([h[i] for i in palm_ids if i < len(h)], dtype=np.float64)
     palm_pts_d = _rel(palm_pts)
     origin_d = np.zeros(3, dtype=np.float64)
+    mcp_mid = (
+        np.asarray(h[MIDDLE_MCP_ID, :3], dtype=np.float64).reshape(3)
+        if np.all(np.isfinite(h[MIDDLE_MCP_ID, :3]))
+        else None
+    )
+    if mcp_mid is not None:
+        mcp_d = _rel(mcp_mid.reshape(1, 3)).reshape(3)
+        ax_palm.plot(
+            [origin_d[0], mcp_d[0]],
+            [origin_d[1], mcp_d[1]],
+            [origin_d[2], mcp_d[2]],
+            color="0.35",
+            linewidth=1.5,
+            linestyle=":",
+            label="origin→mid MCP",
+        )
+        ax_palm.scatter(
+            [mcp_d[0]],
+            [mcp_d[1]],
+            [mcp_d[2]],
+            c="tab:purple",
+            s=36,
+            depthshade=False,
+            label="mid MCP",
+        )
     palm_span = float(np.max(np.ptp(palm_pts_d, axis=0))) if palm_pts_d.shape[0] else 80.0
     axis_len = max(28.0, palm_span * _PALM_AXIS_LEN_FRAC)
 

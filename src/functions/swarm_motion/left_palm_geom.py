@@ -102,6 +102,18 @@ def _resolve_palm_origin_mm(
     return None
 
 
+def _palm_basis_origin_mm(
+    h: np.ndarray,
+    *,
+    palm_center_override: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Origin for palm **axes** — from landmark geometry in ``h``, not translation EMA."""
+    pc = palm_frame_origin_mm(h)
+    if pc is not None:
+        return np.asarray(pc, dtype=np.float64).reshape(3)
+    return _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
+
+
 def _is_depth_measurement_reliable(
     depth_mm: float | None,
     prev_z_mm: float,
@@ -852,11 +864,9 @@ def _origin_to_joint_vector_mm(
     return None
 
 
-_MIDDLE_Y_REF_AMBIGUITY_DOT = 0.55
-
 
 def _lock_axis_halfspace(axis: np.ndarray, anchor: np.ndarray) -> np.ndarray:
-    """Flip ``axis`` so it agrees with ``anchor`` (sign only)."""
+    """Flip ``axis`` so it agrees with ``anchor`` (sign only; direction unchanged)."""
     a = np.asarray(axis, dtype=np.float64).reshape(3)
     b = np.asarray(anchor, dtype=np.float64).reshape(3)
     nb = float(np.linalg.norm(b))
@@ -865,7 +875,7 @@ def _lock_axis_halfspace(axis: np.ndarray, anchor: np.ndarray) -> np.ndarray:
     b = b / nb
     na = float(np.linalg.norm(a))
     if na < 1e-9:
-        return b.copy()
+        return a
     a = a / na
     if float(np.dot(a, b)) < 0.0:
         a = -a
@@ -894,13 +904,24 @@ def _middle_finger_sign_anchors_mm(h: np.ndarray) -> list[np.ndarray]:
     return anchors
 
 
-def _finalize_middle_y_axis(
+def _middle_y_unit_geom(h: np.ndarray, origin: np.ndarray) -> np.ndarray | None:
+    """Unit vector palm origin → middle MCP (exact 3D chord in ``h``)."""
+    v = _landmark_mm_if_finite(h, MIDDLE_MCP_ID, origin)
+    if v is None:
+        return None
+    n = float(np.linalg.norm(v))
+    if n < 1e-6:
+        return None
+    return np.asarray(v / n, dtype=np.float64).reshape(3)
+
+
+def _lock_middle_y_sign(
     ey: np.ndarray,
     h: np.ndarray,
     *,
     ref_y: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Lock +Y sign with bone/distal anchors; hold ``ref_y`` when measurement is ambiguous."""
+    """Sign-only constraints; never rotate +Y off the palm→middle-MCP chord."""
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
     ney = float(np.linalg.norm(ey_u))
     if ney < 1e-9:
@@ -909,16 +930,7 @@ def _finalize_middle_y_axis(
     for anchor in _middle_finger_sign_anchors_mm(h):
         ey_u = _lock_axis_halfspace(ey_u, anchor)
     if ref_y is not None:
-        ey_ref = np.asarray(ref_y, dtype=np.float64).reshape(3)
-        nr = float(np.linalg.norm(ey_ref))
-        if nr >= 1e-9:
-            ey_ref = ey_ref / nr
-            d = float(np.dot(ey_u, ey_ref))
-            if d < 0.0:
-                ey_u = -ey_u
-                d = -d
-            if d < float(_MIDDLE_Y_REF_AMBIGUITY_DOT):
-                return ey_ref.copy()
+        ey_u = _lock_axis_halfspace(ey_u, ref_y)
     return ey_u
 
 
@@ -928,14 +940,11 @@ def _middle_finger_axis(
     *,
     ref_y: np.ndarray | None = None,
 ) -> np.ndarray | None:
-    """+Y palm center → middle MCP; sign from wrist bone / distal segment, not palm↔wrist."""
-    v = _landmark_mm_if_finite(h, MIDDLE_MCP_ID, origin)
-    if v is None or float(np.linalg.norm(v)) < 1e-6:
+    """+Y: unit vector palm basis origin → middle MCP; sign locked, direction fixed."""
+    ey = _middle_y_unit_geom(h, origin)
+    if ey is None:
         return None
-    n = float(np.linalg.norm(v))
-    if n < 1e-9:
-        return None
-    return _finalize_middle_y_axis(v / n, h, ref_y=ref_y)
+    return _lock_middle_y_sign(ey, h, ref_y=ref_y)
 
 
 def _landmark_mm_if_finite(h: np.ndarray, jidx: int, origin: np.ndarray) -> np.ndarray | None:
@@ -1022,18 +1031,14 @@ def align_palm_basis_to_reference(
     h: np.ndarray,
     origin: np.ndarray,
 ) -> np.ndarray:
-    """Rebuild +X/+Z from thumb while keeping +Y aligned to reference half-space."""
-    ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
-    ey_ref = np.asarray(B_ref[:, 1], dtype=np.float64).reshape(3)
-    nr = float(np.linalg.norm(ey_ref))
-    if nr >= 1e-9:
-        ey_ref = ey_ref / nr
-        d = float(np.dot(ey, ey_ref))
-        if d < 0.0:
-            ey = -ey
-            d = -d
-        if d < float(_MIDDLE_Y_REF_AMBIGUITY_DOT):
-            ey = ey_ref.copy()
+    """Rebuild +X/+Z from thumb; +Y stays on palm→middle-MCP with ref sign only."""
+    ref_y = np.asarray(B_ref[:, 1], dtype=np.float64).reshape(3)
+    ey = _middle_y_unit_geom(h, origin)
+    if ey is None:
+        ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
+        ey = _lock_middle_y_sign(ey, h, ref_y=ref_y)
+    else:
+        ey = _lock_middle_y_sign(ey, h, ref_y=ref_y)
     rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, origin)
     if rebuilt is not None:
         return rebuilt
@@ -1046,24 +1051,27 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Palm frame: origin at palm center; +Y palm→middle MCP; +X/+Z derived from fixed Y."""
-    pc = _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
-    if pc is None:
+    """Palm frame: +Y is exactly palm geom origin → middle MCP; X/Z derived from Y."""
+    pc_geom = _palm_basis_origin_mm(h, palm_center_override=palm_center_override)
+    if pc_geom is None:
         return None
+    pc_out = _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
+    if pc_out is None:
+        pc_out = pc_geom
     ref_y = (
         np.asarray(ref_basis[:, 1], dtype=np.float64).reshape(3)
         if ref_basis is not None
         else None
     )
-    ey = _middle_finger_axis(h, pc, ref_y=ref_y)
+    ey = _middle_finger_axis(h, pc_geom, ref_y=ref_y)
     if ey is None:
         return None
-    B = _build_palm_basis_middle_y_thumb_x(ey, h, pc)
+    B = _build_palm_basis_middle_y_thumb_x(ey, h, pc_geom)
     if B is None:
         return None
     if ref_basis is not None:
-        B = align_palm_basis_to_reference(B, ref_basis, h, pc)
-    return np.asarray(pc, dtype=np.float64).reshape(3), B
+        B = align_palm_basis_to_reference(B, ref_basis, h, pc_geom)
+    return np.asarray(pc_out, dtype=np.float64).reshape(3), B
 
 
 def palm_orthonormal_basis(
