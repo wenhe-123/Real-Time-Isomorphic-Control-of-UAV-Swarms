@@ -502,13 +502,22 @@ def draw_left_pose_frame_overlay(
 
     ref_b = left_pose_state.ref_basis if left_pose_state.initialized and armed else None
     pc_override = None
+    prev_y = None
+    prev_raw_y = None
     if left_pose_state.initialized:
         pc_override = np.asarray(left_pose_state.last_palm_center_mm, dtype=np.float64).reshape(3)
+        if getattr(left_pose_state, "prev_rot_basis", None) is not None:
+            prev_y = np.asarray(left_pose_state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
+        prev_raw_y = getattr(left_pose_state, "prev_middle_y_raw", None)
     basis_kw: dict = {"palm_basis": palm_basis}
     if pc_override is not None and np.all(np.isfinite(pc_override)):
         basis_kw["palm_center_override"] = pc_override
     if ref_b is not None:
         basis_kw["ref_basis"] = ref_b
+    if prev_y is not None:
+        basis_kw["prev_y"] = prev_y
+    if prev_raw_y is not None:
+        basis_kw["prev_raw_y"] = prev_raw_y
 
     out = palm_orthonormal_basis(h, **basis_kw)
     if out is None:
