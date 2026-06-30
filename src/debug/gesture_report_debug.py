@@ -30,7 +30,7 @@ _PALM_VIEW_AZIM = -58.0
 # Camera mm → plot mm: palm origin at (0,0,0); display Y = finger up; XZ = floor plane.
 # display = (cam_x, -cam_y, cam_z); oblique view elev≈22 azim≈-58 (XZ base, Y up).
 _PALM_POSE_CAM_TO_DISPLAY = np.array(
-    [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+    [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
     dtype=np.float64,
 )
 
