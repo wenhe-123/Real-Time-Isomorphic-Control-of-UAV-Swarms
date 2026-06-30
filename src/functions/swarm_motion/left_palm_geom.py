@@ -869,8 +869,16 @@ def _landmark_mm_if_finite(h: np.ndarray, jidx: int, origin: np.ndarray) -> np.n
 
 
 def _thumb_vector_from_origin_mm(h: np.ndarray, origin: np.ndarray) -> np.ndarray | None:
-    """Palm center → thumb in camera mm (MCP → IP → tip)."""
+    """Palm center → thumb for +Z (MCP → IP → tip chain)."""
     return _origin_to_joint_vector_mm(h, origin, THUMB_DEPTH_CHAIN_IDS)
+
+
+def _thumb_tip_vector_from_origin_mm(h: np.ndarray, origin: np.ndarray) -> np.ndarray | None:
+    """Palm center → thumb tip only (for +X)."""
+    v = _landmark_mm_if_finite(h, THUMB_TIP_ID, origin)
+    if v is None or float(np.linalg.norm(v)) < 1e-6:
+        return None
+    return v
 
 
 def _palm_x_unit_perp_y(thumb_vec: np.ndarray, ey_u: np.ndarray, *, min_lat_mm: float = 1e-6) -> np.ndarray | None:
@@ -908,7 +916,7 @@ def _build_palm_basis_middle_y_thumb_x(
 ) -> np.ndarray | None:
     """Orthonormal palm basis (camera mm).
 
-    **+Y** palm→middle. **+Z** = ``Y × (palm→thumb)``. **+X** is palm→thumb
+    **+Y** palm→middle. **+Z** = ``Y × (palm→thumb chain)``. **+X** is palm→thumb **tip**
     projected onto the plane ⊥Y (lies in the Y–thumb plane). Right-handed: ``Z ≈ X × Y``.
     """
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
@@ -917,12 +925,13 @@ def _build_palm_basis_middle_y_thumb_x(
         return None
     ey_u = ey_u / ney
     thumb_vec = _thumb_vector_from_origin_mm(h, origin)
-    if thumb_vec is None:
+    thumb_tip_vec = _thumb_tip_vector_from_origin_mm(h, origin)
+    if thumb_vec is None or thumb_tip_vec is None:
         return None
     ez = _palm_z_unit_from_y_and_thumb(ey_u, thumb_vec)
     if ez is None:
         return None
-    ex = _palm_x_unit_perp_y(thumb_vec, ey_u)
+    ex = _palm_x_unit_perp_y(thumb_tip_vec, ey_u)
     if ex is None:
         return None
     if float(np.dot(np.cross(ex, ey_u), ez)) < 0.0:

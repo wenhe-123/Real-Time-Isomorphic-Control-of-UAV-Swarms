@@ -18,7 +18,7 @@ from functions.mode_switch.hand_constants import (
 )
 
 LEFT_PALM_BASIS_PRESETS: dict[str, tuple[int, int]] = {
-    # +Y palm→middle; +Z = Y×(palm→thumb); +X = palm→thumb in plane ⊥Y (Z from Y×thumb first).
+    # +Y palm→middle; +Z = Y×(palm→thumb chain); +X = palm→thumb tip in plane ⊥Y.
     "middle_thumb": (MIDDLE_MCP_ID, THUMB_MCP_ID),
     "index_middle": (MIDDLE_MCP_ID, INDEX_MCP_ID),
     "index_ring": (RING_MCP_ID, INDEX_MCP_ID),
