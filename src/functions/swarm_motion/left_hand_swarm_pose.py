@@ -6,7 +6,6 @@ import time
 
 import numpy as np
 
-from functions.mode_switch.hand_constants import WRIST_ID
 from functions.swarm_motion.left_palm_geom import (
     filter_palm_center_depth_mm,
     palm_center_components_mm,
@@ -152,7 +151,6 @@ def update_left_swarm_pose(
     palm_center, B_depth = out
     palm_center = np.asarray(palm_center, dtype=np.float64).reshape(3)
     B_depth = np.asarray(B_depth, dtype=np.float64).reshape(3, 3)
-    wrist_mm = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
 
     meas_depth_mm: float | None = None
     if sensor.palm_center_depth_mm is not None:
@@ -174,7 +172,7 @@ def update_left_swarm_pose(
         depth_patch_r=int(sensor.palm_depth_patch_r),
         measured_depth_mm=meas_depth_mm,
     )
-    if not np.all(np.isfinite(wrist_mm)):
+    if not np.all(np.isfinite(palm_center)):
         return _decay_pose_on_track_loss(state, tuning.lost_decay)
 
     if sensor.force_reset or not state.initialized:

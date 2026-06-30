@@ -10,11 +10,13 @@ from functions.mode_switch.hand_constants import (
     INDEX_MCP_ID,
     INDEX_TIP_ID,
     MCP_IDS,
+    MIDDLE_DEPTH_CHAIN_IDS,
     MIDDLE_MCP_ID,
     MIDDLE_TIP_ID,
     PALM_CENTER_IDS,
     RING_MCP_ID,
     RING_TIP_ID,
+    THUMB_DEPTH_CHAIN_IDS,
     THUMB_MCP_ID,
     THUMB_TIP_ID,
     WRIST_ID,
@@ -77,6 +79,25 @@ def palm_frame_origin_mm(h: np.ndarray) -> np.ndarray | None:
     if c is None:
         return None
     return _project_point_onto_plane(c, n, hp)
+
+
+def _resolve_palm_origin_mm(
+    h: np.ndarray,
+    *,
+    palm_center_override: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Palm-frame origin in camera mm (override → plane centroid → wrist)."""
+    if palm_center_override is not None:
+        pc_ov = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
+        if np.all(np.isfinite(pc_ov)):
+            return pc_ov
+    pc = palm_frame_origin_mm(h)
+    if pc is not None:
+        return np.asarray(pc, dtype=np.float64).reshape(3)
+    wrist = _landmark_mm_if_valid(h, WRIST_ID)
+    if wrist is not None:
+        return np.asarray(wrist, dtype=np.float64).reshape(3)
+    return None
 
 
 def _is_depth_measurement_reliable(
@@ -599,6 +620,35 @@ def palm_center_components_mm(h: np.ndarray) -> tuple[np.ndarray | None, np.ndar
     return wrist, roots_mean, len(root_pts)
 
 
+def _depth_chain_for_landmark(jidx: int) -> tuple[int, ...]:
+    """Root→tip joint chain for thumb / middle; other landmarks use a single id."""
+    j = int(jidx)
+    if j in THUMB_DEPTH_CHAIN_IDS:
+        return THUMB_DEPTH_CHAIN_IDS
+    if j in MIDDLE_DEPTH_CHAIN_IDS:
+        return MIDDLE_DEPTH_CHAIN_IDS
+    return (j,)
+
+
+def _first_joint_mm_in_chain(
+    joint_mm,
+    chain: tuple[int, ...],
+) -> tuple[int | None, np.ndarray | None]:
+    """Return the first landmark in ``chain`` (MCP first) with valid depth mm."""
+    for jidx in chain:
+        p = joint_mm(int(jidx))
+        if p is not None:
+            return int(jidx), np.asarray(p, dtype=np.float64).reshape(3)
+    return None, None
+
+
+def _fill_depth_chain(out: np.ndarray, joint_mm, chain: tuple[int, ...]) -> None:
+    for jidx in chain:
+        p = joint_mm(int(jidx))
+        if p is not None:
+            out[int(jidx)] = np.asarray(p, dtype=np.float64).reshape(3)
+
+
 def left_hand_pose_matrix_depth_mm(
     result,
     idx_l: int,
@@ -613,11 +663,10 @@ def left_hand_pose_matrix_depth_mm(
     patch_r: int,
     palm_basis: str = DEFAULT_LEFT_PALM_BASIS,
 ):
-    """Wrist + palm MCP landmarks in **depth-camera mm** (real translation in space).
+    """Wrist + palm landmarks in **depth-camera mm** (real translation in space).
 
-    MediaPipe ``hand_world_landmarks`` are wrist-centric (wrist does not move when the hand
-    translates), so global shift must come from depth unprojection at 2D landmarks mapped
-    from the MediaPipe input size to the color frame size.
+    Thumb and middle finger use root→tip depth chains (MCP, then PIP/IP, …, tip): the
+    pose gate passes when each chain has at least one good depth sample, not only MCPs.
     """
     if (
         result is None
@@ -653,24 +702,24 @@ def left_hand_pose_matrix_depth_mm(
 
     ia, ib = palm_basis_pair_indices(palm_basis)
     wrist = joint_mm(WRIST_ID)
-    p_ia = joint_mm(ia)
-    p_ib = joint_mm(ib)
-    t_m = joint_mm(MIDDLE_TIP_ID)
-    if wrist is None or p_ia is None or p_ib is None:
+    if wrist is None:
         return None
-    # Keep missing joints as NaN so centroid/basis code can ignore them safely.
+    chain_a = _depth_chain_for_landmark(ia)
+    chain_b = _depth_chain_for_landmark(ib)
+    _, p_ia = _first_joint_mm_in_chain(joint_mm, chain_a)
+    _, p_ib = _first_joint_mm_in_chain(joint_mm, chain_b)
+    if p_ia is None or p_ib is None:
+        return None
     out = np.full((21, 3), np.nan, dtype=np.float64)
     out[WRIST_ID] = wrist
-    out[ia] = p_ia
-    out[ib] = p_ib
+    _fill_depth_chain(out, joint_mm, chain_a)
+    _fill_depth_chain(out, joint_mm, chain_b)
     for j in (*MCP_IDS, THUMB_MCP_ID):
-        if j == ia or j == ib:
+        if j in chain_a or j in chain_b:
             continue
         pj = joint_mm(j)
         if pj is not None:
             out[j] = pj
-    if t_m is not None:
-        out[MIDDLE_TIP_ID] = t_m
     px = palm_center_color_px_from_landmarks(result, idx_l, fh, fw, mh, mw)
     pc: np.ndarray | None = None
     if px is not None:
@@ -733,9 +782,10 @@ def palm_basis_from_mp_image_plane(
         return None if out is None else out[1]
 
     ia, ib = palm_basis_pair_indices(palm_basis)
-    wrist = xy(WRIST_ID)
-    v1 = xy(ia) - wrist
-    v2 = xy(ib) - wrist
+    roots = [xy(int(j)) for j in _PALM_ROOT_IDS]
+    pc2 = np.mean(np.stack(roots, axis=0), axis=0)
+    v1 = xy(ia) - pc2
+    v2 = xy(ib) - pc2
     n1 = float(np.linalg.norm(v1))
     n2 = float(np.linalg.norm(v2))
     if n1 < 1e-6 or n2 < 1e-6:
@@ -755,12 +805,19 @@ def palm_basis_from_mp_image_plane(
 
 
 def orthonormal_basis_from_landmark_pair(
-    h: np.ndarray, ia: int, ib: int, *, min_edge_mm: float = 1e-9
+    h: np.ndarray,
+    ia: int,
+    ib: int,
+    *,
+    min_edge_mm: float = 1e-9,
+    palm_center_override: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Return (wrist, B) from two landmarks minus wrist (camera mm)."""
-    wrist = h[WRIST_ID, :3]
-    v1 = h[int(ia), :3] - wrist
-    v2 = h[int(ib), :3] - wrist
+    """Return (palm_center, B) with axes from palm center toward two landmarks."""
+    pc = _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
+    if pc is None:
+        return None
+    v1 = np.asarray(h[int(ia), :3], dtype=np.float64).reshape(3) - pc
+    v2 = np.asarray(h[int(ib), :3], dtype=np.float64).reshape(3) - pc
     n1 = float(np.linalg.norm(v1))
     n2 = float(np.linalg.norm(v2))
     if n1 < float(min_edge_mm) or n2 < float(min_edge_mm):
@@ -777,48 +834,47 @@ def orthonormal_basis_from_landmark_pair(
         return None
     e3 = e3 / ne3
     B = np.stack([e1, e2, e3], axis=1)
-    return wrist, B
+    return pc, B
 
 
-def _segment_axis(h: np.ndarray, wrist: np.ndarray, mcp_idx: int, tip_idx: int) -> np.ndarray | None:
-    """Unit vector wrist → landmark; prefer tip when both segments are well observed."""
-    v_mcp = np.asarray(h[int(mcp_idx), :3], dtype=np.float64).reshape(3) - wrist
-    v_tip = np.asarray(h[int(tip_idx), :3], dtype=np.float64).reshape(3) - wrist
-    n_mcp, n_tip = float(np.linalg.norm(v_mcp)), float(np.linalg.norm(v_tip))
-    v = v_mcp
-    if n_tip >= 15.0 and n_mcp >= 15.0 and 0.45 < (n_tip / max(n_mcp, 1e-9)) < 2.2:
-        v = v_tip
-    nv = float(np.linalg.norm(v))
-    if nv < 1e-9:
-        return None
-    return v / nv
-
-
-def _middle_finger_axis(h: np.ndarray, wrist: np.ndarray) -> np.ndarray | None:
-    """+Y palm: wrist → middle fingertip (tip when reliable)."""
-    return _segment_axis(h, wrist, MIDDLE_MCP_ID, MIDDLE_TIP_ID)
-
-
-def _landmark_mm_if_finite(h: np.ndarray, jidx: int, wrist: np.ndarray) -> np.ndarray | None:
-    p = np.asarray(h[int(jidx), :3], dtype=np.float64).reshape(3)
-    if not np.all(np.isfinite(p)):
-        return None
-    return p - np.asarray(wrist, dtype=np.float64).reshape(3)
-
-
-def _wrist_to_thumb_vector_mm(h: np.ndarray, wrist: np.ndarray) -> np.ndarray | None:
-    """Wrist → thumb in camera mm (MCP; tip only when MCP missing)."""
-    v = _landmark_mm_if_finite(h, THUMB_MCP_ID, wrist)
-    if v is not None and float(np.linalg.norm(v)) >= 1e-6:
-        return v
-    v = _landmark_mm_if_finite(h, THUMB_TIP_ID, wrist)
-    if v is not None and float(np.linalg.norm(v)) >= 1e-6:
-        return v
+def _origin_to_joint_vector_mm(
+    h: np.ndarray,
+    origin: np.ndarray,
+    chain_ids: tuple[int, ...],
+) -> np.ndarray | None:
+    """Origin → first available joint in ``chain_ids`` (root before tip)."""
+    for jidx in chain_ids:
+        v = _landmark_mm_if_finite(h, int(jidx), origin)
+        if v is not None and float(np.linalg.norm(v)) >= 1e-6:
+            return v
     return None
 
 
+def _middle_finger_axis(h: np.ndarray, origin: np.ndarray) -> np.ndarray | None:
+    """+Y palm: palm center → first middle-finger joint with depth (MCP → tip)."""
+    v = _origin_to_joint_vector_mm(h, origin, MIDDLE_DEPTH_CHAIN_IDS)
+    if v is None:
+        return None
+    n = float(np.linalg.norm(v))
+    if n < 1e-9:
+        return None
+    return v / n
+
+
+def _landmark_mm_if_finite(h: np.ndarray, jidx: int, origin: np.ndarray) -> np.ndarray | None:
+    p = np.asarray(h[int(jidx), :3], dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(p)):
+        return None
+    return p - np.asarray(origin, dtype=np.float64).reshape(3)
+
+
+def _thumb_vector_from_origin_mm(h: np.ndarray, origin: np.ndarray) -> np.ndarray | None:
+    """Palm center → thumb in camera mm (MCP → IP → tip)."""
+    return _origin_to_joint_vector_mm(h, origin, THUMB_DEPTH_CHAIN_IDS)
+
+
 def _palm_x_unit_perp_y(thumb_vec: np.ndarray, ey_u: np.ndarray, *, min_lat_mm: float = 1e-6) -> np.ndarray | None:
-    """+X: unit vector of wrist→thumb projected onto the plane perpendicular to ``ey_u`` (+Y)."""
+    """+X: unit vector of palm→thumb projected onto the plane perpendicular to ``ey_u`` (+Y)."""
     lat = _project_onto_plane(np.asarray(thumb_vec, dtype=np.float64).reshape(3), ey_u)
     nlat = float(np.linalg.norm(lat))
     if nlat < float(min_lat_mm):
@@ -837,7 +893,7 @@ def _project_onto_plane(v: np.ndarray, plane_normal: np.ndarray) -> np.ndarray:
 
 
 def _palm_z_unit_from_y_and_thumb(ey_u: np.ndarray, thumb_vec: np.ndarray, *, min_cross_mm: float = 1e-6) -> np.ndarray | None:
-    """+Z: unit ``Y × (wrist→thumb)`` — normal to the plane spanned by Y and thumb."""
+    """+Z: unit ``Y × (palm→thumb)`` — normal to the plane spanned by Y and thumb."""
     z = np.cross(np.asarray(ey_u, dtype=np.float64).reshape(3), np.asarray(thumb_vec, dtype=np.float64).reshape(3))
     nz = float(np.linalg.norm(z))
     if nz < float(min_cross_mm):
@@ -848,11 +904,11 @@ def _palm_z_unit_from_y_and_thumb(ey_u: np.ndarray, thumb_vec: np.ndarray, *, mi
 def _build_palm_basis_middle_y_thumb_x(
     ey: np.ndarray,
     h: np.ndarray,
-    wrist: np.ndarray,
+    origin: np.ndarray,
 ) -> np.ndarray | None:
     """Orthonormal palm basis (camera mm).
 
-    **+Y** wrist→middle (unchanged). **+Z** = ``Y × (wrist→thumb)``. **+X** is wrist→thumb
+    **+Y** palm→middle. **+Z** = ``Y × (palm→thumb)``. **+X** is palm→thumb
     projected onto the plane ⊥Y (lies in the Y–thumb plane). Right-handed: ``Z ≈ X × Y``.
     """
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
@@ -860,7 +916,7 @@ def _build_palm_basis_middle_y_thumb_x(
     if ney < 1e-9:
         return None
     ey_u = ey_u / ney
-    thumb_vec = _wrist_to_thumb_vector_mm(h, wrist)
+    thumb_vec = _thumb_vector_from_origin_mm(h, origin)
     if thumb_vec is None:
         return None
     ez = _palm_z_unit_from_y_and_thumb(ey_u, thumb_vec)
@@ -878,12 +934,12 @@ def align_palm_basis_to_reference(
     B: np.ndarray,
     B_ref: np.ndarray,
     h: np.ndarray,
-    wrist: np.ndarray,
+    origin: np.ndarray,
 ) -> np.ndarray:
     """Rebuild with physical +Y preserved; palm/back changes appear as +Z changes."""
     del B_ref
     ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
-    rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, wrist)
+    rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, origin)
     if rebuilt is not None:
         return rebuilt
     return np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
@@ -895,23 +951,18 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Palm frame (camera mm): **+Y** wrist→middle; **+Z** = Y×(wrist→thumb); **+X** thumb in ⊥Y."""
-    wrist = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
-    ey = _middle_finger_axis(h, wrist)
+    """Palm frame (camera mm): origin at palm center; **+Y** palm→middle; **+Z** = Y×thumb; **+X** thumb in ⊥Y."""
+    pc = _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
+    if pc is None:
+        return None
+    ey = _middle_finger_axis(h, pc)
     if ey is None:
         return None
-    B = _build_palm_basis_middle_y_thumb_x(ey, h, wrist)
+    B = _build_palm_basis_middle_y_thumb_x(ey, h, pc)
     if B is None:
         return None
     if ref_basis is not None:
-        B = align_palm_basis_to_reference(B, ref_basis, h, wrist)
-    if palm_center_override is not None:
-        pc_ov = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
-        pc = pc_ov if np.all(np.isfinite(pc_ov)) else palm_frame_origin_mm(h)
-    else:
-        pc = palm_frame_origin_mm(h)
-    if pc is None:
-        pc = wrist
+        B = align_palm_basis_to_reference(B, ref_basis, h, pc)
     return np.asarray(pc, dtype=np.float64).reshape(3), B
 
 
@@ -929,18 +980,12 @@ def palm_orthonormal_basis(
             h, ref_basis=ref_basis, palm_center_override=palm_center_override
         )
     ia, ib = palm_basis_pair_indices(palm_basis)
-    out = orthonormal_basis_from_landmark_pair(h, ia, ib)
+    out = orthonormal_basis_from_landmark_pair(
+        h, ia, ib, palm_center_override=palm_center_override
+    )
     if out is None:
         return None
-    origin, B = out
+    pc, B = out
     if ref_basis is not None:
-        wrist = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
-        B = align_palm_basis_to_reference(B, ref_basis, h, wrist)
-    pc = palm_frame_origin_mm(h)
-    if palm_center_override is not None:
-        pc_ov = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
-        if np.all(np.isfinite(pc_ov)):
-            pc = pc_ov
-    if pc is None:
-        pc = origin
+        B = align_palm_basis_to_reference(B, ref_basis, h, pc)
     return np.asarray(pc, dtype=np.float64).reshape(3), B

@@ -12,10 +12,13 @@ HAND_CONNECTIONS = [
 
 WRIST_ID = 0
 THUMB_MCP_ID = 2
+THUMB_IP_ID = 3
 THUMB_TIP_ID = 4
 INDEX_MCP_ID = 5
 INDEX_TIP_ID = 8
 MIDDLE_MCP_ID = 9
+MIDDLE_PIP_ID = 10
+MIDDLE_DIP_ID = 11
 MIDDLE_TIP_ID = 12
 RING_MCP_ID = 13
 RING_TIP_ID = 16
@@ -27,6 +30,10 @@ FINGERTIP_IDS_FOUR = (INDEX_TIP_ID, MIDDLE_TIP_ID, RING_TIP_ID, PINKY_TIP_ID)
 # Mode gesture 1–5: index → thumb (order matters for classify_mode_from_fingers).
 MODE_COUNT_TIP_IDS = [INDEX_TIP_ID, MIDDLE_TIP_ID, RING_TIP_ID, PINKY_TIP_ID, THUMB_TIP_ID]
 MCP_IDS = [INDEX_MCP_ID, MIDDLE_MCP_ID, RING_MCP_ID, PINKY_MCP_ID]
+
+# Depth / palm basis: try each joint root→tip (first good depth wins for gates & axes).
+THUMB_DEPTH_CHAIN_IDS = (THUMB_MCP_ID, THUMB_IP_ID, THUMB_TIP_ID)
+MIDDLE_DEPTH_CHAIN_IDS = (MIDDLE_MCP_ID, MIDDLE_PIP_ID, MIDDLE_DIP_ID, MIDDLE_TIP_ID)
 
 # Wrist + five finger MCPs (palm frame origin / depth anchor).
 PALM_CENTER_IDS = (

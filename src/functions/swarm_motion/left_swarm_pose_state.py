@@ -88,9 +88,6 @@ class LeftSwarmPoseState:
         palm_center_override: np.ndarray | None = None,
         palm_pose: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> bool:
-        wrist_mm = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
-        if not np.all(np.isfinite(wrist_mm)):
-            return False
         if palm_pose is not None:
             pc, B = palm_pose
             pc = np.asarray(pc, dtype=np.float64).reshape(3)
@@ -101,13 +98,17 @@ class LeftSwarmPoseState:
             )
             if out is None:
                 return False
-            origin, B = out
-            pc = np.asarray(origin, dtype=np.float64).reshape(3)
+            pc, B = out
+            pc = np.asarray(pc, dtype=np.float64).reshape(3)
         if palm_center_override is not None:
             pc_ov = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
             if np.all(np.isfinite(pc_ov)):
                 pc = pc_ov
-        self.ref_wrist_mm = wrist_mm.copy()
+        if not np.all(np.isfinite(pc)):
+            return False
+        wrist_mm = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
+        if np.all(np.isfinite(wrist_mm)):
+            self.ref_wrist_mm = wrist_mm.copy()
         self.ref_palm_center = np.asarray(pc, dtype=np.float64).reshape(3).copy()
         self.ref_basis = B.copy()
         self.initialized = True

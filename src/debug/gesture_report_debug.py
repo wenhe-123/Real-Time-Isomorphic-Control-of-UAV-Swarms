@@ -30,7 +30,7 @@ _PALM_VIEW_AZIM = -58.0
 # Camera mm → plot mm: palm origin at (0,0,0); display Y = finger up; XZ = floor plane.
 # display = (cam_x, -cam_y, cam_z); oblique view elev≈22 azim≈-58 (XZ base, Y up).
 _PALM_POSE_CAM_TO_DISPLAY = np.array(
-    [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
+    [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
     dtype=np.float64,
 )
 
@@ -297,9 +297,9 @@ def _corner_origin_3d_axis_limits(
     lo_neg = np.maximum(-pts.min(axis=0), 0.0)
     pad = np.maximum(hi * float(pad_frac), float(min_pad_mm))
     margin = pad * 0.12
-    ax.set_xlim(-lo_neg[0] - margin, hi[0] + pad[0])
-    ax.set_ylim(-lo_neg[1] - margin, hi[1] + pad[1])
-    ax.set_zlim(-lo_neg[2] - margin, hi[2] + pad[2])
+    ax.set_xlim(float(-lo_neg[0] - margin[0]), float(hi[0] + pad[0]))
+    ax.set_ylim(float(-lo_neg[1] - margin[1]), float(hi[1] + pad[1]))
+    ax.set_zlim(float(-lo_neg[2] - margin[2]), float(hi[2] + pad[2]))
 
 
 def _draw_thick_axis_line(ax, origin: np.ndarray, direction: np.ndarray, length: float, color: str, label: str) -> None:
@@ -596,7 +596,6 @@ def update_report_palm_pose_figure(
         color="0.88",
         alpha=0.28,
         linewidth=0,
-        label="XZ floor",
     )
     limit_pts.append(np.stack([floor_x.ravel(), floor_y.ravel(), floor_z.ravel()], axis=1))
 
@@ -604,11 +603,11 @@ def update_report_palm_pose_figure(
         _n, _hp, _inliers = fit
         u = basis[:, 0]
         v = basis[:, 1]
-        g = np.linspace(0.0, 1.0, 5) * axis_len
-        h = np.linspace(0.0, 1.0, 5) * axis_len
-        X = g[:, None] * u[0] + h[None, :] * v[0]
-        Y = g[:, None] * u[1] + h[None, :] * v[1]
-        Z = g[:, None] * u[2] + h[None, :] * v[2]
+        g_lin = np.linspace(0.0, 1.0, 5) * axis_len
+        h_lin = np.linspace(0.0, 1.0, 5) * axis_len
+        X = g_lin[:, None] * u[0] + h_lin[None, :] * v[0]
+        Y = g_lin[:, None] * u[1] + h_lin[None, :] * v[1]
+        Z = g_lin[:, None] * u[2] + h_lin[None, :] * v[2]
         ax_palm.plot_surface(X, Y, Z, color="wheat", alpha=0.35, linewidth=0)
         limit_pts.append(np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=1))
 
