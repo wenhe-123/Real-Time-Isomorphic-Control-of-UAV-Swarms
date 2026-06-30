@@ -21,6 +21,23 @@ def _format_rotvec(rv: np.ndarray) -> str:
     return f"{np.degrees(ang):+.1f}° @({ax[0]:+.2f},{ax[1]:+.2f},{ax[2]:+.2f})"
 
 
+def format_middle_y_sign_hud(dbg) -> str:
+    """One-line +Y sign summary for Matplotlib overlay."""
+    if dbg is None:
+        return ""
+    flip = " FLIP" if bool(getattr(dbg, "flipped", False)) else ""
+    segs = getattr(dbg, "seg_axial_mm", {}) or {}
+    seg_s = " ".join(f"{k}:{v:+.0f}" for k, v in segs.items())
+    ax = getattr(dbg, "axial_mm", None)
+    ax_s = "n/a" if ax is None else f"{float(ax):+.1f}"
+    return (
+        f"+Y {getattr(dbg, 'reason', '')} anchor={getattr(dbg, 'anchor_used', '')}{flip}\n"
+        f"axial={ax_s}mm [{seg_s}] dot(prev)={getattr(dbg, 'dot_out_prev', None)}\n"
+        f"Z wrist={getattr(dbg, 'wrist_z_mm', None)} mcp={getattr(dbg, 'mcp_z_mm', None)}"
+        f" pip={getattr(dbg, 'pip_z_mm', None)} tip={getattr(dbg, 'tip_z_mm', None)}"
+    )
+
+
 def print_left_swarm_pose_debug(
     state: LeftSwarmPoseState,
     *,
@@ -90,6 +107,11 @@ def print_left_swarm_pose_debug(
         print("  depth=hold (using previous Z)", flush=True)
     rv_c = np.asarray(state.last_rv_cam_world, dtype=np.float64).reshape(3)
     print(f"  rv_cam={_format_rotvec(rv_c)}", flush=True)
+    ydbg = getattr(state, "last_middle_y_sign_debug", None)
+    if ydbg is not None:
+        from debug.middle_y_sign_debug import print_middle_y_sign_debug
+
+        print_middle_y_sign_debug(ydbg, frame_idx=int(frame_idx), force=True)
     print(
         f"  trans {trans_tag} arm_mm={_vec3_s(dc_arm)}  → world m (X,Y,Z)=({wx:+.4f},{wy:+.4f},{wz:+.4f})  "
         f"cmd={_vec3_s(dh_cmd)}",

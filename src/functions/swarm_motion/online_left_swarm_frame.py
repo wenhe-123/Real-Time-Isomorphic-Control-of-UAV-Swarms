@@ -157,6 +157,7 @@ def apply_left_swarm_frame(
                     palm_basis=boot.left_palm_basis,
                     force_reset=_do_arm,
                     plane_rot_mul=_plane_rot_mul,
+                    frame_idx=int(boot.frame_idx),
                 ),
                 tuning=tuning,
             )

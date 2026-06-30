@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-
-import numpy as np
+from typing import TYPE_CHECKING, Any
 
 from functions.mode_switch.hand_constants import WRIST_ID
 from functions.swarm_motion.left_pose_config import DEFAULT_LEFT_PALM_BASIS
@@ -76,6 +74,10 @@ class LeftSwarmPoseState:
     last_rot_source: str = "depth"
     last_rot_blend_w: float = 0.0
     last_trans_blend_w: float = 0.0
+    #: Previous wrist→middle-MCP unit (camera); for +Y flip debug.
+    prev_middle_y_raw: np.ndarray | None = None
+    #: Last +Y sign decision trace (see ``debug/middle_y_sign_debug.py``).
+    last_middle_y_sign_debug: Any = None
 
     def reset_to_current(
         self,

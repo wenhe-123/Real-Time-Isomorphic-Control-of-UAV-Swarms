@@ -65,6 +65,7 @@ class LeftHandPoseDefaults:
     left_swarm_depth_frame_motion: bool
     left_pose_debug: bool
     left_pose_debug_every: int
+    left_y_sign_debug: bool
     left_pose_frame_viz: bool
     left_unwind_s: float
     left_cam_preset: str
@@ -174,6 +175,7 @@ class OnlineDefaults:
                 left_swarm_depth_frame_motion=bool(l["left_swarm_depth_frame_motion"]),
                 left_pose_debug=bool(l["left_pose_debug"]),
                 left_pose_debug_every=int(l["left_pose_debug_every"]),
+                left_y_sign_debug=bool(l.get("left_y_sign_debug", False)),
                 left_pose_frame_viz=bool(l["left_pose_frame_viz"]),
                 left_unwind_s=float(l["left_unwind_s"]),
                 left_cam_preset=str(l["left_cam_preset"]),

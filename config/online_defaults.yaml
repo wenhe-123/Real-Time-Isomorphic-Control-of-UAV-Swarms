@@ -45,6 +45,7 @@ LeftHandPose:
   left_swarm_depth_frame_motion: true
   left_pose_debug: true
   left_pose_debug_every: 15
+  left_y_sign_debug: false  # Log every +Y sign decision; flips always print when armed
   left_pose_frame_viz: false
   left_unwind_s: 2.6  # Seconds to ease back to morph frame on second press 0
 

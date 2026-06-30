@@ -182,6 +182,11 @@ def build_online_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug-report-pca", action="store_true")
     parser.add_argument("--debug-report-landmarks", action="store_true")
     parser.add_argument("--debug-report-palm", action="store_true")
+    parser.add_argument(
+        "--debug-y-sign",
+        action="store_true",
+        help="Log palm +Y sign each frame; always print immediately on 180° flip (arm pose).",
+    )
     parser.add_argument("--debug-webcam-pipeline", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--profile-frame", action="store_true")
     parser.add_argument("--profile-every", type=int, default=60)

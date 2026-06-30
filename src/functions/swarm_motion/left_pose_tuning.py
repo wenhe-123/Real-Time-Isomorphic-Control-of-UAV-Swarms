@@ -37,6 +37,7 @@ class LeftPoseTuning:
     palm_center_depth_ema: float
     pose_debug: bool
     pose_debug_every: int
+    y_sign_debug: bool
     pose_frame_viz: bool
     pose_frame_viz_every: int
     mode_vis_min: float
@@ -123,6 +124,7 @@ def _build_left_tuning(
         palm_center_depth_ema=float(lp.left_palm_center_depth_ema),
         pose_debug=bool(lp.left_pose_debug),
         pose_debug_every=int(lp.left_pose_debug_every),
+        y_sign_debug=bool(getattr(args, "debug_y_sign", False) or lp.left_y_sign_debug),
         pose_frame_viz=pose_frame_viz,
         pose_frame_viz_every=int(defaults.display.left_pose_frame_viz_every),
         mode_vis_min=float(defaults.morph.mode_vis_min),
@@ -201,3 +203,4 @@ class LeftPoseSensorInput:
     palm_basis: str = ""
     force_reset: bool = False
     plane_rot_mul: float = 1.0
+    frame_idx: int = -1

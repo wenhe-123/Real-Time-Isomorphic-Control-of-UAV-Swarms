@@ -659,6 +659,21 @@ def update_report_palm_pose_figure(
         pad_frac=_PALM_LIMIT_PAD_FRAC,
         min_pad_mm=_PALM_LIMIT_MIN_PAD_MM,
     )
+    if left_pose_state is not None:
+        from debug.left_swarm_pose_debug import format_middle_y_sign_hud
+
+        y_hud = format_middle_y_sign_hud(getattr(left_pose_state, "last_middle_y_sign_debug", None))
+        if y_hud:
+            ax_palm.text2D(
+                0.02,
+                0.14,
+                y_hud,
+                transform=ax_palm.transAxes,
+                fontsize=6.5,
+                color="darkred" if "FLIP" in y_hud else "0.35",
+                va="bottom",
+                family="monospace",
+            )
     ax_palm.text2D(
         0.02,
         0.02,

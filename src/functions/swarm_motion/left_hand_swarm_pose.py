@@ -142,13 +142,32 @@ def update_left_swarm_pose(
         and str(getattr(state, "prev_rot_source", "depth")) == "depth"
     ):
         prev_y = np.asarray(state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
+    prev_raw_y = (
+        None
+        if sensor.force_reset
+        else getattr(state, "prev_middle_y_raw", None)
+    )
+    from debug.middle_y_sign_debug import MiddleYSignDebug, print_middle_y_sign_debug
+
+    y_dbg = MiddleYSignDebug()
     out = palm_orthonormal_basis(
         h,
         palm_basis=sensor.palm_basis,
         ref_basis=ref_b,
         palm_center_override=sensor.palm_center_depth_mm,
         prev_y=prev_y,
+        prev_raw_y=prev_raw_y,
+        y_sign_debug=y_dbg,
     )
+    state.last_middle_y_sign_debug = y_dbg
+    if getattr(tuning, "y_sign_debug", False) or y_dbg.flipped:
+        print_middle_y_sign_debug(
+            y_dbg,
+            frame_idx=int(getattr(sensor, "frame_idx", -1)),
+            force=bool(getattr(tuning, "y_sign_debug", False)),
+        )
+    if y_dbg.ey_raw is not None and np.all(np.isfinite(y_dbg.ey_raw)):
+        state.prev_middle_y_raw = np.asarray(y_dbg.ey_raw, dtype=np.float64).reshape(3).copy()
     if sensor.palm_center_color_px is not None:
         state.last_palm_center_color_px = sensor.palm_center_color_px
     if out is None:
