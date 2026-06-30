@@ -852,63 +852,74 @@ def _origin_to_joint_vector_mm(
     return None
 
 
-def _middle_finger_distal_sign_score(
-    h: np.ndarray,
-    origin: np.ndarray,
-    ey: np.ndarray,
-) -> int:
-    """Vote whether ``ey`` points distal (+) or proximal (−); sum > 0 keeps ``ey``."""
-    ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
-    nu = float(np.linalg.norm(ey_u))
-    if nu < 1e-9:
-        return 0
-    ey_u = ey_u / nu
-    score = 0
+_MIDDLE_Y_REF_AMBIGUITY_DOT = 0.55
 
-    w = _landmark_mm_if_finite(h, WRIST_ID, origin)
-    if w is not None:
-        nw = float(np.linalg.norm(w))
-        if nw >= 1e-6:
-            score += 1 if float(np.dot(ey_u, w / nw)) < 0.0 else -1
 
-    for jidx in (MIDDLE_TIP_ID, MIDDLE_DIP_ID, MIDDLE_PIP_ID):
-        t = _landmark_mm_if_finite(h, int(jidx), origin)
-        if t is not None:
-            nt = float(np.linalg.norm(t))
-            if nt >= 1e-6:
-                score += 1 if float(np.dot(ey_u, t / nt)) > 0.0 else -1
+def _lock_axis_halfspace(axis: np.ndarray, anchor: np.ndarray) -> np.ndarray:
+    """Flip ``axis`` so it agrees with ``anchor`` (sign only)."""
+    a = np.asarray(axis, dtype=np.float64).reshape(3)
+    b = np.asarray(anchor, dtype=np.float64).reshape(3)
+    nb = float(np.linalg.norm(b))
+    if nb < 1e-9:
+        return a
+    b = b / nb
+    na = float(np.linalg.norm(a))
+    if na < 1e-9:
+        return b.copy()
+    a = a / na
+    if float(np.dot(a, b)) < 0.0:
+        a = -a
+    return a
+
+
+def _middle_finger_sign_anchors_mm(h: np.ndarray) -> list[np.ndarray]:
+    """Stable +Y sign cues: wrist→middle joints, then middle MCP→tip."""
+    anchors: list[np.ndarray] = []
+    wrist = _landmark_mm_if_valid(h, WRIST_ID)
+    if wrist is not None:
+        for jidx in (MIDDLE_MCP_ID, MIDDLE_PIP_ID, MIDDLE_TIP_ID):
+            p = _landmark_mm_if_valid(h, int(jidx))
+            if p is None:
+                continue
+            v = np.asarray(p, dtype=np.float64).reshape(3) - wrist
+            if float(np.linalg.norm(v)) >= 1e-6:
+                anchors.append(v)
                 break
-
-    mcp = np.asarray(h[MIDDLE_MCP_ID, :3], dtype=np.float64).reshape(3)
-    tip = np.asarray(h[MIDDLE_TIP_ID, :3], dtype=np.float64).reshape(3)
-    if np.all(np.isfinite(mcp)) and np.all(np.isfinite(tip)):
-        seg = tip - mcp
-        ns = float(np.linalg.norm(seg))
-        if ns >= 1e-6:
-            score += 1 if float(np.dot(ey_u, seg / ns)) > 0.0 else -1
-        seg2 = tip[:2] - mcp[:2]
-        ns2 = float(np.linalg.norm(seg2))
-        if ns2 >= 1e-6:
-            score += 1 if float(np.dot(ey_u[:2], seg2 / ns2)) > 0.0 else -1
-
-    return int(score)
+    mcp = _landmark_mm_if_valid(h, MIDDLE_MCP_ID)
+    tip = _landmark_mm_if_valid(h, MIDDLE_TIP_ID)
+    if mcp is not None and tip is not None:
+        v = np.asarray(tip, dtype=np.float64).reshape(3) - np.asarray(mcp, dtype=np.float64).reshape(3)
+        if float(np.linalg.norm(v)) >= 1e-6:
+            anchors.append(v)
+    return anchors
 
 
-def _orient_middle_axis_distal(
-    h: np.ndarray,
-    origin: np.ndarray,
+def _finalize_middle_y_axis(
     ey: np.ndarray,
-) -> tuple[np.ndarray, int]:
-    """+Y points palm → middle finger (distal). Returns (unit_y, confidence |score|)."""
+    h: np.ndarray,
+    *,
+    ref_y: np.ndarray | None = None,
+) -> np.ndarray:
+    """Lock +Y sign with bone/distal anchors; hold ``ref_y`` when measurement is ambiguous."""
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
-    nu = float(np.linalg.norm(ey_u))
-    if nu < 1e-9:
-        return ey_u, 0
-    ey_u = ey_u / nu
-    score = _middle_finger_distal_sign_score(h, origin, ey_u)
-    if score < 0:
-        ey_u = -ey_u
-    return ey_u, abs(int(score))
+    ney = float(np.linalg.norm(ey_u))
+    if ney < 1e-9:
+        return ey_u
+    ey_u = ey_u / ney
+    for anchor in _middle_finger_sign_anchors_mm(h):
+        ey_u = _lock_axis_halfspace(ey_u, anchor)
+    if ref_y is not None:
+        ey_ref = np.asarray(ref_y, dtype=np.float64).reshape(3)
+        nr = float(np.linalg.norm(ey_ref))
+        if nr >= 1e-9:
+            ey_ref = ey_ref / nr
+            d = float(np.dot(ey_u, ey_ref))
+            if d < 0.0:
+                ey_u = -ey_u
+                d = -d
+            if d < float(_MIDDLE_Y_REF_AMBIGUITY_DOT):
+                return ey_ref.copy()
+    return ey_u
 
 
 def _middle_finger_axis(
@@ -917,28 +928,14 @@ def _middle_finger_axis(
     *,
     ref_y: np.ndarray | None = None,
 ) -> np.ndarray | None:
-    """+Y palm: palm center → middle MCP when depth is available; PIP/DIP/tip fallback only if MCP missing."""
+    """+Y palm center → middle MCP; sign from wrist bone / distal segment, not palm↔wrist."""
     v = _landmark_mm_if_finite(h, MIDDLE_MCP_ID, origin)
     if v is None or float(np.linalg.norm(v)) < 1e-6:
-        v = None
-        for jidx in (MIDDLE_PIP_ID, MIDDLE_DIP_ID, MIDDLE_TIP_ID):
-            v = _landmark_mm_if_finite(h, int(jidx), origin)
-            if v is not None and float(np.linalg.norm(v)) >= 1e-6:
-                break
-        if v is None:
-            return None
+        return None
     n = float(np.linalg.norm(v))
     if n < 1e-9:
         return None
-    ey, y_conf = _orient_middle_axis_distal(h, origin, v / n)
-    if ref_y is not None:
-        ey_ref = np.asarray(ref_y, dtype=np.float64).reshape(3)
-        nr = float(np.linalg.norm(ey_ref))
-        if nr >= 1e-9 and float(np.dot(ey, ey_ref / nr)) < 0.0:
-            # Geometry ambiguous: keep temporal continuity. Strong geometry beats stale ref.
-            if int(y_conf) <= 1:
-                ey = -ey
-    return ey
+    return _finalize_middle_y_axis(v / n, h, ref_y=ref_y)
 
 
 def _landmark_mm_if_finite(h: np.ndarray, jidx: int, origin: np.ndarray) -> np.ndarray | None:
@@ -1025,14 +1022,18 @@ def align_palm_basis_to_reference(
     h: np.ndarray,
     origin: np.ndarray,
 ) -> np.ndarray:
-    """Rebuild +X/+Z from thumb; flip +Y only when geometry cannot disambiguate sign."""
+    """Rebuild +X/+Z from thumb while keeping +Y aligned to reference half-space."""
     ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
     ey_ref = np.asarray(B_ref[:, 1], dtype=np.float64).reshape(3)
     nr = float(np.linalg.norm(ey_ref))
-    if nr >= 1e-9 and float(np.dot(ey, ey_ref / nr)) < 0.0:
-        _, y_conf = _orient_middle_axis_distal(h, origin, ey)
-        if int(y_conf) <= 1:
+    if nr >= 1e-9:
+        ey_ref = ey_ref / nr
+        d = float(np.dot(ey, ey_ref))
+        if d < 0.0:
             ey = -ey
+            d = -d
+        if d < float(_MIDDLE_Y_REF_AMBIGUITY_DOT):
+            ey = ey_ref.copy()
     rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, origin)
     if rebuilt is not None:
         return rebuilt
