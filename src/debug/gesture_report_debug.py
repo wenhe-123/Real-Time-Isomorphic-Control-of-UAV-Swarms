@@ -543,21 +543,12 @@ def update_report_palm_pose_figure(
     origin_cam = palm_frame_origin_mm(h)
     fit = palm_plane_fit_mm(h)
     ref_b = None
-    prev_y = None
-    prev_raw_y = None
-    if left_pose_state is not None:
-        if bool(getattr(left_pose_state, "initialized", False)):
-            ref_b = np.asarray(left_pose_state.ref_basis, dtype=np.float64).reshape(3, 3)
-        prev_rb = getattr(left_pose_state, "prev_rot_basis", None)
-        if prev_rb is not None:
-            prev_y = np.asarray(prev_rb[:, 1], dtype=np.float64).reshape(3)
-        prev_raw_y = getattr(left_pose_state, "prev_middle_y_raw", None)
+    if left_pose_state is not None and bool(getattr(left_pose_state, "initialized", False)):
+        ref_b = np.asarray(left_pose_state.ref_basis, dtype=np.float64).reshape(3, 3)
     basis_out = palm_orthonormal_basis(
         h,
         palm_center_override=origin_cam,
         ref_basis=ref_b,
-        prev_y=prev_y,
-        prev_raw_y=prev_raw_y,
     )
     if basis_out is None:
         ax_palm.text2D(0.25, 0.5, "palm basis unavailable", transform=ax_palm.transAxes)
@@ -595,7 +586,7 @@ def update_report_palm_pose_figure(
             color="0.35",
             linewidth=1.5,
             linestyle=":",
-            label="wrist→mid MCP (+Y)",
+            label="wrist→mid MCP (ref)",
         )
         ax_palm.scatter(
             [mcp_d[0]],

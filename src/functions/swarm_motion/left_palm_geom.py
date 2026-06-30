@@ -864,42 +864,127 @@ def _origin_to_joint_vector_mm(
     return None
 
 
-# Finger-chain axial score on ±(wrist→MCP) must exceed this (mm) to flip sign.
-_MIDDLE_Y_AUX_FLIP_MM = 10.0
-# Below this |axial| (mm), keep ref / previous-frame +Y half-space (hysteresis).
-_MIDDLE_Y_AUX_DEAD_MM = 5.0
+# Points used to fit the middle-finger axis line (depth-camera mm).
+_MIDDLE_Y_LINE_IDS: tuple[int, ...] = (
+    WRIST_ID,
+    MIDDLE_MCP_ID,
+    MIDDLE_PIP_ID,
+    MIDDLE_DIP_ID,
+    MIDDLE_TIP_ID,
+)
 
 
-def _middle_y_finger_axial_detail(
-    h: np.ndarray, ey_u: np.ndarray
-) -> tuple[float | None, dict[str, float]]:
-    """MCP→tip chain axial projections onto ``ey_u`` (mm), per segment + total."""
-    ey_u = np.asarray(ey_u, dtype=np.float64).reshape(3)
-    segs: dict[str, float] = {}
-    total = 0.0
-    prev = _landmark_mm_if_valid(h, MIDDLE_MCP_ID)
-    names = ("pip", "dip", "tip")
-    ids = (MIDDLE_PIP_ID, MIDDLE_DIP_ID, MIDDLE_TIP_ID)
-    for name, jidx in zip(names, ids):
+def _middle_finger_mcp_to_tip_mm(h: np.ndarray) -> np.ndarray | None:
+    """Middle MCP → tip (or nearest valid joint toward tip)."""
+    mcp = _landmark_mm_if_valid(h, MIDDLE_MCP_ID)
+    if mcp is None:
+        return None
+    for jidx in (MIDDLE_TIP_ID, MIDDLE_DIP_ID, MIDDLE_PIP_ID):
         p = _landmark_mm_if_valid(h, int(jidx))
-        if prev is None or p is None:
-            if p is not None:
-                prev = p
+        if p is None:
             continue
-        seg = np.asarray(p, dtype=np.float64).reshape(3) - np.asarray(prev, dtype=np.float64).reshape(3)
-        if float(np.linalg.norm(seg)) >= 1e-6:
-            ax = float(np.dot(seg, ey_u))
-            segs[str(name)] = ax
-            total += ax
-        prev = p
-    if not segs:
-        return None, segs
-    return float(total), segs
+        v = np.asarray(p, dtype=np.float64).reshape(3) - np.asarray(mcp, dtype=np.float64).reshape(3)
+        if float(np.linalg.norm(v)) >= 1e-6:
+            return v
+    return None
 
 
-def _middle_y_finger_axial_mm(h: np.ndarray, ey_u: np.ndarray) -> float | None:
-    total, _ = _middle_y_finger_axial_detail(h, ey_u)
-    return total
+def _fit_line_unit_from_points(pts: np.ndarray) -> np.ndarray | None:
+    """Unit direction of the best-fit line through ``pts`` (Nx3, >= 2 rows)."""
+    P = np.asarray(pts, dtype=np.float64).reshape(-1, 3)
+    if P.shape[0] < 2 or not np.all(np.isfinite(P)):
+        return None
+    if P.shape[0] == 2:
+        v = P[1] - P[0]
+    else:
+        c = np.mean(P, axis=0)
+        _, _, vt = np.linalg.svd(P - c.reshape(1, 3), full_matrices=False)
+        v = np.asarray(vt[0], dtype=np.float64).reshape(3)
+    n = float(np.linalg.norm(v))
+    if n < 1e-6:
+        return None
+    return v / n
+
+
+def _middle_finger_line_points_mm(
+    h: np.ndarray,
+    *,
+    palm_center_override: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """Wrist + middle chain + palm center for middle-finger line fit."""
+    pts: list[np.ndarray] = []
+    for jidx in _MIDDLE_Y_LINE_IDS:
+        p = _landmark_mm_if_valid(h, int(jidx))
+        if p is not None:
+            pts.append(np.asarray(p, dtype=np.float64).reshape(3))
+    if palm_center_override is not None:
+        pc = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
+        if np.all(np.isfinite(pc)):
+            pts.append(pc)
+    else:
+        pc = palm_frame_origin_mm(h)
+        if pc is None:
+            pc = palm_roots_centroid_mm(h)
+        if pc is not None:
+            pts.append(np.asarray(pc, dtype=np.float64).reshape(3))
+    if len(pts) < 2:
+        return None
+    return np.stack(pts, axis=0)
+
+
+def _middle_finger_y_axis(
+    h: np.ndarray,
+    *,
+    palm_center_override: np.ndarray | None = None,
+    y_sign_debug: "MiddleYSignDebug | None" = None,
+) -> np.ndarray | None:
+    """+Y: fit line through wrist / middle finger / palm center; + toward fingertip."""
+    from debug.middle_y_sign_debug import MiddleYSignDebug
+
+    P = _middle_finger_line_points_mm(h, palm_center_override=palm_center_override)
+    if P is None:
+        return None
+    line_u = _fit_line_unit_from_points(P)
+    if line_u is None:
+        return None
+
+    reason = f"line_fit(n={P.shape[0]})"
+    finger = _middle_finger_mcp_to_tip_mm(h)
+    if finger is not None:
+        fn = float(np.linalg.norm(finger))
+        if fn >= 1e-6:
+            fu = finger / fn
+            if float(np.dot(line_u, fu)) < 0.0:
+                line_u = -line_u
+            reason = f"{reason}+mcp→tip"
+        else:
+            reason = f"{reason}+2pt"
+    else:
+        wrist = _landmark_mm_if_valid(h, WRIST_ID)
+        mcp = _landmark_mm_if_valid(h, MIDDLE_MCP_ID)
+        if wrist is not None and mcp is not None:
+            wm = np.asarray(mcp, dtype=np.float64).reshape(3) - np.asarray(wrist, dtype=np.float64).reshape(3)
+            wn = float(np.linalg.norm(wm))
+            if wn >= 1e-6 and float(np.dot(line_u, wm / wn)) < 0.0:
+                line_u = -line_u
+            reason = f"{reason}+wrist→mcp"
+        else:
+            reason = f"{reason}+unsigned"
+
+    if y_sign_debug is not None:
+        y_sign_debug.reason = reason
+        y_sign_debug.axial_mm = None
+        y_sign_debug.seg_axial_mm = {}
+        y_sign_debug.ey_raw = np.asarray(line_u, dtype=np.float64).reshape(3).copy()
+        y_sign_debug.ey_out = y_sign_debug.ey_raw.copy()
+        y_sign_debug.anchor_used = "mcp→tip"
+        y_sign_debug.dot_out_raw = 1.0
+        _fill_middle_y_depth_z(y_sign_debug, h)
+        if finger is not None:
+            fn = float(np.linalg.norm(finger))
+            if fn >= 1e-6:
+                y_sign_debug.dot_out_ref = float(np.dot(line_u, finger / fn))
+    return line_u
 
 
 def _fill_middle_y_depth_z(dbg, h: np.ndarray) -> None:
@@ -918,133 +1003,23 @@ def _fill_middle_y_depth_z(dbg, h: np.ndarray) -> None:
             setattr(dbg, attr, float(p[2]))
 
 
-def _middle_y_unit_wrist_to_mcp(h: np.ndarray) -> np.ndarray | None:
-    """Unit vector wrist → middle MCP (+Y direction line in depth-camera mm)."""
-    wrist = _landmark_mm_if_valid(h, WRIST_ID)
-    mcp = _landmark_mm_if_valid(h, MIDDLE_MCP_ID)
-    if wrist is None or mcp is None:
-        return None
-    v = np.asarray(mcp, dtype=np.float64).reshape(3) - np.asarray(wrist, dtype=np.float64).reshape(3)
-    n = float(np.linalg.norm(v))
-    if n < 1e-6:
-        return None
-    return v / n
-
-
-def _pick_y_halfspace(
-    ey_raw: np.ndarray,
-    *,
-    axial_mm: float | None,
-    locked_y: np.ndarray | None,
-    prev_y: np.ndarray | None,
-) -> tuple[np.ndarray, str, str]:
-    """Return (ey, reason, anchor_used). Sign locked at arm; else prev; else wrist→MCP+."""
-    ey_u = np.asarray(ey_raw, dtype=np.float64).reshape(3)
-    ney = float(np.linalg.norm(ey_u))
-    if ney < 1e-9:
-        return ey_u, "degenerate", "none"
-    ey_u = ey_u / ney
-    plus = ey_u
-    minus = -ey_u
-
-    if axial_mm is not None and locked_y is None:
-        a = float(axial_mm)
-        if a >= float(_MIDDLE_Y_AUX_FLIP_MM):
-            return plus, f"aux>={_MIDDLE_Y_AUX_FLIP_MM:g}mm→+", "aux"
-        if a <= -float(_MIDDLE_Y_AUX_FLIP_MM):
-            return minus, f"aux<=-{_MIDDLE_Y_AUX_FLIP_MM:g}mm→−", "aux"
-
-    anchor: np.ndarray | None = None
-    anchor_used = "none"
-    if locked_y is not None:
-        ly = np.asarray(locked_y, dtype=np.float64).reshape(3)
-        ln = float(np.linalg.norm(ly))
-        if ln >= 1e-9:
-            anchor = ly / ln
-            anchor_used = "lock"
-    if anchor is None and prev_y is not None:
-        py = np.asarray(prev_y, dtype=np.float64).reshape(3)
-        pn = float(np.linalg.norm(py))
-        if pn >= 1e-9:
-            anchor = py / pn
-            anchor_used = "prev"
-
-    if anchor is not None:
-        side = "+" if float(np.dot(plus, anchor)) >= 0.0 else "−"
-        out = plus if side == "+" else minus
-        return out, f"{anchor_used}_hemi→{side}", anchor_used
-
-    return plus, "geom_wrist→mcp+", "none"
-
-
-def canonicalize_palm_basis_y_wrist_to_mcp(h: np.ndarray, B: np.ndarray) -> np.ndarray:
-    """At arm: force +Y to the wrist→middle-MCP half-space (flip X with Y to keep right-handed)."""
-    raw = _middle_y_unit_wrist_to_mcp(h)
-    Bc = np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
-    if raw is None:
-        return Bc
-    ry = np.asarray(Bc[:, 1], dtype=np.float64).reshape(3)
-    rn = float(np.linalg.norm(ry))
-    rraw = float(np.linalg.norm(raw))
-    if rn < 1e-9 or rraw < 1e-9:
-        return Bc
-    if float(np.dot(ry / rn, raw / rraw)) < 0.0:
-        Bc[:, 0] = -Bc[:, 0]
-        Bc[:, 1] = -Bc[:, 1]
-    return Bc
-
-
 def _middle_finger_axis(
     h: np.ndarray,
     *,
-    locked_y: np.ndarray | None = None,
-    prev_y: np.ndarray | None = None,
-    prev_raw_y: np.ndarray | None = None,
+    palm_center_override: np.ndarray | None = None,
     y_sign_debug: "MiddleYSignDebug | None" = None,
+    **_: object,
 ) -> np.ndarray | None:
-    """+Y line: wrist → middle MCP; sign locked at arm, else prev, else raw geometry."""
-    from debug.middle_y_sign_debug import MiddleYSignDebug
-
-    ey_raw = _middle_y_unit_wrist_to_mcp(h)
-    if ey_raw is None:
-        return None
-    axial, seg_ax = _middle_y_finger_axial_detail(h, ey_raw)
-    ey_out, reason, anchor_used = _pick_y_halfspace(
-        ey_raw, axial_mm=axial, locked_y=locked_y, prev_y=prev_y
+    """+Y along fitted middle-finger line; + toward MCP→tip."""
+    return _middle_finger_y_axis(
+        h, palm_center_override=palm_center_override, y_sign_debug=y_sign_debug
     )
-    if y_sign_debug is not None:
-        y_sign_debug.reason = reason
-        y_sign_debug.axial_mm = axial
-        y_sign_debug.seg_axial_mm = dict(seg_ax)
-        y_sign_debug.ey_raw = np.asarray(ey_raw, dtype=np.float64).reshape(3).copy()
-        y_sign_debug.ey_out = np.asarray(ey_out, dtype=np.float64).reshape(3).copy()
-        y_sign_debug.anchor_used = anchor_used
-        _fill_middle_y_depth_z(y_sign_debug, h)
-        rn = float(np.linalg.norm(ey_raw))
-        if rn >= 1e-9:
-            y_sign_debug.dot_out_raw = float(np.dot(ey_out, ey_raw / rn))
-        if prev_y is not None:
-            py = np.asarray(prev_y, dtype=np.float64).reshape(3)
-            pn = float(np.linalg.norm(py))
-            if pn >= 1e-9:
-                y_sign_debug.dot_out_prev = float(np.dot(ey_out, py / pn))
-        if prev_raw_y is not None:
-            pr = np.asarray(prev_raw_y, dtype=np.float64).reshape(3)
-            prn = float(np.linalg.norm(pr))
-            if prn >= 1e-9:
-                y_sign_debug.dot_raw_prev_raw = float(np.dot(ey_raw, pr / prn))
-        if locked_y is not None:
-            ry = np.asarray(locked_y, dtype=np.float64).reshape(3)
-            rn = float(np.linalg.norm(ry))
-            if rn >= 1e-9:
-                y_sign_debug.dot_out_ref = float(np.dot(ey_out, ry / rn))
-        if y_sign_debug.dot_out_raw is not None and float(y_sign_debug.dot_out_raw) < 0.0:
-            y_sign_debug.flipped_vs_geom = True
-        if y_sign_debug.dot_out_prev is not None:
-            y_sign_debug.flipped = float(y_sign_debug.dot_out_prev) < 0.0
-        elif prev_raw_y is not None and y_sign_debug.dot_raw_prev_raw is not None:
-            y_sign_debug.flipped = float(y_sign_debug.dot_raw_prev_raw) < 0.0
-    return ey_out
+
+
+def canonicalize_palm_basis_y_wrist_to_mcp(h: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """No-op kept for import stability; +Y is set by ``_middle_finger_y_axis``."""
+    del h
+    return np.asarray(B, dtype=np.float64).reshape(3, 3).copy()
 
 
 def _landmark_mm_if_finite(h: np.ndarray, jidx: int, origin: np.ndarray) -> np.ndarray | None:
@@ -1100,7 +1075,7 @@ def _build_palm_basis_middle_y_thumb_x(
     h: np.ndarray,
     origin: np.ndarray,
 ) -> np.ndarray | None:
-    """Orthonormal palm basis (camera mm); ``ey`` is fixed +Y (wrist → middle MCP).
+    """Orthonormal palm basis (camera mm); ``ey`` is +Y (middle-finger line, tip-ward).
 
     **+Z** = ``Y × (palm→thumb chain)``. **+X** = palm→thumb **tip** in plane ⊥Y.
     Right-handed: ``Z ≈ X × Y``.
@@ -1131,15 +1106,12 @@ def align_palm_basis_to_reference(
     h: np.ndarray,
     origin: np.ndarray,
     *,
-    prev_y: np.ndarray | None = None,
-    prev_raw_y: np.ndarray | None = None,
-    locked_y: np.ndarray | None = None,
+    palm_center_override: np.ndarray | None = None,
+    **_: object,
 ) -> np.ndarray:
-    """Rebuild +X/+Z from thumb; +Y uses same arm-locked sign as the live frame."""
+    """Rebuild +X/+Z from thumb; +Y from middle-finger line fit."""
     del B_ref
-    ey = _middle_finger_axis(
-        h, locked_y=locked_y, prev_y=prev_y, prev_raw_y=prev_raw_y
-    )
+    ey = _middle_finger_axis(h, palm_center_override=palm_center_override)
     if ey is None:
         ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
     rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, origin)
@@ -1153,27 +1125,19 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     *,
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
-    prev_y: np.ndarray | None = None,
-    prev_raw_y: np.ndarray | None = None,
     y_sign_debug: "MiddleYSignDebug | None" = None,
+    **_: object,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Palm frame: +Y wrist→middle MCP; Y sign locked at arm; X/Z from palm origin."""
+    """Palm frame: +Y = fitted middle-finger line (+ toward tip); X/Z from palm origin."""
     pc_geom = _palm_basis_origin_mm(h, palm_center_override=palm_center_override)
     if pc_geom is None:
         return None
     pc_out = _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
     if pc_out is None:
         pc_out = pc_geom
-    locked_y = (
-        np.asarray(ref_basis[:, 1], dtype=np.float64).reshape(3)
-        if ref_basis is not None
-        else None
-    )
     ey = _middle_finger_axis(
         h,
-        locked_y=locked_y,
-        prev_y=prev_y,
-        prev_raw_y=prev_raw_y,
+        palm_center_override=palm_center_override,
         y_sign_debug=y_sign_debug,
     )
     if ey is None:
@@ -1181,16 +1145,6 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     B = _build_palm_basis_middle_y_thumb_x(ey, h, pc_geom)
     if B is None:
         return None
-    if ref_basis is not None:
-        B = align_palm_basis_to_reference(
-            B,
-            ref_basis,
-            h,
-            pc_geom,
-            prev_y=prev_y,
-            prev_raw_y=prev_raw_y,
-            locked_y=locked_y,
-        )
     return np.asarray(pc_out, dtype=np.float64).reshape(3), B
 
 
@@ -1200,19 +1154,16 @@ def palm_orthonormal_basis(
     palm_basis: str = DEFAULT_LEFT_PALM_BASIS,
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
-    prev_y: np.ndarray | None = None,
-    prev_raw_y: np.ndarray | None = None,
     y_sign_debug: "MiddleYSignDebug | None" = None,
+    **_: object,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Return (palm_center_mm, B) with B columns = palm X (thumb), Y (fingertip), Z."""
+    """Return (palm_center_mm, B) with B columns = palm X (thumb), Y (middle line), Z."""
     key = str(palm_basis).strip().lower()
     if key in ("middle_thumb", "middle_y", "middle"):
         return palm_orthonormal_basis_middle_y_thumb_x(
             h,
             ref_basis=ref_basis,
             palm_center_override=palm_center_override,
-            prev_y=prev_y,
-            prev_raw_y=prev_raw_y,
             y_sign_debug=y_sign_debug,
         )
     ia, ib = palm_basis_pair_indices(palm_basis)
@@ -1228,8 +1179,6 @@ def palm_orthonormal_basis(
             ref_basis,
             h,
             pc,
-            prev_y=prev_y,
-            prev_raw_y=prev_raw_y,
-            locked_y=np.asarray(ref_basis[:, 1], dtype=np.float64).reshape(3),
+            palm_center_override=palm_center_override,
         )
     return np.asarray(pc, dtype=np.float64).reshape(3), B

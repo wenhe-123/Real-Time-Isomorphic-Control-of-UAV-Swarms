@@ -135,18 +135,6 @@ def update_left_swarm_pose(
         state.last_depth_outlier_prev = False
 
     ref_b = state.ref_basis if state.initialized and not sensor.force_reset else None
-    prev_y: np.ndarray | None = None
-    if (
-        state.prev_rot_basis is not None
-        and not sensor.force_reset
-        and str(getattr(state, "prev_rot_source", "depth")) == "depth"
-    ):
-        prev_y = np.asarray(state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
-    prev_raw_y = (
-        None
-        if sensor.force_reset
-        else getattr(state, "prev_middle_y_raw", None)
-    )
     from debug.middle_y_sign_debug import MiddleYSignDebug, print_middle_y_sign_debug, middle_y_trusted_for_rotation
 
     y_dbg = MiddleYSignDebug()
@@ -155,10 +143,18 @@ def update_left_swarm_pose(
         palm_basis=sensor.palm_basis,
         ref_basis=ref_b,
         palm_center_override=sensor.palm_center_depth_mm,
-        prev_y=prev_y,
-        prev_raw_y=prev_raw_y,
         y_sign_debug=y_dbg,
     )
+    if (
+        state.prev_rot_basis is not None
+        and not sensor.force_reset
+        and str(getattr(state, "prev_rot_source", "depth")) == "depth"
+    ):
+        py = np.asarray(state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
+        pn = float(np.linalg.norm(py))
+        if pn >= 1e-9 and float(np.linalg.norm(y_dbg.ey_out)) >= 1e-9:
+            y_dbg.dot_out_prev = float(np.dot(y_dbg.ey_out, py / pn))
+            y_dbg.flipped = float(y_dbg.dot_out_prev) < 0.0
     state.last_middle_y_sign_debug = y_dbg
     if getattr(tuning, "y_sign_debug", False) or y_dbg.flipped or y_dbg.flipped_vs_geom:
         print_middle_y_sign_debug(
@@ -386,8 +382,6 @@ def update_left_swarm_pose(
         state.prev_palm_mm = palm_center.copy()
         state.prev_rot_basis = B.copy()
         state.prev_rot_source = rot_source
-        if y_dbg.ey_raw is not None and np.all(np.isfinite(y_dbg.ey_raw)):
-            state.prev_middle_y_raw = np.asarray(y_dbg.ey_raw, dtype=np.float64).reshape(3).copy()
 
     return _pose_return(state)
 

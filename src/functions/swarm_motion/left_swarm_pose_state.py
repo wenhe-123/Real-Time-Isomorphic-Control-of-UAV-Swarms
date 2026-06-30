@@ -10,7 +10,7 @@ import numpy as np
 
 from functions.mode_switch.hand_constants import WRIST_ID
 from functions.swarm_motion.left_pose_config import DEFAULT_LEFT_PALM_BASIS
-from functions.swarm_motion.left_palm_geom import canonicalize_palm_basis_y_wrist_to_mcp, palm_orthonormal_basis
+from functions.swarm_motion.left_palm_geom import palm_orthonormal_basis
 
 
 @dataclass
@@ -113,7 +113,6 @@ class LeftSwarmPoseState:
                 pc = pc_ov
         if not np.all(np.isfinite(pc)):
             return False
-        B = canonicalize_palm_basis_y_wrist_to_mcp(h, B)
         wrist_mm = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
         if np.all(np.isfinite(wrist_mm)):
             self.ref_wrist_mm = wrist_mm.copy()

@@ -38,20 +38,14 @@ def middle_y_trusted_for_rotation(
     """Return (ok, reason) — False blocks rotation for this frame."""
     if dbg is None:
         return False, "y_no_dbg"
-    raw = np.asarray(getattr(dbg, "ey_raw", np.zeros(3)), dtype=np.float64).reshape(3)
-    if not np.all(np.isfinite(raw)) or float(np.linalg.norm(raw)) < 1e-6:
-        return False, "y_degenerate"
-    if str(getattr(dbg, "reason", "")) == "degenerate":
+    out = np.asarray(getattr(dbg, "ey_out", np.zeros(3)), dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(out)) or float(np.linalg.norm(out)) < 1e-6:
         return False, "y_degenerate"
     if bool(getattr(dbg, "flipped", False)):
         return False, "y_frame_flip"
-    if bool(getattr(dbg, "flipped_vs_geom", False)):
-        axial = getattr(dbg, "axial_mm", None)
-        if axial is None or abs(float(axial)) < 10.0:
-            return False, "y_geom_flip"
     if bool(depth_hold):
         return False, "depth_hold"
-    if int(mcp_valid) < 5:
+    if int(mcp_valid) < 4:
         return False, "mcp"
     wz = getattr(dbg, "wrist_z_mm", None)
     mz = getattr(dbg, "mcp_z_mm", None)
