@@ -34,6 +34,8 @@ class LeftSwarmPoseState:
     frozen_cam_preset: str = ""
     #: Swarm XYZ at arm (sim m); reserved for arm-time diagnostics / traces.
     ref_swarm_targets: np.ndarray | None = None
+    #: Formation centroid (sim m) frozen at arm — rigid rotation pivot base.
+    ref_swarm_centroid_m: np.ndarray | None = None
     #: 2D/webcam palm basis at arm when dual-rotation fallback is enabled.
     ref_basis_image: np.ndarray | None = None
     #: Wrist (camera mm) at arm — debug / overlay only.
@@ -140,8 +142,10 @@ class LeftSwarmPoseState:
             rs = np.asarray(ref_swarm_targets, dtype=np.float64)
             if rs.ndim == 2 and rs.shape[1] >= 3:
                 self.ref_swarm_targets = rs.astype(np.float32, copy=True)
+                self.ref_swarm_centroid_m = np.mean(rs[:, :3], axis=0).astype(np.float64)
         else:
             self.ref_swarm_targets = None
+            self.ref_swarm_centroid_m = None
         if ref_basis_image is not None:
             self.ref_basis_image = np.asarray(ref_basis_image, dtype=np.float64).reshape(3, 3).copy()
         else:
@@ -184,4 +188,5 @@ class LeftSwarmPoseState:
         self.frozen_M_trans = None
         self.frozen_cam_preset = ""
         self.ref_swarm_targets = None
+        self.ref_swarm_centroid_m = None
         self.ref_basis_image = None

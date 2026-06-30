@@ -171,6 +171,7 @@ def apply_left_swarm_frame(
             morph_targets_before_left_m,
             off,
             R_pose,
+            pivot_ref_m=getattr(left_pose_state, "ref_swarm_centroid_m", None),
         )
         _sec("left_apply_rigid")
         left_swarm_off = np.asarray(off, dtype=np.float64).copy()

@@ -162,7 +162,8 @@ def resolve_dual_left_rotation(
     if not enabled or orbbec_idx_l is None or orbbec_result is None:
         return out, webcam_frame_idx
     out.vis_mean, out.vis_min = mp_hand_visibility_scores(orbbec_result, orbbec_idx_l)
-    use_wcam = float(out.vis_min) < float(vis_thresh) or prefetch_B is not None
+    # Webcam basis is for low Orbbec visibility only — do not tie rotation to prefetch cache.
+    use_wcam = float(out.vis_min) < float(vis_thresh)
     if prefetch_frame_bgr is not None:
         out.webcam_frame_bgr = prefetch_frame_bgr
         out.webcam_result = prefetch_result

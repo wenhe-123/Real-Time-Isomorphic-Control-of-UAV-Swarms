@@ -9,14 +9,38 @@ import numpy as np
 if TYPE_CHECKING:
     from functions.swarm_motion.left_swarm_pose_state import LeftSwarmPoseState
 
+def _apply_axis_sign_world_rotation(
+    R_world: np.ndarray,
+    axis_sign: np.ndarray | None,
+) -> np.ndarray:
+    """Match translation ``sign * (M @ v)``: conjugate world rotation by diag(axis_sign)."""
+    if axis_sign is None:
+        return np.asarray(R_world, dtype=np.float64).reshape(3, 3)
+    s = np.asarray(axis_sign, dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(s)) or float(np.max(np.abs(s))) < 1e-9:
+        return np.asarray(R_world, dtype=np.float64).reshape(3, 3)
+    S = np.diag(s)
+    return S @ np.asarray(R_world, dtype=np.float64).reshape(3, 3) @ S
+
+
 def palm_world_rotvec_from_basis_delta(
     Mc_rot: np.ndarray | None,
     B_current: np.ndarray,
     B_arm: np.ndarray,
+    *,
+    axis_sign: np.ndarray | None = None,
 ) -> np.ndarray:
     """Palm ΔR expressed in simulation/world coordinates."""
-    rv_local = palm_local_rotvec_from_basis_delta(B_current, B_arm)
-    rv = palm_world_rotvec_from_local_delta(Mc_rot, rv_local, B_arm)
+    B_cur = np.asarray(B_current, dtype=np.float64).reshape(3, 3)
+    B0 = np.asarray(B_arm, dtype=np.float64).reshape(3, 3)
+    R_delta_cam = B_cur @ B0.T
+    if Mc_rot is not None:
+        M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
+        R_world = M @ R_delta_cam @ M.T
+    else:
+        R_world = R_delta_cam
+    R_world = _apply_axis_sign_world_rotation(R_world, axis_sign)
+    rv = np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
     if float(np.linalg.norm(rv)) > np.deg2rad(180.0):
         return np.zeros(3, dtype=np.float64)
     return rv
@@ -26,19 +50,19 @@ def palm_world_rotvec_from_local_delta(
     Mc_rot: np.ndarray | None,
     rv_local: np.ndarray,
     B_arm: np.ndarray,
+    *,
+    axis_sign: np.ndarray | None = None,
 ) -> np.ndarray:
     """Palm-local Δ rotvec expressed through camera→simulation rotation."""
+    del B_arm
     rv = np.asarray(rv_local, dtype=np.float64).reshape(3).copy()
-    # Positive palm-normal twist felt reversed in the swarm frame; invert only that local component.
-    rv[2] *= -1.0
     R_local = rotvec_to_R(rv)
-    B_ref = np.asarray(B_arm, dtype=np.float64).reshape(3, 3)
-    R_cam = B_ref @ R_local @ B_ref.T
     if Mc_rot is not None:
         M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
-        R_world = M @ R_cam @ M.T
+        R_world = M @ R_local @ M.T
     else:
-        R_world = R_cam
+        R_world = R_local
+    R_world = _apply_axis_sign_world_rotation(R_world, axis_sign)
     return np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
 
 
@@ -83,7 +107,9 @@ def sanitize_palm_rotvec_apply(
     if prev_basis is not None:
         rv_step = palm_cam_rotvec_from_basis_delta(B_current, prev_basis)
         if Mc_rot is not None:
-            rv_step = palm_world_rotvec_from_basis_delta(Mc_rot, B_current, prev_basis)
+            rv_step = palm_world_rotvec_from_basis_delta(
+                Mc_rot, B_current, prev_basis, axis_sign=None
+            )
         if pan_step_mm > 95.0 and float(np.linalg.norm(rv_step)) > step_cap:
             return np.zeros(3, dtype=np.float64)
 
@@ -391,7 +417,9 @@ def _rigid_target_from_hand(
     if rv_world_override is not None:
         rv_world = np.asarray(rv_world_override, dtype=np.float64).reshape(3).copy()
     else:
-        rv_world = palm_world_rotvec_from_basis_delta(Mc_rot, B, ref_b_rot)
+        rv_world = palm_world_rotvec_from_basis_delta(
+            Mc_rot, B, ref_b_rot, axis_sign=sign
+        )
     R_world = rotvec_to_R(rv_world)
     zsc = float(rot_world_z_scale)
     if zsc != 1.0 and float(np.linalg.norm(rv_world)) >= 1e-9:

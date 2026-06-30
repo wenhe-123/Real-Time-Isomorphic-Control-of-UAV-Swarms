@@ -20,8 +20,6 @@ from functions.swarm_motion.left_rigid_math import (
     _smooth_rigid_pose,
     axis_locked_trans_rot_blend_weights,
     palm_cam_rotvec_from_basis_delta,
-    palm_local_rotvec_from_basis_delta,
-    palm_world_rotvec_from_local_delta,
     rotvec_to_R,
     sanitize_palm_rotvec_apply,
     scale_rotation_matrix,
@@ -232,16 +230,13 @@ def update_left_swarm_pose(
         B_img = np.asarray(sensor.B_rot, dtype=np.float64).reshape(3, 3)
         ref_img = np.asarray(state.ref_basis_image, dtype=np.float64).reshape(3, 3)
         if np.all(np.isfinite(B_img)) and np.all(np.isfinite(ref_img)):
-            rv_depth_local = palm_local_rotvec_from_basis_delta(B_depth, ref_b_depth)
-            rv_img_local = palm_local_rotvec_from_basis_delta(B_img, ref_img)
-            rv_hybrid_local = np.array(
-                [rv_depth_local[0], rv_depth_local[1], rv_img_local[2]],
-                dtype=np.float64,
+            # Low Orbbec visibility: full 2D palm basis for rotation (no depth/image rotvec mix).
+            rv_world_override = palm_world_rotvec_from_basis_delta(
+                Mc_rot, B_img, ref_img, axis_sign=sign
             )
-            rv_world_override = palm_world_rotvec_from_local_delta(Mc_rot, rv_hybrid_local, ref_img)
             B = B_img
             ref_b_rot = ref_img
-            rot_source = "hybrid"
+            rot_source = "webcam"
 
     off_tgt, R_tgt, off_raw, rv_world = _rigid_target_from_hand(
         delta_cam_arm=delta_cam_arm,
@@ -349,17 +344,29 @@ def apply_rigid_to_targets(
     targets: np.ndarray,
     offset: np.ndarray,
     R: np.ndarray,
+    *,
+    pivot_ref_m: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Apply centroid-pivot rigid rotation plus world translation."""
+    """Apply palm-centered rigid: translate by ``offset``, rotate about ``pivot_ref + offset``.
+
+    ``pivot_ref_m`` is the formation centroid frozen at arm (sim m). With palm translation
+    ``offset``, the rotation pivot tracks the palm center in world space instead of the live
+    per-frame target centroid (which drifts with morph).
+    """
     t = np.asarray(targets, dtype=np.float64)
     if t.ndim != 2 or t.shape[1] < 3:
         return np.asarray(targets, dtype=np.float32)
     R = np.asarray(R, dtype=np.float64).reshape(3, 3)
     off = np.asarray(offset, dtype=np.float64).reshape(3)
     p = t[:, :3]
-    c = np.mean(p, axis=0)
-    rel = p - c
-    out = (R @ rel.T).T + c + off
+    c0 = (
+        np.asarray(pivot_ref_m, dtype=np.float64).reshape(3)
+        if pivot_ref_m is not None
+        else np.mean(p, axis=0)
+    )
+    pivot = c0 + off
+    p_trans = p + off.reshape(1, 3)
+    out = (R @ (p_trans - pivot.reshape(1, 3)).T).T + pivot.reshape(1, 3)
     t2 = t.copy()
     t2[:, :3] = out
     return t2.astype(np.float32)
