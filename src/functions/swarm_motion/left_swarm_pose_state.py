@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
 
 from functions.mode_switch.hand_constants import WRIST_ID
 from functions.swarm_motion.left_pose_config import DEFAULT_LEFT_PALM_BASIS
