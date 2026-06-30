@@ -19,7 +19,9 @@ class MiddleYSignDebug:
     dot_out_prev: float | None = None
     dot_raw_prev_raw: float | None = None
     dot_out_ref: float | None = None
+    dot_out_raw: float | None = None
     flipped: bool = False
+    flipped_vs_geom: bool = False
     anchor_used: str = "none"
     wrist_z_mm: float | None = None
     mcp_z_mm: float | None = None
@@ -38,10 +40,10 @@ def print_middle_y_sign_debug(
     frame_idx: int,
     force: bool = False,
 ) -> None:
-    """Print +Y sign decision; ``force`` or ``dbg.flipped`` always prints."""
-    if not force and not dbg.flipped:
+    """Print +Y sign decision; ``force``, ``dbg.flipped``, or ``dbg.flipped_vs_geom`` prints."""
+    if not force and not dbg.flipped and not dbg.flipped_vs_geom:
         return
-    tag = "FLIP" if dbg.flipped else "y-sign"
+    tag = "FLIP" if dbg.flipped else ("GEOM-FLIP" if dbg.flipped_vs_geom else "y-sign")
     segs = " ".join(f"{k}={v:+.1f}mm" for k, v in dbg.seg_axial_mm.items())
     print(
         f"[middle-Y {tag}] frame={int(frame_idx)} reason={dbg.reason!r}"
@@ -52,6 +54,7 @@ def print_middle_y_sign_debug(
     )
     print(
         f"  raw={_vec3_s(dbg.ey_raw)} out={_vec3_s(dbg.ey_out)}"
+        f" dot(out,raw)={dbg.dot_out_raw if dbg.dot_out_raw is not None else 'n/a'}"
         f" dot(out,prev)={dbg.dot_out_prev if dbg.dot_out_prev is not None else 'n/a'}"
         f" dot(raw,prev_raw)={dbg.dot_raw_prev_raw if dbg.dot_raw_prev_raw is not None else 'n/a'}"
         f" dot(out,ref)={dbg.dot_out_ref if dbg.dot_out_ref is not None else 'n/a'}",

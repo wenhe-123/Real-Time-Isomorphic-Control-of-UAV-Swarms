@@ -160,7 +160,7 @@ def update_left_swarm_pose(
         y_sign_debug=y_dbg,
     )
     state.last_middle_y_sign_debug = y_dbg
-    if getattr(tuning, "y_sign_debug", False) or y_dbg.flipped:
+    if getattr(tuning, "y_sign_debug", False) or y_dbg.flipped or y_dbg.flipped_vs_geom:
         print_middle_y_sign_debug(
             y_dbg,
             frame_idx=int(getattr(sensor, "frame_idx", -1)),
