@@ -11,7 +11,9 @@ from functions.mode_switch.hand_constants import (
     INDEX_TIP_ID,
     MCP_IDS,
     MIDDLE_DEPTH_CHAIN_IDS,
+    MIDDLE_DIP_ID,
     MIDDLE_MCP_ID,
+    MIDDLE_PIP_ID,
     MIDDLE_TIP_ID,
     PALM_CENTER_IDS,
     RING_MCP_ID,
@@ -850,15 +852,48 @@ def _origin_to_joint_vector_mm(
     return None
 
 
-def _middle_finger_axis(h: np.ndarray, origin: np.ndarray) -> np.ndarray | None:
-    """+Y palm: palm center → first middle-finger joint with depth (MCP → tip)."""
-    v = _origin_to_joint_vector_mm(h, origin, MIDDLE_DEPTH_CHAIN_IDS)
-    if v is None:
-        return None
+def _orient_middle_axis_distal(
+    h: np.ndarray,
+    origin: np.ndarray,
+    ey: np.ndarray,
+) -> np.ndarray:
+    """+Y points palm → middle finger (distal), not back toward the wrist."""
+    ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
+    w = _landmark_mm_if_finite(h, WRIST_ID, origin)
+    if w is None:
+        return ey_u
+    # Palm centroid sits between wrist and MCPs: middle MCP should oppose wrist from center.
+    if float(np.dot(ey_u, w)) > 0.0:
+        ey_u = -ey_u
+    return ey_u
+
+
+def _middle_finger_axis(
+    h: np.ndarray,
+    origin: np.ndarray,
+    *,
+    ref_y: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """+Y palm: palm center → middle MCP when depth is available; PIP/DIP/tip fallback only if MCP missing."""
+    v = _landmark_mm_if_finite(h, MIDDLE_MCP_ID, origin)
+    if v is None or float(np.linalg.norm(v)) < 1e-6:
+        v = None
+        for jidx in (MIDDLE_PIP_ID, MIDDLE_DIP_ID, MIDDLE_TIP_ID):
+            v = _landmark_mm_if_finite(h, int(jidx), origin)
+            if v is not None and float(np.linalg.norm(v)) >= 1e-6:
+                break
+        if v is None:
+            return None
     n = float(np.linalg.norm(v))
     if n < 1e-9:
         return None
-    return v / n
+    ey = _orient_middle_axis_distal(h, origin, v / n)
+    if ref_y is not None:
+        ey_ref = np.asarray(ref_y, dtype=np.float64).reshape(3)
+        nr = float(np.linalg.norm(ey_ref))
+        if nr >= 1e-9 and float(np.dot(ey, ey_ref / nr)) < 0.0:
+            ey = -ey
+    return ey
 
 
 def _landmark_mm_if_finite(h: np.ndarray, jidx: int, origin: np.ndarray) -> np.ndarray | None:
@@ -914,10 +949,10 @@ def _build_palm_basis_middle_y_thumb_x(
     h: np.ndarray,
     origin: np.ndarray,
 ) -> np.ndarray | None:
-    """Orthonormal palm basis (camera mm).
+    """Orthonormal palm basis (camera mm); ``ey`` is the fixed +Y (palm → middle finger).
 
-    **+Y** palm→middle. **+Z** = ``Y × (palm→thumb chain)``. **+X** is palm→thumb **tip**
-    projected onto the plane ⊥Y (lies in the Y–thumb plane). Right-handed: ``Z ≈ X × Y``.
+    **+Z** = ``Y × (palm→thumb chain)``. **+X** = palm→thumb **tip** in plane ⊥Y.
+    Right-handed: ``Z ≈ X × Y``.
     """
     ey_u = np.asarray(ey, dtype=np.float64).reshape(3)
     ney = float(np.linalg.norm(ey_u))
@@ -945,9 +980,12 @@ def align_palm_basis_to_reference(
     h: np.ndarray,
     origin: np.ndarray,
 ) -> np.ndarray:
-    """Rebuild with physical +Y preserved; palm/back changes appear as +Z changes."""
-    del B_ref
+    """Rebuild +X/+Z from thumb while keeping +Y aligned to reference half-space."""
     ey = np.asarray(B[:, 1], dtype=np.float64).reshape(3).copy()
+    ey_ref = np.asarray(B_ref[:, 1], dtype=np.float64).reshape(3)
+    nr = float(np.linalg.norm(ey_ref))
+    if nr >= 1e-9 and float(np.dot(ey, ey_ref / nr)) < 0.0:
+        ey = -ey
     rebuilt = _build_palm_basis_middle_y_thumb_x(ey, h, origin)
     if rebuilt is not None:
         return rebuilt
@@ -960,11 +998,16 @@ def palm_orthonormal_basis_middle_y_thumb_x(
     ref_basis: np.ndarray | None = None,
     palm_center_override: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Palm frame (camera mm): origin at palm center; **+Y** palm→middle; **+Z** = Y×thumb; **+X** thumb in ⊥Y."""
+    """Palm frame: origin at palm center; +Y palm→middle MCP; +X/+Z derived from fixed Y."""
     pc = _resolve_palm_origin_mm(h, palm_center_override=palm_center_override)
     if pc is None:
         return None
-    ey = _middle_finger_axis(h, pc)
+    ref_y = (
+        np.asarray(ref_basis[:, 1], dtype=np.float64).reshape(3)
+        if ref_basis is not None
+        else None
+    )
+    ey = _middle_finger_axis(h, pc, ref_y=ref_y)
     if ey is None:
         return None
     B = _build_palm_basis_middle_y_thumb_x(ey, h, pc)
