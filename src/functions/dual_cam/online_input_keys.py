@@ -24,6 +24,59 @@ _KEY_Q = ord("q")
 _warned_climb_while_gestured = False
 
 
+def _hl_prearm_key1(ctx: OnlineKeyContext, ex: object) -> bool:
+    """Advance the real/sim prearm state machine on key ``1``.
+
+    Cycles vertical hold → formation → HL descend/land → takeoff.
+
+    Args:
+        ctx: Mutable hotkey context with prearm phase boxes.
+        ex: Real or sim high-level executor.
+
+    Returns:
+        Always ``False`` (never requests quit).
+    """
+    phase = str(ctx.prearm_phase_box[0])
+    leg = str(ctx.prearm_vertical_leg_box[0])
+    if phase == "vertical" and leg == "climb":
+        ctx.prearm_phase_box[0] = "formation"
+        print(
+            f"Hover formation ramp → z≈{ctx.prearm_hover_z:.2f}m (axswarm). "
+            "Press 1 for in-place HL descend + land.",
+            flush=True,
+        )
+    elif phase == "formation":
+        ex.pause_setpoints_for_hl()
+        print(
+            f"Axswarm off; HL descend −{ctx.prearm_descend_m:.2f}m in place, then land...",
+            flush=True,
+        )
+        ex.high_level_descend(ctx.prearm_descend_m)
+        ex.high_level_land()
+        ctx.prearm_phase_box[0] = "ground"
+        ctx.prearm_climb_enabled[0] = False
+        ctx.prearm_vertical_leg_box[0] = "climb"
+        print("On ground. Press 1 to take off again, or quit.", flush=True)
+    elif phase == "ground":
+        ex.high_level_takeoff(ctx.prearm_takeoff_z)
+        ctx.prearm_phase_box[0] = "vertical"
+        ctx.prearm_vertical_leg_box[0] = "climb"
+        ctx.prearm_climb_enabled[0] = True
+        ctx.prearm_has_flown_box[0] = True
+        print(
+            f"Axswarm vertical hold at z≈{ctx.prearm_takeoff_z:.2f}m. "
+            "Press 1: formation → in-place HL descend + land.",
+            flush=True,
+        )
+    else:
+        print(
+            f"[WARN] Real prearm phase {phase!r}/{leg!r} ignored "
+            "(wait for formation/descend/land to finish).",
+            flush=True,
+        )
+    return False
+
+
 @dataclass
 class OnlineKeyContext:
     """Mutable hotkey state boxes + scalars shared by key handlers."""
@@ -35,15 +88,26 @@ class OnlineKeyContext:
     prearm_has_flown_box: list
     prearm_takeoff_z: float
     prearm_hover_z: float
+    prearm_descend_m: float
     left_pose_reset_req: list
     left_pose_runtime_armed: list
     left_pose_state: object
     mode_state: object | None
     left_unwind_s: float
     left_swarm_enabled: bool
+    real_executor: object | None = None
+    sim_executor: object | None = None
 
     @classmethod
     def from_boot(cls, boot: OnlineBoot) -> OnlineKeyContext:
+        """Build key-handler context from an ``OnlineBoot`` runtime bundle.
+
+        Args:
+            boot: Initialized online boot object with pose and mode state.
+
+        Returns:
+            ``OnlineKeyContext`` wired to the boot object's mutable boxes.
+        """
         return cls(
             gesture_control_enabled=boot.gesture_control_enabled_box,
             prearm_climb_enabled=boot.prearm_climb_enabled_box,
@@ -52,17 +116,25 @@ class OnlineKeyContext:
             prearm_has_flown_box=boot.prearm_has_flown_box,
             prearm_takeoff_z=float(boot.prearm_takeoff_z),
             prearm_hover_z=float(boot.prearm_hover_z),
+            prearm_descend_m=float(boot.prearm_descend_m),
             left_pose_reset_req=boot.left_pose_reset_req_box,
             left_pose_runtime_armed=boot.left_pose_runtime_armed_box,
             left_pose_state=boot.left_pose_state,
             mode_state=boot.mode_state,
             left_unwind_s=float(boot.left_unwind_s),
             left_swarm_enabled=bool(boot.left_pose_state.enabled),
+            real_executor=boot.real_executor,
+            sim_executor=boot.sim_executor,
         )
 
 
 def probe_global_hotkey_backends() -> dict:
-    """Report whether pynput/keyboard are importable in the **current** interpreter."""
+    """Report whether global hotkey libraries are importable in this interpreter.
+
+    Returns:
+        Dict with keys ``pynput``, ``keyboard``, ``stdin_tty``, ``dev_tty``,
+        ``python``, and ``errors`` (import failure messages).
+    """
     out: dict = {
         "pynput": False,
         "keyboard": False,
@@ -94,6 +166,14 @@ def probe_global_hotkey_backends() -> dict:
 
 
 def format_hotkey_install_hint(probe: dict | None = None) -> str:
+    """Format a multi-line hint for installing or using global hotkey backends.
+
+    Args:
+        probe: Optional precomputed probe dict; probes when ``None``.
+
+    Returns:
+        Human-readable install and troubleshooting text.
+    """
     p = probe if probe is not None else probe_global_hotkey_backends()
     lines = [
         f"Python: {p.get('python', sys.executable)}",
@@ -109,7 +189,14 @@ def format_hotkey_install_hint(probe: dict | None = None) -> str:
 
 
 def try_install_hotkey_dependencies(*, quiet: bool = False) -> dict:
-    """``pip install pynput keyboard`` into ``sys.executable`` if imports fail."""
+    """Install ``pynput`` and ``keyboard`` into ``sys.executable`` if imports fail.
+
+    Args:
+        quiet: If True, suppress install output and capture subprocess stdout.
+
+    Returns:
+        Updated probe dict from ``probe_global_hotkey_backends``.
+    """
     probe = probe_global_hotkey_backends()
     if probe.get("pynput") or probe.get("keyboard"):
         return probe
@@ -150,6 +237,11 @@ class OnlineKeyQueue:
 
     @property
     def mode(self) -> str:
+        """Active listener backend summary (e.g. ``"pynput+stdin"`` or ``"off"``).
+
+        Returns:
+            Plus-separated list of started backends.
+        """
         return self._mode
 
     def _enqueue_char(self, ch: str | None) -> None:
@@ -158,6 +250,12 @@ class OnlineKeyQueue:
         self._q.put(ord(ch))
 
     def start(self, *, use_global: bool = True, use_stdin: bool = True) -> None:
+        """Start background listeners for global hotkeys and/or stdin.
+
+        Args:
+            use_global: Try ``pynput`` and ``keyboard`` global hooks.
+            use_stdin: Start a cbreak stdin reader thread on a TTY.
+        """
         if self._running:
             return
         self._running = True
@@ -273,6 +371,11 @@ class OnlineKeyQueue:
             _restore()
 
     def stop(self) -> None:
+        """Stop all listeners and restore terminal settings.
+
+        Returns:
+            None.
+        """
         self._running = False
         if self._pynput_listener is not None:
             try:
@@ -306,12 +409,22 @@ class OnlineKeyQueue:
             self._stdin_restore = None
 
     def poll(self) -> int | None:
+        """Return one queued key code without blocking.
+
+        Returns:
+            Key code (``ord`` value), or ``None`` when the queue is empty.
+        """
         try:
             return int(self._q.get_nowait())
         except queue.Empty:
             return None
 
     def drain(self) -> list[int]:
+        """Remove and return all queued key codes.
+
+        Returns:
+            List of key codes in arrival order (may be empty).
+        """
         out: list[int] = []
         while True:
             k = self.poll()
@@ -321,7 +434,14 @@ class OnlineKeyQueue:
         return out
 
     def merge_cv_key(self, cv_key: int) -> int | None:
-        """Prefer queued global/stdin keys; else OpenCV ``waitKey`` (may need window focus)."""
+        """Prefer queued global/stdin keys over an OpenCV ``waitKey`` result.
+
+        Args:
+            cv_key: Raw key from ``cv2.waitKey`` (255 means no key).
+
+        Returns:
+            Merged key code, or ``None`` when no key is pending.
+        """
         keys = self.drain()
         if keys:
             return keys[0]
@@ -339,7 +459,17 @@ def process_online_control_keys(
     ctx: OnlineKeyContext,
     cv_key: int | None = None,
 ) -> bool:
-    """Drain all pending keys; return True to quit the main loop."""
+    """Drain all pending keys and dispatch them to control handlers.
+
+    Args:
+        key_queue: Optional ``OnlineKeyQueue`` for global/stdin hotkeys.
+        global_hotkeys: If True, read from ``key_queue`` before ``cv_key``.
+        ctx: Mutable hotkey context shared by handlers.
+        cv_key: Fallback key from OpenCV ``waitKey``.
+
+    Returns:
+        True when a handler requests quitting the main loop.
+    """
     keys: list[int] = []
     if global_hotkeys and key_queue is not None:
         keys = key_queue.drain()
@@ -363,7 +493,15 @@ def apply_online_control_key(
     *,
     ctx: OnlineKeyContext,
 ) -> bool:
-    """Handle one key press. Returns True to quit the main loop."""
+    """Handle one control key press (SPACE arm, 0 L-move, 1 climb, q quit).
+
+    Args:
+        key: Key code from ``ord`` or OpenCV ``waitKey``.
+        ctx: Mutable hotkey context with pose and prearm state.
+
+    Returns:
+        True when the main loop should exit (q or Enter).
+    """
     global _warned_climb_while_gestured
     if key is None:
         return False
@@ -377,46 +515,16 @@ def apply_online_control_key(
                 _warned_climb_while_gestured = True
             return False
         _warned_climb_while_gestured = False
-        phase = str(ctx.prearm_phase_box[0])
-        if phase == "ground":
-            ctx.prearm_phase_box[0] = "vertical"
-            ctx.prearm_vertical_leg_box[0] = "climb"
-            ctx.prearm_climb_enabled[0] = True
-            ctx.prearm_has_flown_box[0] = True
-            print(
-                f"Vertical takeoff: axswarm-planned climb to z={ctx.prearm_takeoff_z:.2f}m "
-                "(ground XY fixed). Press 1 again for hover formation."
-            )
-        elif phase == "vertical":
-            if str(ctx.prearm_vertical_leg_box[0]) == "climb":
-                ctx.prearm_phase_box[0] = "formation"
-                print(
-                    f"Hover formation: direct 3D move to hover layout "
-                    f"(z≈{ctx.prearm_hover_z:.2f}m, axswarm-planned). "
-                    "Press 1 to shrink back to vertical."
-                )
-            else:
-                ctx.prearm_phase_box[0] = "ground"
-                ctx.prearm_climb_enabled[0] = False
-                print(
-                    f"Axswarm-planned descent to ground layout "
-                    f"(from z≈{ctx.prearm_takeoff_z:.2f}m). Press 1 for next takeoff."
-                )
-        elif phase == "formation":
-            ctx.prearm_phase_box[0] = "vertical"
-            ctx.prearm_vertical_leg_box[0] = "descend"
-            print(
-                f"Hover formation: direct 3D return to vertical layout "
-                f"(z≈{ctx.prearm_takeoff_z:.2f}m, axswarm-planned). "
-                "Press 1 again for ground."
-            )
+        ex = ctx.real_executor if ctx.real_executor is not None else ctx.sim_executor
+        if ex is not None:
+            return _hl_prearm_key1(ctx, ex)
         return False
     if key == _KEY_SPACE:
         if ctx.gesture_control_enabled[0]:
             ctx.gesture_control_enabled[0] = False
             _warned_climb_while_gestured = False
             print(
-                "Gesture control disarmed. Press 1 to descend: formation → vertical → ground, "
+                "Gesture control disarmed. Press 1 to land: formation → HL descend + land, "
                 "then q to quit."
             )
             return False

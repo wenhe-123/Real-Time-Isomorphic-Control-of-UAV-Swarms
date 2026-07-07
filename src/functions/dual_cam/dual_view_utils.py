@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
-
 import cv2
 import numpy as np
 
@@ -11,9 +9,20 @@ from functions.mode_switch.hand_constants import HAND_CONNECTIONS
 
 
 def open_webcam_capture(preferred_index: int, width: int, height: int, max_probe_index: int = 8):
-    """
-    Open webcam robustly with backend fallback and read-frame validation.
-    Returns (cap, selected_index, backend_name).
+    """Open a USB webcam with backend fallback and read-frame validation.
+
+    Args:
+        preferred_index: Camera index to try first; ``>= 0`` probes only that index.
+        width: Requested frame width (0 to skip).
+        height: Requested frame height (0 to skip).
+        max_probe_index: Highest index to probe when ``preferred_index < 0``.
+
+    Returns:
+        Tuple ``(cap, selected_index, backend_name)`` where ``cap`` is an opened
+        ``VideoCapture`` that successfully read at least one frame.
+
+    Raises:
+        RuntimeError: When no usable webcam is found.
     """
     backend_candidates = [("ANY", cv2.CAP_ANY)]
     if hasattr(cv2, "CAP_V4L2"):
@@ -58,6 +67,18 @@ def open_webcam_capture(preferred_index: int, width: int, height: int, max_probe
 
 
 def draw_hand_webcam(frame, result, depth_map=None, print_depth=False):
+    """Draw MediaPipe hand skeleton and optional depth labels on a webcam frame.
+
+    Args:
+        frame: BGR image to draw into (modified in place).
+        result: MediaPipe hand landmarker result.
+        depth_map: Optional depth image for per-keypoint depth labels.
+        print_depth: If True, print depth values to stdout.
+
+    Returns:
+        Tuple ``(frame, keypoints_3d)`` where ``keypoints_3d`` is a list of
+        per-hand 21×3 world-coordinate lists (may contain NaN).
+    """
     keypoints_3d = []
     if result.hand_landmarks:
         h, w, _ = frame.shape
@@ -124,51 +145,4 @@ def draw_hand_webcam(frame, result, depth_map=None, print_depth=False):
             keypoints_3d.append(points_3d)
 
     return frame, keypoints_3d
-
-
-def overlay_inset(
-    dst,
-    src,
-    margin=12,
-    max_w_ratio=0.28,
-    *,
-    footer_lines: Optional[List[Tuple[str, Tuple[int, int, int]]]] = None,
-):
-    """Resize src BGR into top-right corner of dst and draw optional footer text."""
-    if src is None or src.size == 0:
-        return dst
-    dh, dw = dst.shape[:2]
-    max_w = int(dw * max_w_ratio)
-    sh, sw = src.shape[:2]
-    scale = min(max_w / float(sw), (dh * 0.35) / float(sh), 1.0)
-    nw = max(1, int(sw * scale))
-    nh = max(1, int(sh * scale))
-    inset = cv2.resize(src, (nw, nh), interpolation=cv2.INTER_AREA)
-
-    x1 = dw - margin
-    y0 = margin
-    x0 = max(0, x1 - nw)
-    y1 = min(dh, y0 + nh)
-    inset = inset[: y1 - y0, : x1 - x0]
-    dst[y0:y1, x0:x1] = inset
-
-    cv2.rectangle(dst, (x0 - 1, y0 - 1), (x1 + 1, y1 + 1), (40, 200, 255), 1)
-
-    if footer_lines:
-        y = y1 - 8
-        for text, bgr in reversed(footer_lines):
-            cv2.putText(
-                dst,
-                text,
-                (x0 + 6, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.48,
-                bgr,
-                1,
-                cv2.LINE_AA,
-            )
-            y -= 16
-            if y < y0 + 10:
-                break
-    return dst
 

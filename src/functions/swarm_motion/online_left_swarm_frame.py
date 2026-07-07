@@ -8,7 +8,7 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 
-from functions.display_sim.left_pose_frame_viz import draw_left_pose_frame_overlay
+from debug.left_pose_frame_viz import draw_left_pose_frame_overlay
 from functions.display_sim.orbbec_hand import DEPTH_MEDIAN_PATCH_RADIUS
 from functions.dual_cam.dual_view_utils import draw_hand_webcam
 from functions.dual_cam.left_hand_rotation_dual import resolve_dual_left_rotation
@@ -49,6 +49,23 @@ def apply_left_swarm_frame(
     webcam: OnlineWebcamState,
     section: Callable[[str], None] | None = None,
 ) -> LeftSwarmFrameResult:
+    """Apply left-hand rigid pose to morph targets for one online control frame.
+
+    Resolves dual webcam rotation when enabled, updates pose state, applies rigid transform
+    to targets, and optionally draws debug overlays.
+
+    Args:
+        boot: Online boot state (pose runtime, calibration, frame counters).
+        cap: Orbbec capture frame (depth, landmarks, result).
+        gest: Gesture/morph frame result (hand points, visibility, morph inputs).
+        raw_target: Current morph targets before left pose (sim m).
+        morph_targets_before_left_m: Formation snapshot used as rigid pivot reference at arm.
+        webcam: Webcam capture state for dual-rotation fallback.
+        section: Optional profiling callback invoked with section name strings.
+
+    Returns:
+        ``LeftSwarmFrameResult`` with updated targets, pose offset/rotation, and debug strings.
+    """
     def _sec(name: str) -> None:
         if section is not None:
             section(name)
@@ -123,6 +140,7 @@ def apply_left_swarm_frame(
                 2,
                 cv2.LINE_AA,
             )
+            _wdisp = cv2.flip(_wdisp, 1)
             cv2.imshow(ONLINE_DEFAULTS.display.wcam_preview_window, _wdisp)
         _left_pose_hold = gest.idx_l is None or (
             gest.orbbec_vis_min_now is not None
@@ -156,6 +174,7 @@ def apply_left_swarm_frame(
                     palm_basis=boot.left_palm_basis,
                     force_reset=_do_arm,
                     plane_rot_mul=_plane_rot_mul,
+                    frame_idx=int(boot.frame_idx),
                 ),
                 tuning=tuning,
             )
@@ -170,6 +189,7 @@ def apply_left_swarm_frame(
             morph_targets_before_left_m,
             off,
             R_pose,
+            pivot_ref_m=getattr(left_pose_state, "ref_swarm_centroid_m", None),
         )
         _sec("left_apply_rigid")
         left_swarm_off = np.asarray(off, dtype=np.float64).copy()

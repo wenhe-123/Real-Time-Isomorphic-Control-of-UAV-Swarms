@@ -57,6 +57,22 @@ def process_online_gesture_frame(
     webcam: OnlineWebcamState,
     section: Callable[[str], None] | None = None,
 ) -> GestureFrameResult:
+    """Process mode, open, pose, and LP shape for one online control frame.
+
+    Resolves hand indices, polls dual webcam cache when enabled, updates morph
+    mode and open state, and computes depth pose for left-swarm control.
+
+    Args:
+        boot: Initialized ``OnlineBoot`` with mode/pose state.
+        cfg: Per-run ``OnlineRuntimeConfig``.
+        cap: Orbbec capture payload from ``grab_orbbec_mp_frame``.
+        webcam: USB webcam state (cap, landmarker, cache).
+        section: Optional profiling callback ``section(name)``.
+
+    Returns:
+        ``GestureFrameResult`` with indices, landmarks, mode/open outputs, and
+        webcam prefetch data for the render step.
+    """
     def _sec(name: str) -> None:
         if section is not None:
             section(name)

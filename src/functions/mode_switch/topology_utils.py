@@ -8,10 +8,26 @@ import numpy as np
 
 
 def clamp01(x: float) -> float:
+    """Clamp a scalar to the closed interval ``[0, 1]``.
+
+    Args:
+        x: Input value.
+
+    Returns:
+        ``max(0, min(1, x))`` as float.
+    """
     return float(max(0.0, min(1.0, x)))
 
 
 def safe_normalize(v):
+    """Normalize a vector, returning the input unchanged when norm is near zero.
+
+    Args:
+        v: Array-like vector.
+
+    Returns:
+        Unit vector, or the original ``v`` when ``‖v‖ < 1e-8``.
+    """
     n = np.linalg.norm(v)
     if n < 1e-8:
         return v
@@ -19,6 +35,16 @@ def safe_normalize(v):
 
 
 def topology_label_from_alpha(alpha: float, plane_thr: float = 0.67, sphere_thr: float = 0.33) -> str:
+    """Map morph alpha to a discrete topology label.
+
+    Args:
+        alpha: Morph openness / planarity blend in ``[0, 1]``.
+        plane_thr: Alpha above this → ``"plane"``.
+        sphere_thr: Alpha below this → ``"sphere"``.
+
+    Returns:
+        ``"plane"``, ``"sphere"``, or ``"intermediate"``.
+    """
     a = float(alpha)
     if a > float(plane_thr):
         return "plane"
@@ -28,6 +54,16 @@ def topology_label_from_alpha(alpha: float, plane_thr: float = 0.67, sphere_thr:
 
 
 def remap_open_display(alpha: float, lo: float, hi: float) -> float:
+    """Linearly remap open alpha from ``[lo, hi]`` to display ``[0, 1]``.
+
+    Args:
+        alpha: Raw morph alpha.
+        lo: Lower remap bound.
+        hi: Upper remap bound.
+
+    Returns:
+        Clamped display value in ``[0, 1]``.
+    """
     return clamp01((float(alpha) - lo) / max(float(hi - lo), 1e-6))
 
 
@@ -40,7 +76,21 @@ def analyze_hand_topology_common(
     open_gamma: float,
     label_fn: Optional[Callable[[float], str]] = None,
 ):
-    """Compute PCA/topology metrics with configurable hand-index constants."""
+    """Compute PCA-based hand topology metrics and morph alpha.
+
+    Args:
+        hand_points: Sequence of 21 hand landmarks.
+        wrist_id: Index of the wrist joint (excluded from PCA fit).
+        mcp_ids: MCP indices for palm center estimation.
+        fingertip_ids: Tip indices for finger-spread measurement.
+        open_gamma: Exponent applied to the blended morph alpha.
+        label_fn: Optional callable mapping alpha to a topology label string.
+
+    Returns:
+        Dict with centroid, normal, eigenvectors/values, planarity, isotropy,
+        finger_spread, morph_alpha, topology label, radius, and fit points;
+        ``None`` when too few valid landmarks remain.
+    """
     all_pts = np.array(hand_points, dtype=float)
     valid_all = ~np.isnan(all_pts[:, 2])
     if np.sum(valid_all) < 8:

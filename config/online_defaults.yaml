@@ -8,13 +8,14 @@ Display:
   led_apply_every_frames: 3  # LED material refresh stride
   sim_render_every: 2  # Crazyflow render window stride (0 = off)
   online_imshow_every: 4  # OpenCV Orbbec window refresh stride
+  orbbec_display_depth_fov_only: true  # Crop Orbbec preview to depth-camera FOV
   trail_buffer_maxlen: 6  # MuJoCo trail history length
   wcam_preview_window: "Online Control Webcam (dual rotation)"
 
 Camera:
   orbbec_fps: "30"  # Nominal outer-loop / Orbbec rate (Hz)
   mp_input_scale: 0.5  # HandLandmarker input downscale
-  mp_detect_every: 2  # Run HandLandmarker every N frames; reuse last on skip
+  mp_detect_every: 1  # Run HandLandmarker every N frames; reuse last on skip
   orbbec_flip_horizontal: false  # Mirror BGR before MediaPipe
   orbbec_use_transformed_depth: false  # K4A color-aligned depth (Femto Bolt: often crashes)
   orbbec_hand_swap: off  # Swap MP left/right for mode vs open (auto | on | off)
@@ -28,12 +29,14 @@ Morph:
 
 Sim:
   drone_model: cf21B_500  # Crazyflow drone model name
+  control_freq_hz: 10.0  # Crazyflow cmd + axswarm replan rate (Hz); real swarm uses drones.toml ctrl_freq
+  mpc_horizon_steps: 1  # Stream u_pos[:, 0:M] from each MPC solve (1 = first step only; replan every M/freq s)
   max_sim_substeps_per_frame: 160  # Physics substeps cap per camera frame
   ground_z: 0.0  # Physical ground plane in sim frame (m)
 
 Prearm:
   prearm_hover_z: 1.00  # Formation hover altitude before SPACE (m)
-  prearm_takeoff_z: 0.20  # Vertical prearm climb / descent leg height (m)
+  prearm_takeoff_z: 0.30  # Vertical prearm climb / descent leg height (m)
 
 LeftHandPose:
   # Feature toggles (press 0 = arm rigid follow)
@@ -42,6 +45,7 @@ LeftHandPose:
   left_swarm_depth_frame_motion: true
   left_pose_debug: true
   left_pose_debug_every: 15
+  left_y_sign_debug: false  # Log every +Y sign decision; flips always print when armed
   left_pose_frame_viz: false
   left_unwind_s: 2.6  # Seconds to ease back to morph frame on second press 0
 
@@ -57,7 +61,7 @@ LeftHandPose:
   left_max_offset_m: 1.35
   left_lost_decay: 1.0  # Hold last pose when hand lost (1.0 = no decay)
   left_rot_scale: 1.0
-  left_rot_gain: 1.35
+  left_rot_gain: 1.0
   left_rot_gate_rad: 0.008  # Min |rotvec| before applying formation rotation
   left_max_rot_rad: 3.14  # Max press-0 relative rotation (rad, ~180°)
   left_rot_trans_tau_mm: 0.0  # Rotation suppression during pans (0 = off)
@@ -76,7 +80,7 @@ LeftHandPose:
   axis_rot_on_rad: 0.012
   axis_trans_rot_coupling: 0.50
 
-  # Dual USB webcam: always polled when enabled; hybrid depth roll/pitch + webcam yaw
+  # Dual USB webcam: polled for mode assist; palm rotation falls back to webcam below vis thresh
   left_dual_webcam_rot: true
-  left_rot_webcam_vis_thresh: 0.42  # Legacy HUD / mode-assist only (rotation not gated)
+  left_rot_webcam_vis_thresh: 0.42  # Orbbec vis_min below this → webcam palm basis for rotation
   left_rot_webcam_index: -1  # OpenCV device index (-1 = auto)

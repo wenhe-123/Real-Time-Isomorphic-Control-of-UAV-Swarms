@@ -6,7 +6,6 @@ import time
 
 import numpy as np
 
-from functions.mode_switch.hand_constants import WRIST_ID
 from functions.swarm_motion.left_palm_geom import (
     filter_palm_center_depth_mm,
     palm_center_components_mm,
@@ -21,17 +20,23 @@ from functions.swarm_motion.left_rigid_math import (
     _smooth_rigid_pose,
     axis_locked_trans_rot_blend_weights,
     palm_cam_rotvec_from_basis_delta,
-    palm_local_rotvec_from_basis_delta,
-    palm_world_rotvec_from_local_delta,
     rotvec_to_R,
     sanitize_palm_rotvec_apply,
     scale_rotation_matrix,
-    stabilize_palm_basis_continuity,
     sync_left_swarm_pose_output,
 )
 from functions.swarm_motion.left_swarm_pose_state import LeftSwarmPoseState
 
 def hand_points_to_matrix(pts) -> np.ndarray | None:
+    """Normalize hand landmark input to a ``(N, 3)`` float64 array with at least 21 rows.
+
+    Args:
+        pts: Landmark list, object-dtype array, or ndarray of shape ``(N, 3+)``.
+
+    Returns:
+        Hand points in depth-camera mm, shape ``(N, 3)`` with ``N >= 21``, or ``None`` if
+        the input cannot be parsed.
+    """
     if pts is None:
         return None
     if isinstance(pts, np.ndarray) and pts.dtype == object:
@@ -50,7 +55,16 @@ def hand_points_to_matrix(pts) -> np.ndarray | None:
 
 
 def mp_hand_visibility_scores(result, hand_idx: int) -> tuple[float, float]:
-    """Return (mean, min) per-joint visibility/presence in [0,1] for a hand index."""
+    """Aggregate MediaPipe hand visibility scores for one detected hand.
+
+    Args:
+        result: MediaPipe hand-landmarker result object.
+        hand_idx: Index of the hand within ``result``.
+
+    Returns:
+        ``(mean_visibility, min_visibility)`` in ``[0, 1]``, or ``(0.0, 0.0)`` when
+        visibilities are unavailable.
+    """
     from functions.dual_cam.mp_hand_utils import extract_landmark_visibilities
 
     vis = extract_landmark_visibilities(result, hand_idx)
@@ -60,6 +74,11 @@ def mp_hand_visibility_scores(result, hand_idx: int) -> tuple[float, float]:
 
 
 def _clear_frozen_cam_to_sim(state: LeftSwarmPoseState) -> None:
+    """Drop arm-time frozen camera→simulation maps and reference targets.
+
+    Args:
+        state: Left-hand pose state to reset.
+    """
     state.frozen_M_rot = None
     state.frozen_M_trans = None
     state.frozen_cam_preset = ""
@@ -68,6 +87,11 @@ def _clear_frozen_cam_to_sim(state: LeftSwarmPoseState) -> None:
 
 
 def _clear_track_prev(state: LeftSwarmPoseState) -> None:
+    """Clear frame-to-frame palm tracking history.
+
+    Args:
+        state: Left-hand pose state to reset.
+    """
     state.prev_palm_mm = None
     state.prev_rot_basis = None
     state.prev_rot_source = "depth"
@@ -76,6 +100,16 @@ def _clear_track_prev(state: LeftSwarmPoseState) -> None:
 def _decay_pose_on_track_loss(
     state: LeftSwarmPoseState, lost_decay: float
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Fade held pose toward identity when hand tracking is lost.
+
+    Args:
+        state: Left-hand pose state; EMA offset and rotvec are scaled in place.
+        lost_decay: Per-frame decay factor in ``[0, 1]`` (ignored once initialized).
+
+    Returns:
+        ``(offset_m, R)`` after decay, with ``offset`` shape ``(3,)`` and ``R`` shape
+        ``(3, 3)``.
+    """
     _clear_track_prev(state)
     ld = float(np.clip(lost_decay, 0.0, 1.0))
     if state.initialized:
@@ -96,7 +130,17 @@ def update_left_swarm_pose(
     sensor: LeftPoseSensorInput,
     tuning: LeftPoseTuning,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Rigid follow: direct arm-relative (offset, R) with frame reject + step caps."""
+    """Update smoothed left-swarm rigid offset and rotation from palm sensor input.
+
+    Args:
+        state: Mutable pose state (reference frame, EMA, arm-time freezes).
+        sensor: Per-frame palm depth, basis, and arm-reset inputs.
+        tuning: Scales, deadzones, gates, and depth-filter settings.
+
+    Returns:
+        ``(offset_m, R)`` in simulation/world coordinates; identity when disabled or
+        during unwind completion.
+    """
     if not state.enabled:
         return np.zeros(3, dtype=np.float64), np.eye(3, dtype=np.float64)
 
@@ -139,12 +183,33 @@ def update_left_swarm_pose(
         state.last_depth_outlier_prev = False
 
     ref_b = state.ref_basis if state.initialized and not sensor.force_reset else None
+    from debug.middle_y_sign_debug import MiddleYSignDebug, print_middle_y_sign_debug, middle_y_trusted_for_rotation
+
+    y_dbg = MiddleYSignDebug()
     out = palm_orthonormal_basis(
         h,
         palm_basis=sensor.palm_basis,
         ref_basis=ref_b,
         palm_center_override=sensor.palm_center_depth_mm,
+        y_sign_debug=y_dbg,
     )
+    if (
+        state.prev_rot_basis is not None
+        and not sensor.force_reset
+        and str(getattr(state, "prev_rot_source", "depth")) == "depth"
+    ):
+        py = np.asarray(state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
+        pn = float(np.linalg.norm(py))
+        if pn >= 1e-9 and float(np.linalg.norm(y_dbg.ey_out)) >= 1e-9:
+            y_dbg.dot_out_prev = float(np.dot(y_dbg.ey_out, py / pn))
+            y_dbg.flipped = float(y_dbg.dot_out_prev) < 0.0
+    state.last_middle_y_sign_debug = y_dbg
+    if getattr(tuning, "y_sign_debug", False) or y_dbg.flipped or y_dbg.flipped_vs_geom:
+        print_middle_y_sign_debug(
+            y_dbg,
+            frame_idx=int(getattr(sensor, "frame_idx", -1)),
+            force=bool(getattr(tuning, "y_sign_debug", False)),
+        )
     if sensor.palm_center_color_px is not None:
         state.last_palm_center_color_px = sensor.palm_center_color_px
     if out is None:
@@ -153,7 +218,6 @@ def update_left_swarm_pose(
     palm_center, B_depth = out
     palm_center = np.asarray(palm_center, dtype=np.float64).reshape(3)
     B_depth = np.asarray(B_depth, dtype=np.float64).reshape(3, 3)
-    wrist_mm = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
 
     meas_depth_mm: float | None = None
     if sensor.palm_center_depth_mm is not None:
@@ -175,7 +239,7 @@ def update_left_swarm_pose(
         depth_patch_r=int(sensor.palm_depth_patch_r),
         measured_depth_mm=meas_depth_mm,
     )
-    if not np.all(np.isfinite(wrist_mm)):
+    if not np.all(np.isfinite(palm_center)):
         return _decay_pose_on_track_loss(state, tuning.lost_decay)
 
     if sensor.force_reset or not state.initialized:
@@ -227,8 +291,7 @@ def update_left_swarm_pose(
     )
 
     ref_b_depth = np.asarray(state.ref_basis, dtype=np.float64).reshape(3, 3)
-    B_depth_stable = stabilize_palm_basis_continuity(B_depth, ref_b_depth)
-    B = B_depth_stable
+    B = B_depth
     ref_b_rot = ref_b_depth
     rot_source = "depth"
     rv_world_override = None
@@ -236,17 +299,13 @@ def update_left_swarm_pose(
         B_img = np.asarray(sensor.B_rot, dtype=np.float64).reshape(3, 3)
         ref_img = np.asarray(state.ref_basis_image, dtype=np.float64).reshape(3, 3)
         if np.all(np.isfinite(B_img)) and np.all(np.isfinite(ref_img)):
-            B_img = stabilize_palm_basis_continuity(B_img, ref_img)
-            rv_depth_local = palm_local_rotvec_from_basis_delta(B_depth_stable, ref_b_depth)
-            rv_img_local = palm_local_rotvec_from_basis_delta(B_img, ref_img)
-            rv_hybrid_local = np.array(
-                [rv_depth_local[0], rv_depth_local[1], rv_img_local[2]],
-                dtype=np.float64,
+            # Low Orbbec visibility: full 2D palm basis for rotation (no depth/image rotvec mix).
+            rv_world_override = palm_world_rotvec_from_basis_delta(
+                Mc_rot, B_img, ref_img, axis_sign=sign
             )
-            rv_world_override = palm_world_rotvec_from_local_delta(Mc_rot, rv_hybrid_local, ref_img)
             B = B_img
             ref_b_rot = ref_img
-            rot_source = "hybrid"
+            rot_source = "webcam"
 
     off_tgt, R_tgt, off_raw, rv_world = _rigid_target_from_hand(
         delta_cam_arm=delta_cam_arm,
@@ -272,6 +331,22 @@ def update_left_swarm_pose(
         delta_cam_mm=delta_cam,
         max_step_rad=step_cap,
     )
+    y_rot_ok, y_rot_reason = middle_y_trusted_for_rotation(
+        y_dbg,
+        depth_hold=bool(state.last_depth_outlier),
+        mcp_valid=int(mcp_n),
+    )
+    if (
+        state.prev_rot_basis is not None
+        and str(state.prev_rot_source) == str(rot_source)
+    ):
+        prev_y_col = np.asarray(state.prev_rot_basis[:, 1], dtype=np.float64).reshape(3)
+        cur_y_col = np.asarray(B[:, 1], dtype=np.float64).reshape(3)
+        pn = float(np.linalg.norm(prev_y_col))
+        cn = float(np.linalg.norm(cur_y_col))
+        if pn >= 1e-9 and cn >= 1e-9 and float(np.dot(cur_y_col / cn, prev_y_col / pn)) < 0.0:
+            y_rot_ok = False
+            y_rot_reason = "basis_y_flip"
     if float(np.linalg.norm(rv_apply - rv_world)) > 1e-9:
         R_world = rotvec_to_R(rv_apply)
         zsc = tuning.rot_world_z_scale
@@ -301,6 +376,12 @@ def update_left_swarm_pose(
             motion = "rigid"
     else:
         w_rot = 0.0
+    if not y_rot_ok:
+        w_rot = 0.0
+        rv_apply = np.zeros(3, dtype=np.float64)
+        R_tgt = np.eye(3, dtype=np.float64)
+        if motion == "rigid":
+            motion = "hold_y"
     if motion == "rotate" and tuning.rot_trans_tau_mm > 0.0:
         if float(np.linalg.norm(delta_cam_arm)) < tuning.rot_trans_tau_mm:
             w_trans = 0.0
@@ -326,6 +407,9 @@ def update_left_swarm_pose(
     if rejected:
         state.last_pose_rejected = True
         state.last_reject_reason = _reject_reason
+    elif not y_rot_ok:
+        state.last_pose_rejected = True
+        state.last_reject_reason = y_rot_reason
     else:
         state.last_pose_rejected = False
         state.last_reject_reason = ""
@@ -342,7 +426,7 @@ def update_left_swarm_pose(
     sync_left_swarm_pose_output(state, off_out, R_out)
 
     state.last_depth_outlier_prev = state.last_depth_outlier
-    if not rejected or _reject_reason != "jump":
+    if (not rejected or _reject_reason != "jump") and y_rot_ok:
         state.prev_palm_mm = palm_center.copy()
         state.prev_rot_basis = B.copy()
         state.prev_rot_source = rot_source
@@ -354,17 +438,35 @@ def apply_rigid_to_targets(
     targets: np.ndarray,
     offset: np.ndarray,
     R: np.ndarray,
+    *,
+    pivot_ref_m: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Apply centroid-pivot rigid rotation plus world translation."""
+    """Apply palm-centered rigid motion to drone target positions.
+
+    Args:
+        targets: Drone targets, shape ``(n, 3+)`` in simulation meters.
+        offset: Palm translation in world meters, shape ``(3,)``.
+        R: World rotation matrix, shape ``(3, 3)``.
+        pivot_ref_m: Formation centroid frozen at arm (sim m). When ``None``, uses the
+            live per-frame target centroid.
+
+    Returns:
+        Transformed targets with the same shape and dtype as ``targets`` (float32).
+    """
     t = np.asarray(targets, dtype=np.float64)
     if t.ndim != 2 or t.shape[1] < 3:
         return np.asarray(targets, dtype=np.float32)
     R = np.asarray(R, dtype=np.float64).reshape(3, 3)
     off = np.asarray(offset, dtype=np.float64).reshape(3)
     p = t[:, :3]
-    c = np.mean(p, axis=0)
-    rel = p - c
-    out = (R @ rel.T).T + c + off
+    c0 = (
+        np.asarray(pivot_ref_m, dtype=np.float64).reshape(3)
+        if pivot_ref_m is not None
+        else np.mean(p, axis=0)
+    )
+    pivot = c0 + off
+    p_trans = p + off.reshape(1, 3)
+    out = (R @ (p_trans - pivot.reshape(1, 3)).T).T + pivot.reshape(1, 3)
     t2 = t.copy()
     t2[:, :3] = out
     return t2.astype(np.float32)

@@ -51,6 +51,9 @@ _PLANE_PREV_OUTPUT_CACHE: Optional[np.ndarray] = None
 # R used when _PLANE_PREV_OUTPUT_CACHE was written (avoid cross-blend after a different-radius call).
 _PLANE_PREV_OUTPUT_CACHE_R: Optional[float] = None
 _OPEN_TRANSLATE_ONLY_ON = 0.82
+# Mode 1 sphere plane (ε₁=ε₂=1): shared open=1 layout for every morph mode.
+_PLANE_OPEN_EPSILON1 = 1.0
+_PLANE_OPEN_EPSILON2 = 1.0
 _DEBUG_OPEN_WARP = os.environ.get("ISO_SWARM_DEBUG_OPEN_WARP", "0").strip().lower() in (
     "1",
     "true",
@@ -92,6 +95,7 @@ class MorphCallProfiler:
     _calls: int = 0
 
     def call_start(self) -> None:
+        """Begin timing a top-level morph call when profiling is enabled."""
         if not self.enabled:
             return
         self._depth += 1
@@ -101,6 +105,11 @@ class MorphCallProfiler:
         self._call_t0 = self._last = time.perf_counter()
 
     def section(self, name: str) -> None:
+        """Record elapsed wall time for a named subsection of the current call.
+
+        Args:
+            name: Section label aggregated in periodic profile reports.
+        """
         if not self.enabled or not self._active or self._depth != 1:
             return
         now = time.perf_counter()
@@ -110,6 +119,11 @@ class MorphCallProfiler:
         self._counts[name] = self._counts.get(name, 0) + 1
 
     def call_end(self, *, label: str = "mapped_fixed_surface_points") -> None:
+        """Finalize timing for the current call and maybe print a profile report.
+
+        Args:
+            label: Prefix label for the printed summary line.
+        """
         if not self.enabled:
             return
         if self._depth > 0:
@@ -1459,7 +1473,14 @@ def _get_area_weighted_surface_candidates(
 
 
 def init_fixed_surface_points(n_samples: int) -> np.ndarray:
-    """Initialize fixed indexed sphere samples for this process."""
+    """Initialize fixed indexed unit-sphere samples for this process.
+
+    Args:
+        n_samples: Desired sample count (clamped to at least anchor count).
+
+    Returns:
+        Copy of the initialized unit-direction array, shape ``(n, 3)``.
+    """
     global _FIXED_SURFACE_UNIT_POINTS, _FIXED_SURFACE_COUNT, _FIXED_PLANE_UNIT_POINTS, _OPEN1_PLANE_XY_STATE, _OPEN1_START_XY_STATE, _OPEN1_FRAME_IDX, _PLANE_CACHE_KEY, _PLANE_CACHE_VALUE, _RELAX_CACHE_KEY, _RELAX_CACHE_VALUE, _SURFACE_CANDIDATE_CACHE_KEY, _SURFACE_CANDIDATE_CACHE_U, _SURFACE_CANDIDATE_CACHE_P, _SURFACE_CANDIDATE_CACHE_W, _AXIS6_OCTANT_GROUPS, _RING_LAYOUT_PREV_N, _RING_LAYOUT_PREV_MODE, _RING_LAYOUT_PREV_POINTS
     n = int(max(_FIXED_ANCHOR_COUNT, n_samples))
     _FIXED_SURFACE_UNIT_POINTS = _minimal_energy_points(n)
@@ -1499,6 +1520,14 @@ def _get_mesh_trig(n_eta: int, n_omega: int):
 
 
 def prompt_and_init_fixed_surface_points(default_n: int = 24) -> int:
+    """Prompt stdin for sample count and initialize fixed surface points.
+
+    Args:
+        default_n: Count used when input is empty or invalid.
+
+    Returns:
+        Final sample count after clamping to the anchor minimum.
+    """
     raw = input(
         f"Enter n surface samples (>={_FIXED_ANCHOR_COUNT}, default {int(default_n)}): "
     ).strip()
@@ -1516,24 +1545,21 @@ def prompt_and_init_fixed_surface_points(default_n: int = 24) -> int:
 
 
 def get_fixed_surface_points() -> np.ndarray:
+    """Return a copy of fixed unit-sphere sample directions.
+
+    Lazily initializes 24 samples when not yet configured.
+
+    Returns:
+        Unit directions, shape ``(N, 3)``.
+    """
     global _FIXED_SURFACE_UNIT_POINTS
     if _FIXED_SURFACE_UNIT_POINTS is None:
         init_fixed_surface_points(24)
     return _FIXED_SURFACE_UNIT_POINTS.copy()
 
 
-def get_fixed_surface_count() -> int:
-    return int(get_fixed_surface_points().shape[0])
-
-
-def get_fixed_plane_points() -> np.ndarray:
-    global _FIXED_PLANE_UNIT_POINTS
-    if _FIXED_PLANE_UNIT_POINTS is None:
-        init_fixed_surface_points(24)
-    return _FIXED_PLANE_UNIT_POINTS.copy()
-
-
 def reset_lp_scatter_inertia() -> None:
+    """Reset LP scatter inertia state (compatibility no-op for legacy call sites)."""
     # Kept for compatibility with existing call sites.
     return
 
@@ -2168,14 +2194,26 @@ def mapped_fixed_surface_points(
     plane_radius_b: float,
     morph_mode: int = 1,
 ) -> np.ndarray:
-    """Map fixed IDs to current shape using per-frame radial ray intersection.
+    """Map fixed sample IDs to current morph shape via radial ray intersection.
 
-    Pipeline:
-    1) Build current target surface from real-time ``mode/open`` parameters.
-    2) For each fixed unit direction, shoot a ray from origin.
-    3) Use ray/surface intersection point as mapped sample.
+    Pipeline: build target surface from mode/open ε parameters, shoot rays from
+    the origin along fixed unit directions, and take intersection points as samples.
+    Near open=1, blend toward a uniform plane layout.
 
-    Enable timing: ``ISO_SWARM_PROFILE_MORPH=1`` (optional ``ISO_SWARM_PROFILE_MORPH_EVERY=N``).
+    Enable timing with ``ISO_SWARM_PROFILE_MORPH=1`` (optional
+    ``ISO_SWARM_PROFILE_MORPH_EVERY=N``).
+
+    Args:
+        radius: Superellipsoid radius in millimeters.
+        open_alpha: Openness in ``[0, 1]`` (0 closed, 1 open plane).
+        epsilon1: Latitude superellipsoid exponent ε₁.
+        epsilon2: Longitude superellipsoid exponent ε₂.
+        plane_radius_a: Closed-shape horizontal scale factor.
+        plane_radius_b: Open-shape horizontal scale factor.
+        morph_mode: Morph mode index (1–5) for mode-specific layout rules.
+
+    Returns:
+        Mapped surface points in millimeters, shape ``(N, 3)``.
     """
     _mapped_call_prof.call_start()
     open_a = float(clamp01(open_alpha))
@@ -2232,8 +2270,8 @@ def mapped_fixed_surface_points(
         int(u_relaxed.shape[0]),
         int(morph_mode),
         round(float(R), 1),
-        round(float(epsilon1), 2),
-        round(float(epsilon2), 2),
+        round(float(_PLANE_OPEN_EPSILON1), 2),
+        round(float(_PLANE_OPEN_EPSILON2), 2),
     )
     if float(open_a) >= _OPEN_TRANSLATE_ONLY_ON:
         w_raw = float(
@@ -2258,18 +2296,13 @@ def mapped_fixed_surface_points(
                 _PLANE_TRANSLATE_START_CACHE = _PLANE_PREV_OUTPUT_CACHE.copy()
             else:
                 _PLANE_TRANSLATE_START_CACHE = p.copy()
-        # M3: plane layout matches M4 (same open-warp hints + FPS assign). Cube-only M3 warp
-        # must not steer plane targets or 8 corner anchors collapse to 4 duplicate XY slots.
-        u_plane = (
-            _open_warp_unit_dirs(u, open_a)
-            if int(morph_mode) == 3
-            else u_relaxed
-        )
+        # Same plane hints + superellipse as mode 1 for all morph modes at open→1.
+        u_plane = _open_warp_unit_dirs(u, open_a)
         xy_tgt = _build_current_plane_xy_targets(
             u_plane,
             R=float(R),
-            epsilon1=float(epsilon1),
-            epsilon2=float(epsilon2),
+            epsilon1=_PLANE_OPEN_EPSILON1,
+            epsilon2=_PLANE_OPEN_EPSILON2,
         )
         _PLANE_TRANSLATE_TARGET_CACHE = np.column_stack(
             [xy_tgt[:, 0], xy_tgt[:, 1], np.zeros((xy_tgt.shape[0],), dtype=float)]
@@ -2282,8 +2315,8 @@ def mapped_fixed_surface_points(
         _PLANE_TRANSLATE_START_CACHE = None
         _PLANE_TRANSLATE_TARGET_CACHE = None
         _mapped_call_prof.section("plane_skip")
-    # M3 corner anchors only before plane blend (open < 0.82). After that, plane targets
-    # from u_plane above are kept — overwriting p[:8] duplicated corners at open=1.
+    # M3 corner anchors only before plane blend (open < 0.82). Plane at open=1 is mode-1
+    # layout for all modes (see _PLANE_OPEN_EPSILON* above).
     if int(morph_mode) == 3 and float(open_a) < _OPEN_TRANSLATE_ONLY_ON:
         n_fix = min(_FIXED_ANCHOR_COUNT, int(p.shape[0]))
         if n_fix > 0:
@@ -2374,6 +2407,27 @@ def draw_superellipsoid_morph_canonical(
     scatter_inertia_lambda: float = 0.65,
     morph_mode: int = 1,
 ):
+    """Draw canonical superellipsoid mesh and fixed sample scatter on a 3D axis.
+
+    Args:
+        ax: Matplotlib 3D axis to draw into.
+        radius: Superellipsoid radius in millimeters.
+        open_alpha: Openness in ``[0, 1]``.
+        epsilon1: Latitude superellipsoid exponent ε₁.
+        epsilon2: Longitude superellipsoid exponent ε₂.
+        plane_radius_a: Closed-shape horizontal scale factor.
+        plane_radius_b: Open-shape horizontal scale factor.
+        plane_grid_n: Reference plane grid resolution (unused when refs off).
+        sample_scatter_s: Matplotlib scatter marker size for mapped samples.
+        sample_alpha: Scatter point alpha.
+        show_refs: Draw reference wireframe sphere and ground plane.
+        show_sample_ids: Annotate fixed sample indices on scatter points.
+        mesh_n_eta: Surface mesh latitude divisions.
+        mesh_n_omega: Surface mesh longitude divisions.
+        scatter_use_inertia: Unused; kept for API compatibility.
+        scatter_inertia_lambda: Unused; kept for API compatibility.
+        morph_mode: Morph mode index passed to :func:`mapped_fixed_surface_points`.
+    """
     open_alpha = clamp01(open_alpha)
     close = 1.0 - open_alpha
     e1 = float(epsilon1)

@@ -9,7 +9,17 @@ import numpy as np
 
 
 def poll_cv_key(*, cv_poll_key: Any, imshow: bool, window: str, frame: np.ndarray) -> int:
-    """Return a key code 0–255; 255 means no key (matches OpenCV waitKey convention)."""
+    """Poll for a keyboard key from OpenCV or an injected callback.
+
+    Args:
+        cv_poll_key: Optional callable returning a raw key code (used when not imshow).
+        imshow: If True, display ``frame`` and call ``cv2.waitKey(1)``.
+        window: OpenCV window name for ``imshow``.
+        frame: BGR image to display when ``imshow`` is True.
+
+    Returns:
+        Key code 0–255; 255 means no key (OpenCV ``waitKey`` convention).
+    """
     if imshow:
         cv2.imshow(window, frame)
         try:

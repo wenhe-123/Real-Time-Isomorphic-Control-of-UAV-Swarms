@@ -1,7 +1,7 @@
 SolverSettings:
   rho_init: 1.0 # Initial value of the penalty parameter
   rho_max: 1000.0 # Maximum value of the penalty parameter
-  max_iters: 300 # Maximum number of iterations
+  max_iters: 1000 # Maximum number of iterations
 
   # Constraints
   pos_constraints: soft  # Either hard, soft or false. Soft tracks the setpoint as a cost.
@@ -19,17 +19,17 @@ SolverSettings:
   input_continuity_weight: 2.0  # Weight of the input continuity objective in the cost
 
   # Limits
-  pos_min: [-2, -2, 0.1]  # Minimum position of the AMSwarm drones
-  pos_max: [2, 2, 2]  # Maximum position of the AMSwarm drones
-  vel_max: 1.73 # Maximum velocity of the AMSwarm drones
+  pos_min: [-2, -2, 0.2]  # Minimum position of the AMSwarm drones
+  pos_max: [2, 2, 2.5]  # Maximum position of the AMSwarm drones
+  vel_max: 2.0 # Maximum velocity of the AMSwarm drones
   acc_max: 1.0  # Maximum force of the AMSwarm drones (0.75 gs)
   collision_envelope: [0.25, 0.25, 0.25]  # Collision envelope width in x, y, z
 
   # MPC
   K: 50  # Number of timesteps in the optimization horizon
   N: 10  # Spline order for AMSwarm trajectories
-  freq: 8  # MPC control frequency of AMSwarm in Hz
-  goal_steps: 30  # Number of final horizon steps used for the setpoint tracking cost
+  freq: 10  # MPC control frequency of AMSwarm in Hz (match sim/real control_freq)
+  goal_steps: 20  # Number of final horizon steps used for the setpoint tracking cost
   bf_gamma: 0.2  # Barrier function gamma [0, 1.0] -> 1.0 is most aggressive
   setpoint_pos_tol: 0.1  # Tolerance for the setpoint position constraint
   setpoint_vel_tol: 0.01  # Tolerance for the setpoint velocity constraint

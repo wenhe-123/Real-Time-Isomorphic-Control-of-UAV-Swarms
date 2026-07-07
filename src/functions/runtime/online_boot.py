@@ -47,21 +47,26 @@ from functions.swarm_motion.left_hand_swarm_pose import (
 )
 from functions.swarm_motion.left_pose_tuning import LeftPoseTuning
 from functions.swarm_motion.prearm import (
-    sim_chessboard_ground_layout,
+    PREARM_HL_DESCEND_M,
+    plane_ground_layout,
     vertical_takeoff_layout,
 )
 from functions.swarm_motion.spacing_guard import closest_pair
 
 if TYPE_CHECKING:
     from crazyflow.sim import Sim
+    from functions.display_sim.sim_executor import SimSwarmExecutor
     from functions.real_swarm.executor import RealSwarmExecutor
 
 
 @dataclass
 class OnlineBoot:
+    """Startup bundle: Orbbec, sim or real swarm, prearm layouts, axswarm, hotkeys."""
+
     k4a: PyK4A
     calib: Any
     sim: Sim | None
+    sim_executor: SimSwarmExecutor | None
     real_executor: RealSwarmExecutor | None
     n_drones: int
     axswarm_rt: AxswarmPlanner
@@ -73,13 +78,13 @@ class OnlineBoot:
     pipe: PipelineTuning
     use_depth_fusion: bool
     cmd_target: np.ndarray
-    prev_cmd_target: np.ndarray
     ground_layout: np.ndarray
     ground_z: float
     prearm_hover_layout: np.ndarray
     prearm_hover_z: float
     prearm_vertical_layout: np.ndarray
     prearm_takeoff_z: float
+    prearm_descend_m: float
     trail_rgba: list
     pos_buffer: deque
     center_trace_prev: dict[str, float | None]
@@ -107,8 +112,10 @@ class OnlineBoot:
     left_unwind_s: float
     left_pose_tuning: LeftPoseTuning
     start_time: float
+    control_freq_hz: float
     render_enabled: bool = True
     orbbec_flip_depth_warned: bool = False
+    orbbec_depth_fov_crop: tuple[int, int, int, int] | None = None
     gesture_control_enabled: bool = False
     prev_gesture_control_enabled: bool = False
     prearm_climb_enabled: bool = False
@@ -117,6 +124,7 @@ class OnlineBoot:
     prev_prearm_phase: str = "ground"
     prearm_vertical_leg: str = "climb"
     prearm_has_flown: bool = False
+    prearm_formation_start_s: float = -1.0
     left_pose_reset_req: bool = False
     left_pose_runtime_armed: bool = False
     frame_idx: int = 0
@@ -124,6 +132,13 @@ class OnlineBoot:
 
 
 def print_pipeline_mode(pipe: PipelineTuning, *, draw_hand_debug: bool, mp_delegate_key: str) -> None:
+    """Log MediaPipe delegate and Orbbec hand-3D pipeline mode at startup.
+
+    Args:
+        pipe: Depth fusion and mode debounce settings.
+        draw_hand_debug: Whether skeleton overlay is enabled on the Orbbec preview.
+        mp_delegate_key: MediaPipe delegate string (``"cpu"`` or ``"gpu"``).
+    """
     print(f"MediaPipe HandLandmarker delegate: {mp_delegate_key} (GPU falls back to CPU if unavailable)")
     if draw_hand_debug:
         print("Orbbec hand overlay: ON (--draw-hand-debug).")
@@ -134,7 +149,7 @@ def print_pipeline_mode(pipe: PipelineTuning, *, draw_hand_debug: bool, mp_deleg
         )
     else:
         print(
-            "Orbbec hand 3D: MediaPipe world only (no per-joint depth fusion in draw_hand). "
+            "Orbbec hand 3D: MediaPipe world only (no per-joint depth fusion in fuse_hand_landmarks). "
             "Depth still used for L-move via left_hand_pose_matrix_depth_mm. "
             "Use --draw-hand-debug for skeleton on preview; --debug-webcam-pipeline for demo tuning."
         )
@@ -145,7 +160,16 @@ def boot_online_control(
     live_target: LiveTargetState,
     cfg: OnlineRuntimeConfig,
 ) -> OnlineBoot:
-    """Open Orbbec + sim or real swarm, run prearm, wire axswarm and hotkeys."""
+    """Open Orbbec, sim or real swarm, run prearm, wire axswarm and hotkeys.
+
+    Args:
+        live_target: Thread-safe morph target seeded before boot.
+        cfg: Normalized runtime config from :func:`build_online_runtime_config`.
+
+    Returns:
+        ``OnlineBoot`` with camera, executors, prearm layouts, plot handles, and
+        hotkey state ready for the main control loop.
+    """
     n_drones = int(cfg.point_count)
     scale = cfg.scale
     orbbec_fps = FPS.FPS_15 if ONLINE_DEFAULTS.camera.orbbec_fps == "15" else FPS.FPS_30
@@ -160,10 +184,34 @@ def boot_online_control(
     k4a.start()
     calib = k4a.calibration
 
+    from functions.display_sim.orbbec_depth_fov_display import compute_depth_fov_crop_rect
+
+    orbbec_depth_fov_crop: tuple[int, int, int, int] | None = None
+    if bool(cfg.orbbec_display_depth_fov_only):
+        color_h, color_w = 720, 1280
+        depth_h, depth_w = 576, 640
+        try:
+            probe = k4a.get_capture()
+            if probe is not None:
+                if getattr(probe, "color", None) is not None:
+                    color_h, color_w = int(probe.color.shape[0]), int(probe.color.shape[1])
+                if getattr(probe, "depth", None) is not None:
+                    depth_h, depth_w = int(probe.depth.shape[0]), int(probe.depth.shape[1])
+        except Exception:
+            pass
+        orbbec_depth_fov_crop = compute_depth_fov_crop_rect(
+            calib,
+            color_w=color_w,
+            color_h=color_h,
+            depth_w=depth_w,
+            depth_h=depth_h,
+        )
+
     n_drones = int(cfg.point_count)
     real_executor: RealSwarmExecutor | None = None
     sim: Sim | None = None
-    motion_freq_hz = 100.0
+    sim_executor = None
+    control_freq_hz = float(cfg.control_freq_hz)
 
     if cfg.drones_config is not None:
         from functions.real_swarm.executor import RealSwarmExecutor
@@ -173,7 +221,7 @@ def boot_online_control(
             morph_point_count=n_drones,
             dry_run=bool(cfg.skip_real_connect),
         )
-        motion_freq_hz = float(real_executor.ctrl_freq)
+        control_freq_hz = float(real_executor.ctrl_freq)
         if cfg.skip_real_connect:
             print("Real-swarm dry-run: Crazyflow MuJoCo disabled; setpoints not sent to hardware.")
         else:
@@ -187,7 +235,6 @@ def boot_online_control(
             device="cpu",
         )
         sim.reset()
-        motion_freq_hz = float(sim.freq)
 
     center_trace_every = max(1, int(cfg.center_trace_every))
     center_trace_prev: dict[str, float | None] = {
@@ -220,41 +267,18 @@ def boot_online_control(
     )
     print(
         f"Planner: gesture setpoints + axswarm @ {axswarm_rt.mpc_hz:.1f} Hz, "
-        f"n={n_drones} (active from startup)."
+        f"horizon M={axswarm_rt.horizon_steps} "
+        f"(replan every {axswarm_rt.replan_period_s:.2f}s), "
+        f"control @ {control_freq_hz:.1f} Hz, n={n_drones} (active from startup)."
     )
 
     z_ground = float(ONLINE_DEFAULTS.sim.ground_z)
-    if real_executor is not None:
-        ground_layout = real_executor.get_sim_ground_layout(
-            n_drones, min_separation_m=float(cfg.min_separation_m)
-        )
-        z_ground = float(np.median(ground_layout[: real_executor.n_physical, 2]))
-        print(
-            f"Startup layout: TOML home positions (sim frame, z≈{z_ground:.2f}m). "
-            "Press 1: vertical takeoff → formation → vertical descend → ground."
-        )
-    else:
-        ground_layout = sim_chessboard_ground_layout(
-            n_drones,
-            min_separation_m=float(cfg.min_separation_m),
-            z_ground=z_ground,
-            xy_half_extent_m=float(scale.xy_radius) * 0.85,
-        )
-        d_g, pi_g, pj_g = closest_pair(ground_layout)
-        print(
-            f"Startup layout: chessboard ground (z={z_ground:.2f}m, "
-            f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
-            "Press 1: vertical takeoff → formation → vertical descend → ground."
-        )
     prearm_hover_z = float(
         np.clip(float(cfg.prearm_hover_z), float(z_ground) + 0.15, 10.0)
     )
     scale = replace(
         scale,
         hover_z=prearm_hover_z,
-        z_center=prearm_hover_z,
-        z_min=prearm_hover_z - float(scale.z_amplitude),
-        z_max=prearm_hover_z + float(scale.z_amplitude),
     )
     _hover_mm = fixed_morph_points(
         n_drones,
@@ -267,6 +291,30 @@ def boot_online_control(
         _hover_mm,
         scale,
     )
+    if real_executor is not None:
+        ground_layout = real_executor.get_sim_ground_layout(
+            n_drones,
+            plane_layout=prearm_hover_layout,
+            min_separation_m=float(cfg.min_separation_m),
+        )
+        z_ground = float(np.median(ground_layout[: real_executor.n_physical, 2]))
+        d_g, pi_g, pj_g = closest_pair(ground_layout)
+        print(
+            f"Startup layout: TOML home for {real_executor.n_physical} physical drone(s), "
+            f"plane morph for virtual rows (sim frame, z≈{z_ground:.2f}m, "
+            f"spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
+            "Place drones on ground; startup auto takeoff +0.3m → axswarm vertical hold; "
+            "Key1×2: formation → HL descend in place → land."
+        )
+    else:
+        ground_layout = plane_ground_layout(prearm_hover_layout, z_ground=z_ground)
+        d_g, pi_g, pj_g = closest_pair(ground_layout)
+        print(
+            f"Startup layout: plane XY at z={z_ground:.2f}m "
+            f"(spacing=({pi_g},{pj_g}) {d_g:.2f}m). "
+            "Startup auto takeoff → axswarm vertical hold; "
+            "Key1×2: formation → HL descend in place → land."
+        )
     live_target.set(
         prearm_hover_layout,
         int(live_target.mode),
@@ -288,6 +336,7 @@ def boot_online_control(
     prearm_takeoff_z = float(
         np.clip(float(cfg.prearm_takeoff_z), takeoff_z_lo, takeoff_z_hi)
     )
+    prearm_descend_m = float(PREARM_HL_DESCEND_M)
     prearm_vertical_layout = vertical_takeoff_layout(
         ground_layout,
         takeoff_z=prearm_takeoff_z,
@@ -300,14 +349,15 @@ def boot_online_control(
     d_v, pi_v, pj_v = closest_pair(prearm_vertical_layout)
     if real_executor is not None:
         print(
-            f"Vertical takeoff target: z={prearm_takeoff_z:.2f}m "
-            f"(TOML home XY fixed for {real_executor.n_physical} drone(s), "
-            f"spacing=({pi_v},{pj_v}) {d_v:.2f}m)."
+            f"High-level takeoff: +{prearm_takeoff_z:.2f}m relative (no setpoint stream); "
+            f"then axswarm formation ramp → z≈{prearm_hover_z:.2f}m "
+            f"(spacing=({pi_v},{pj_v}) {d_v:.2f}m)."
         )
     else:
         print(
-            f"Vertical takeoff target: z={prearm_takeoff_z:.2f}m (ground XY fixed, "
-            f"spacing=({pi_v},{pj_v}) {d_v:.2f}m)."
+            f"High-level takeoff: +{prearm_takeoff_z:.2f}m relative (no setpoint stream); "
+            f"then axswarm formation ramp → z≈{prearm_hover_z:.2f}m "
+            f"(spacing=({pi_v},{pj_v}) {d_v:.2f}m)."
         )
     boot_cmd = ground_layout.copy()
     if real_executor is not None:
@@ -322,17 +372,53 @@ def boot_online_control(
                 ang_vel=zeros[None, :, :],
             )
         )
+        from functions.display_sim.sim_executor import SimSwarmExecutor
+
+        sim_executor = SimSwarmExecutor(
+            sim=sim,
+            ground_layout=ground_layout,
+            ctrl_freq=control_freq_hz,
+            max_sim_substeps=int(cfg.max_sim_substeps),
+        )
     axswarm_rt.reset(boot_cmd, np.zeros((n_drones, 3), dtype=np.float32))
     mode_label = "real Crazyflie" if real_executor is not None else "MuJoCo sim (cmd+step)"
     print(
         f"Mode: gesture targets → axswarm → cmd_target; {mode_label}. "
         "Planner: axswarm."
     )
-    print(
-        f"Axswarm active from startup (ground hold_z={z_ground:.2f}m). "
-        f"Press 1: z={prearm_takeoff_z:.2f}m → formation z={prearm_hover_z:.2f}m (before SPACE) "
-        f"→ z={prearm_takeoff_z:.2f}m → ground; SPACE → gesture control."
-    )
+    prearm_phase = "ground"
+    prearm_has_flown = False
+    prearm_climb_enabled = False
+    if real_executor is not None:
+        print(
+            f"Auto high-level takeoff +{prearm_takeoff_z:.2f}m at startup "
+            f"(no setpoint stream during climb)...",
+            flush=True,
+        )
+        real_executor.high_level_takeoff(prearm_takeoff_z)
+        prearm_phase = "vertical"
+        prearm_has_flown = True
+        prearm_climb_enabled = True
+        print(
+            f"Axswarm vertical hold at z≈{prearm_takeoff_z:.2f}m. "
+            "Press 1: hover formation → HL descend −0.7m in place + land.",
+            flush=True,
+        )
+    elif sim_executor is not None:
+        print(
+            f"Auto high-level takeoff +{prearm_takeoff_z:.2f}m at startup "
+            f"(no setpoint stream during climb)...",
+            flush=True,
+        )
+        sim_executor.high_level_takeoff(prearm_takeoff_z)
+        prearm_phase = "vertical"
+        prearm_has_flown = True
+        prearm_climb_enabled = True
+        print(
+            f"Axswarm vertical hold at z≈{prearm_takeoff_z:.2f}m. "
+            "Press 1: hover formation → HL descend in place + land.",
+            flush=True,
+        )
 
     left_cam_preset = str(cfg.left.cam_preset)
     left_cam_y_to_world_z = float(np.clip(cfg.left.cam_y_to_world_z, 0.0, 1.0))
@@ -378,6 +464,13 @@ def boot_online_control(
             "Orbbec transformed_depth is ON (K4A alignment). If the process aborts, set "
             "orbbec_use_transformed_depth: false in config/online_defaults.yaml."
         )
+    if orbbec_depth_fov_crop is not None:
+        x0, y0, x1, y1 = orbbec_depth_fov_crop
+        print(
+            f"Orbbec preview: cropped to depth-camera FOV "
+            f"(color px x=[{x0},{x1}) y=[{y0},{y1})). "
+            "Set orbbec_display_depth_fov_only: false to show full RGB."
+        )
     if orbbec_swap_mp_hands:
         print(
             "Orbbec: swapping MediaPipe left/right for mode vs open hand "
@@ -396,8 +489,8 @@ def boot_online_control(
             f"palm_basis={left_palm_basis!r}."
         )
     print(
-        "Ground hold until 1; 1×4 cycle: climb → formation → descend → ground; "
-        "SPACE arms/disarms gesture control."
+        "Startup auto takeoff → axswarm vertical hold; "
+        "1×2: formation → HL descend + land; SPACE arms/disarms gesture control."
     )
 
     left_pose_state = LeftSwarmPoseState(enabled=bool(cfg.left.enabled))
@@ -433,7 +526,7 @@ def boot_online_control(
             print(format_hotkey_install_hint(_hk_probe))
         else:
             print(
-                f"Hotkeys: {_hk} — 1 climb→formation→descend→ground, SPACE arm/disarm, "
+                f"Hotkeys: {_hk} — 1 formation→HL land, SPACE arm/disarm, "
                 "0/q without Orbbec focus."
             )
         print(
@@ -448,6 +541,7 @@ def boot_online_control(
         k4a=k4a,
         calib=calib,
         sim=sim,
+        sim_executor=sim_executor,
         real_executor=real_executor,
         n_drones=n_drones,
         axswarm_rt=axswarm_rt,
@@ -459,13 +553,13 @@ def boot_online_control(
         pipe=cfg.pipe,
         use_depth_fusion=bool(cfg.pipe.depth_fusion_enabled),
         cmd_target=boot_cmd.copy(),
-        prev_cmd_target=boot_cmd.copy(),
         ground_layout=ground_layout.copy(),
         ground_z=z_ground,
         prearm_hover_layout=prearm_hover_layout.copy(),
         prearm_hover_z=prearm_hover_z,
         prearm_vertical_layout=prearm_vertical_layout.copy(),
         prearm_takeoff_z=prearm_takeoff_z,
+        prearm_descend_m=prearm_descend_m,
         trail_rgba=trail_rgba,
         pos_buffer=deque(maxlen=ONLINE_DEFAULTS.display.trail_buffer_maxlen),
         center_trace_prev=center_trace_prev,
@@ -476,10 +570,10 @@ def boot_online_control(
         left_pose_state=left_pose_state,
         key_queue=key_queue,
         gesture_control_enabled_box=[gesture_control_enabled],
-        prearm_climb_enabled_box=[False],
-        prearm_phase_box=["ground"],
+        prearm_climb_enabled_box=[prearm_climb_enabled],
+        prearm_phase_box=[prearm_phase],
         prearm_vertical_leg_box=["climb"],
-        prearm_has_flown_box=[False],
+        prearm_has_flown_box=[prearm_has_flown],
         left_pose_reset_req_box=[False],
         left_pose_runtime_armed_box=[False],
         orbbec_swap_mp_hands=orbbec_swap_mp_hands,
@@ -493,6 +587,8 @@ def boot_online_control(
         left_unwind_s=float(cfg.left.unwind_s),
         left_pose_tuning=left_pose_tuning,
         start_time=time.monotonic(),
+        control_freq_hz=control_freq_hz,
+        orbbec_depth_fov_crop=orbbec_depth_fov_crop,
         extras={
             "report_debug_figs": report_debug_figs,
             "report_panels": panels if panels.any_enabled() else None,
@@ -501,6 +597,17 @@ def boot_online_control(
 
 
 def make_key_poller(boot: OnlineBoot, *, global_hotkeys: bool):
+    """Build a key-polling callback for the online control loop.
+
+    Args:
+        boot: Boot bundle providing key queue and mutable control state.
+        global_hotkeys: When ``True``, listen via pynput/keyboard; otherwise
+            only OpenCV window keys are processed.
+
+    Returns:
+        Callable ``(cv_key: int | None) -> bool`` that processes hotkeys and
+        returns ``True`` when the session should exit.
+    """
     ctx = OnlineKeyContext.from_boot(boot)
 
     def _poll_keys(cv_key: int | None = None) -> bool:
@@ -515,6 +622,11 @@ def make_key_poller(boot: OnlineBoot, *, global_hotkeys: bool):
 
 
 def sync_armed_flags(boot: OnlineBoot) -> None:
+    """Copy mutable box flags from hotkey handlers into ``OnlineBoot`` fields.
+
+    Args:
+        boot: Boot bundle whose ``*_box`` list wrappers were updated in place.
+    """
     boot.gesture_control_enabled = bool(boot.gesture_control_enabled_box[0])
     boot.prearm_climb_enabled = bool(boot.prearm_climb_enabled_box[0])
     boot.prearm_phase = str(boot.prearm_phase_box[0])

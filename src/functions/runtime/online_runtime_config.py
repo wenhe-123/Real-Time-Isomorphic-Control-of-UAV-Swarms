@@ -17,12 +17,16 @@ from functions.swarm_motion.left_pose_tuning import LeftPoseRuntime, build_left_
 
 @dataclass(frozen=True, slots=True)
 class OnlineRuntimeConfig:
+    """Immutable per-run settings for the online control main loop."""
+
     point_count: int
     fps: int
     min_separation_m: float
     scale: ScaleConfig
     pipe: PipelineTuning
     drone_model: str
+    control_freq_hz: float
+    mpc_horizon_steps: int
     prearm_hover_z: float
     prearm_takeoff_z: float
     axswarm_settings: str | None
@@ -44,9 +48,11 @@ class OnlineRuntimeConfig:
     led_every_n: int
     sim_render_every: int
     imshow_every: int
+    orbbec_display_depth_fov_only: bool
     mp_detect_every: int
     debug_drone_targets_every: int
     debug_drone_pos_every: int
+    debug_axswarm_cmd_every: int
     spacing_audit_every: int
     webcam_rot_stride: int
     show_webcam_preview: bool
@@ -61,6 +67,8 @@ class OnlineRuntimeConfig:
 
 @dataclass
 class OnlineWebcamState:
+    """Mutable USB webcam capture and palm-rotation cache for dual-cam mode."""
+
     cap: Any | None = None
     landmarker: Any | None = None
     frame_idx: int = 0
@@ -79,11 +87,27 @@ def build_online_runtime_config(
     panels: ReportDebugPanels,
     defaults: OnlineDefaults | None = None,
 ) -> OnlineRuntimeConfig:
-    """Map minimal CLI args + yaml defaults into a normalized runtime config."""
+    """Map CLI args and yaml defaults into a normalized runtime config.
+
+    Args:
+        args: Parsed namespace from :func:`build_online_control_parser`.
+        point_count: Number of morph surface samples for this session.
+        scale: Morph mm→m workspace scaling parameters.
+        pipeline: Depth fusion, debounce, and plot cadence tuning.
+        panels: Gesture-report Matplotlib panel flags.
+        defaults: Optional yaml defaults override; uses bundled yaml when
+            ``None``.
+
+    Returns:
+        Frozen config consumed by :func:`boot_online_control` and the main loop.
+    """
     d = ONLINE_DEFAULTS if defaults is None else defaults
     debug_drone_pos_every = max(0, int(args.debug_drone_pos_every))
     if bool(args.debug_drone_pos) and debug_drone_pos_every == 0:
         debug_drone_pos_every = 1
+    debug_axswarm_cmd_every = max(0, int(getattr(args, "debug_axswarm_cmd_every", 0)))
+    if bool(getattr(args, "debug_axswarm_cmd", False)) and debug_axswarm_cmd_every == 0:
+        debug_axswarm_cmd_every = 1
     settings_path = Path(args.axswarm_settings) if args.axswarm_settings else None
     min_separation_m = load_axswarm_min_separation(
         settings_path=settings_path,
@@ -103,6 +127,8 @@ def build_online_runtime_config(
         scale=scale,
         pipe=pipeline,
         drone_model=str(d.sim.drone_model),
+        control_freq_hz=float(d.sim.control_freq_hz),
+        mpc_horizon_steps=int(d.sim.mpc_horizon_steps),
         prearm_hover_z=float(d.prearm.prearm_hover_z),
         prearm_takeoff_z=float(d.prearm.prearm_takeoff_z),
         axswarm_settings=args.axswarm_settings,
@@ -128,9 +154,11 @@ def build_online_runtime_config(
             else max(0, int(d.display.sim_render_every))
         ),
         imshow_every=max(1, int(d.display.online_imshow_every)),
+        orbbec_display_depth_fov_only=bool(d.display.orbbec_display_depth_fov_only),
         mp_detect_every=max(1, int(d.camera.mp_detect_every)),
         debug_drone_targets_every=max(0, int(args.debug_drone_targets_every)),
         debug_drone_pos_every=debug_drone_pos_every,
+        debug_axswarm_cmd_every=debug_axswarm_cmd_every,
         spacing_audit_every=int(getattr(args, "spacing_audit_every", 0)),
         webcam_rot_stride=max(1, int(d.display.webcam_rot_stride)),
         show_webcam_preview=show_webcam_preview,

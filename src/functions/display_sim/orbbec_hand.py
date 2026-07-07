@@ -1,6 +1,6 @@
 """Orbbec RGB-D hand pipeline library for ``online_control.py`` / ``online_control_dual.py``.
 
-MediaPipe landmarker helpers, depth fusion, ``draw_hand``, and 3D plot wrapper.
+MediaPipe landmarker helpers, depth fusion (:func:`fuse_hand_landmarks`), and 3D plot wrapper.
 Standalone demo: ``backup/runtime/hand_tracking_orbbec_demo.py``.
 """
 
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-import cv2
 import mediapipe as mp
 import numpy as np
 
@@ -44,7 +43,6 @@ from functions.mode_switch.hand_frame_utils import (
 from functions.display_sim.orbbec_draw_steps import (
     build_mp_mm,
     compute_fused_raw,
-    draw_2d_overlay,
     extract_points_and_depth,
     select_base_mm,
     select_viz_points,
@@ -74,7 +72,17 @@ VisionRunningMode = mp.tasks.vision.RunningMode
 
 
 def resolve_mp_delegate(delegate: str) -> int:
-    """Map CLI string to MediaPipe ``BaseOptions.Delegate`` (CPU or GPU)."""
+    """Map a CLI delegate string to a MediaPipe ``BaseOptions.Delegate`` value.
+
+    Args:
+        delegate: ``"cpu"``, ``"gpu"``, ``"gl"``, or ``"opengl"``.
+
+    Returns:
+        ``BaseOptions.Delegate.CPU`` or ``BaseOptions.Delegate.GPU``.
+
+    Raises:
+        ValueError: If ``delegate`` is not recognized.
+    """
     key = str(delegate).strip().lower()
     if key in ("gpu", "gl", "opengl"):
         return BaseOptions.Delegate.GPU
@@ -93,6 +101,20 @@ def make_hand_landmarker_options(
     min_tracking_confidence: float = 0.55,
     running_mode: VisionRunningMode = VisionRunningMode.VIDEO,
 ) -> HandLandmarkerOptions:
+    """Build MediaPipe ``HandLandmarkerOptions`` for video-mode hand tracking.
+
+    Args:
+        model_asset_path: Path to the ``hand_landmarker.task`` model file.
+        delegate: MediaPipe delegate string (``"cpu"`` or ``"gpu"``).
+        num_hands: Maximum number of hands to detect per frame.
+        min_hand_detection_confidence: Minimum confidence to start a hand detection.
+        min_hand_presence_confidence: Minimum confidence that a hand is present.
+        min_tracking_confidence: Minimum confidence to keep tracking an existing hand.
+        running_mode: MediaPipe vision running mode (default ``VIDEO``).
+
+    Returns:
+        Configured ``HandLandmarkerOptions`` instance.
+    """
     return HandLandmarkerOptions(
         base_options=BaseOptions(
             model_asset_path=str(model_asset_path),
@@ -112,7 +134,16 @@ def create_hand_landmarker(
     delegate: str = "cpu",
     **kwargs,
 ) -> HandLandmarker:
-    """Create HandLandmarker; fall back to CPU if GPU delegate fails to load."""
+    """Create a MediaPipe hand landmarker, falling back to CPU if GPU fails.
+
+    Args:
+        model_asset_path: Path to the ``hand_landmarker.task`` model file.
+        delegate: Preferred delegate (``"cpu"`` or ``"gpu"``).
+        **kwargs: Forwarded to :func:`make_hand_landmarker_options`.
+
+    Returns:
+        Initialized ``HandLandmarker`` instance.
+    """
     del_key = str(delegate).strip().lower()
     try:
         return HandLandmarker.create_from_options(
@@ -138,10 +169,6 @@ DEPTH_REF_ANCHOR_IDS = (WRIST_ID, INDEX_MCP_ID, MIDDLE_MCP_ID)
 # Second pass: reject joints far from that reference (open hand + bad tips still caught).
 DEPTH_MEDIAN_MAX_DELTA_MM = 175.0
 
-# Empirical raw morph_alpha range with shape_norm (fist ~0.22, open ~0.72): map to [0,1] for blanket + HUD.
-OPEN_REMAP_LO = 0.22
-OPEN_REMAP_HI = 0.72
-
 # --- Depth camera metric 3D + fusion with MediaPipe ---
 DEPTH_FUSION_WEIGHT = 0.55  # 1 = depth unproject only; 0 = MediaPipe world only
 POINT_EMA_ALPHA = 0.28  # temporal smoothing on fused 3D (per keypoint, mm space)
@@ -158,22 +185,6 @@ def _metric_hand_to_shape_normalized(points):
 
 def _metric_hand_to_palm_plane_normalized(points):
     return _shared_metric_hand_to_palm_plane_normalized(points, wrist_id=WRIST_ID, mcp_ids=MCP_IDS)
-
-
-def load_depth_unproject_rigid_npy(path: str | None) -> np.ndarray | None:
-    """Load optional 4×4 (float64) rigid transform in mm (homogeneous) for depth-unprojected points."""
-    if not path:
-        return None
-    try:
-        T = np.load(path)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(
-            f"--depth-unproject-rigid-npy: file not found: {path!r}. "
-            "Use a real 4×4 float64 .npy from calibration, or omit this flag (documentation used /path/to/ as placeholder)."
-        ) from e
-    if getattr(T, "shape", None) != (4, 4):
-        raise ValueError(f"--depth-unproject-rigid-npy must be 4×4, got {getattr(T, 'shape', None)}")
-    return np.asarray(T, dtype=np.float64)
 
 
 def _transform_point_rigid_4x4_mm(p_xyz: tuple | None, T: np.ndarray | None) -> tuple | None:
@@ -214,7 +225,7 @@ def _reject_depth_outliers(
     )
 
 
-def draw_hand(
+def fuse_hand_landmarks(
     frame,
     result,
     depth_raw=None,
@@ -233,9 +244,34 @@ def draw_hand(
     hand_3d_source: str = HAND_3D_SOURCE_MP,
     depth_unproject_rigid_T: np.ndarray | None = None,
     skip_wrist_labels: bool = False,
-    draw_skeleton: bool = True,
+    draw_skeleton: bool = False,
 ):
-    """Fuse Orbbec depth + MediaPipe world landmarks into per-hand 21×3 mm keypoints."""
+    """Fuse Orbbec depth and MediaPipe landmarks into per-hand 21×3 mm keypoints.
+
+    Args:
+        frame: BGR image; modified in place only when ``draw_skeleton`` is ``True``.
+        result: MediaPipe ``HandLandmarkerResult`` for the current frame.
+        depth_raw: Native depth image in mm, or ``None``.
+        depth_aligned: Depth registered to the color frame, or ``None``.
+        print_depth: When ``True``, print depth values to stdout (debug overlay only).
+        calibration: PyK4A calibration for unprojection, or ``None``.
+        fusion_weight: Blend weight between depth and MediaPipe world coords.
+        ema_alpha: Temporal EMA smoothing factor for 3D keypoints.
+        ema_points: Per-hand previous EMA state, or ``None``.
+        depth_patch_radius: Median patch radius for depth reads.
+        hand_frame: Coordinate frame for visualization (scaled, palm-plane, or raw mm).
+        filter_depth_outliers: When ``True``, apply wrist/anchor outlier rejection.
+        depth_max_delta_mm: Max deviation from wrist depth during outlier rejection.
+        depth_median_max_delta_mm: Second-pass median threshold, or ``None`` to disable.
+        hand_3d_source: ``"mp"`` or ``"fused"`` source selection for 3D points.
+        depth_unproject_rigid_T: Optional 4×4 rigid correction after unprojection.
+        skip_wrist_labels: When ``True``, omit handedness labels at the wrist (debug overlay).
+        draw_skeleton: When ``True``, draw debug 2D skeleton via :mod:`debug.orbbec_hand_draw`.
+
+    Returns:
+        ``(frame, keypoints_3d, ema_out)`` where ``keypoints_3d`` is a list of per-hand
+        21×3 mm point lists and ``ema_out`` holds updated EMA state per hand.
+    """
     keypoints_3d = []
     all_ema_out = []
 
@@ -326,8 +362,10 @@ def draw_hand(
         all_ema_out.append(hand_ema_out)
 
         if draw_skeleton:
+            from debug.orbbec_hand_draw import draw_hand_2d_overlay
+
             handed_label = result.handedness[idx][0].category_name if result.handedness else None
-            draw_2d_overlay(
+            draw_hand_2d_overlay(
                 frame,
                 idx=idx,
                 hand_landmarks=hand_landmarks,
@@ -342,30 +380,6 @@ def draw_hand(
         keypoints_3d.append(points_3d)
 
     return frame, keypoints_3d, all_ema_out
-
-
-def overlay_wrist_labels(frame, result, labels_by_idx: dict, *, font_scale: float = 0.72):
-    """Draw short strings near wrist (landmark 0), e.g. ``M2`` / ``open 0.73``."""
-    if not result.hand_landmarks or not labels_by_idx:
-        return frame
-    h, w, _ = frame.shape
-    for idx, hand_lms in enumerate(result.hand_landmarks):
-        if idx not in labels_by_idx:
-            continue
-        lm0 = hand_lms[0]
-        px = int(np.clip(int(lm0.x * w), 0, w - 1))
-        py = int(np.clip(int(lm0.y * h), 0, h - 1))
-        cv2.putText(
-            frame,
-            labels_by_idx[idx],
-            (px, max(24, py - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            (0, 255, 0),
-            2,
-            cv2.LINE_AA,
-        )
-    return frame
 
 
 def update_3d_plot(
@@ -387,6 +401,32 @@ def update_3d_plot(
     topo_radius_override_mm: Optional[float] = None,
     control_label: str = "",
 ):
+    """Update the dual 3D hand/topology matplotlib plot for online control.
+
+    Thin wrapper around :func:`functions.open_close.morph_lp_plot.update_3d_plot_lp`
+    with Orbbec runtime defaults.
+
+    Args:
+        ax_hand: Matplotlib 3D axis for the hand skeleton, or ``None``.
+        ax_topo: Matplotlib 3D axis for morph topology.
+        hands_3d: List of per-hand 21×3 mm keypoint arrays.
+        morph_alpha_smoothed: Smoothed open-hand scalar for morph visualization.
+        morph_mode: Active morph mode index (1–5).
+        mode_shape_t: Left-hand shape parameter for LP morph display.
+        epsilon_pair_display: Optional epsilon pair for debug overlay.
+        lp_show_refs: When ``True``, draw LP reference geometry.
+        show_sample_ids: When ``True``, label morph sample indices.
+        mesh_n_eta: LP mesh resolution along eta.
+        mesh_n_omega: LP mesh resolution along omega.
+        shape_normalized: When ``True``, hand points are shape-normalized.
+        hand_frame: Hand coordinate frame name (scaled, palm-plane, or raw).
+        hand_3d_source: 3D source tag (``"mp"`` or ``"fused"``).
+        topo_radius_override_mm: Optional fixed topology axis radius in mm.
+        control_label: Short label for the control source in the plot title.
+
+    Returns:
+        Return value from :func:`update_3d_plot_lp` (typically ``None``).
+    """
     return update_3d_plot_lp(
         ax_hand,
         ax_topo,

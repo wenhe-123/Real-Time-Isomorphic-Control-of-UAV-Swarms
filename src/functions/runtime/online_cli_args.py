@@ -13,6 +13,13 @@ from functions.runtime.pipeline_tuning import ONLINE_PLOT_EVERY_N
 
 
 def build_online_control_parser() -> argparse.ArgumentParser:
+    """Build the argparse parser for the online Crazyflow control CLI.
+
+    Returns:
+        Parser with session morph controls, left-hand overrides, hotkeys, and
+        debug/profiling flags. Production tuning defaults come from
+        ``config/online_defaults.yaml``, not from this module.
+    """
     parser = argparse.ArgumentParser(
         description="Run online Crazyflow control from Orbbec/Webcam morph targets."
     )
@@ -43,7 +50,7 @@ def build_online_control_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--z-amplitude",
         type=float,
-        default=0.35,
+        default=0.55,
         help="Max ±Z thickness around hover_z for morph mapping (m).",
     )
     parser.add_argument("--reference-xy-extent-mm", type=float, default=100.0)
@@ -145,6 +152,18 @@ def build_online_control_parser() -> argparse.ArgumentParser:
         help="Shorthand for --debug-drone-pos-every 1.",
     )
     parser.add_argument(
+        "--debug-axswarm-cmd-every",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Print one-line MPC vs setpoint fallback status every N frames (0=off).",
+    )
+    parser.add_argument(
+        "--debug-axswarm-cmd",
+        action="store_true",
+        help="Shorthand for --debug-axswarm-cmd-every 1.",
+    )
+    parser.add_argument(
         "--formation-rigid-3d-debug",
         action="store_true",
         help="Matplotlib topo: blue morph-only vs magenta after L-hand rigid.",
@@ -170,6 +189,11 @@ def build_online_control_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug-report-pca", action="store_true")
     parser.add_argument("--debug-report-landmarks", action="store_true")
     parser.add_argument("--debug-report-palm", action="store_true")
+    parser.add_argument(
+        "--debug-y-sign",
+        action="store_true",
+        help="Log palm +Y sign each frame; always print immediately on 180° flip (arm pose).",
+    )
     parser.add_argument("--debug-webcam-pipeline", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--profile-frame", action="store_true")
     parser.add_argument("--profile-every", type=int, default=60)
@@ -195,6 +219,15 @@ def build_online_control_parser() -> argparse.ArgumentParser:
 
 
 def report_debug_panels_from_args(args) -> ReportDebugPanels:
+    """Resolve gesture-report Matplotlib panel flags from parsed CLI args.
+
+    Args:
+        args: Namespace returned by :func:`build_online_control_parser`.
+
+    Returns:
+        ``ReportDebugPanels`` instance with per-panel enable flags derived from
+        ``--debug-report-*`` and ``--debug-report-viz``.
+    """
     from debug.gesture_report_debug import ReportDebugPanels
 
     return ReportDebugPanels.from_cli(

@@ -1,4 +1,8 @@
-"""Compatibility shim for sampling backend morph geometry."""
+"""Compatibility shim: re-exports morph geometry from the active sampling backend.
+
+See :func:`functions.open_close.sampling_backend.get_sampling_backend_name` for
+backend selection via ``ISO_SWARM_SAMPLING_BACKEND``.
+"""
 
 from __future__ import annotations
 

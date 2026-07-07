@@ -19,6 +19,14 @@ _VALID_BACKENDS = {"pure_angular", "3region_mapping"}
 
 
 def get_sampling_backend_name() -> str:
+    """Read the active morph sampling backend from the environment.
+
+    Returns:
+        Backend name: ``"pure_angular"`` (default) or ``"3region_mapping"``.
+
+    Raises:
+        ValueError: If ``ISO_SWARM_SAMPLING_BACKEND`` is set to an unknown value.
+    """
     name = str(os.getenv("ISO_SWARM_SAMPLING_BACKEND", "pure_angular")).strip()
     if name not in _VALID_BACKENDS:
         raise ValueError(
@@ -29,6 +37,18 @@ def get_sampling_backend_name() -> str:
 
 
 def load_sampling_backend_module(module_filename: str, *, module_key: str) -> ModuleType:
+    """Dynamically import a morph module from the selected sampling backend.
+
+    Args:
+        module_filename: Basename of the module file (e.g. ``"morph_geometry.py"``).
+        module_key: Unique key registered in ``sys.modules`` before exec.
+
+    Returns:
+        Loaded module object from ``pure_angular`` or ``backup/sampling/3region_mapping``.
+
+    Raises:
+        RuntimeError: If the module spec or loader cannot be resolved.
+    """
     here = Path(__file__).resolve()
     src_root = here.parents[2]
     backend = get_sampling_backend_name()

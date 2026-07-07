@@ -1,0 +1,15 @@
+digraph G {
+"world" -> "cf52"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "gate1"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "gate2"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "gate3"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "gate4"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "obstacle1"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "obstacle2"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "obstacle3"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+"world" -> "obstacle4"[label=" Broadcaster: default_authority\nAverage rate: 240.203\nBuffer length: 4.542\nMost recent transform: 1782295675.843269\nOldest transform: 1782295671.301281\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1782295675.846445"[ shape=plaintext ] ;
+}->"world";
+}

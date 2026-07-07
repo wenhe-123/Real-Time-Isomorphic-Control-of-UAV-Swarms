@@ -90,77 +90,40 @@ pixi run online-dual
 # Terminal 1 — use deploy env only (do not source system ROS /opt/ros/jazzy)
 pixi run -e deploy mocap
 
-# Terminal 2 — dry-run (no drones / mocap):
-pixi run -e deploy real-dual -- --drones-config config/drones.toml --skip-real-connect
-
 # Terminal 2 — live (mocap + drones required):
 pixi run -e deploy real-dual -- --drones-config config/drones.toml
 ```
 
-Validate config only (no camera):
-
-```bash
-pixi run check-drones-config
-```
-
-Edit `config/drones.toml` (`active`, `addr`, `channel`, `pos`) and `config/settings.yaml` (`radio.uri_base`), or use lab presets `config/2drones.toml` with explicit URIs.
-
-- **Sim:** 24 virtual morph points (`online-dual` default)
-- **Real:** 8 virtual morph points; physical count = `[[drone]]` entries in `drones.toml` (e.g. 2 drones follow indices 0 and 1)
-- **Ground layout:** sim uses a chessboard at `z=0.05 m`; real uses each drone’s TOML `home` (XY fixed on vertical legs)
-
-### Prearm sequence (press `1` four times per cycle)
-
-Axswarm plans from startup using `config/axswarm_settings.yaml`. Default MPC replan rate is **8 Hz** (`SolverSettings.freq`).
-
-| Press `1` | Phase | Target |
-|-----------|--------|--------|
-| 1 | **Vertical climb** | Ground XY, rise to `--prearm-takeoff-z` (default ≈ morph z₀, often ~1.4 m) |
-| 2 | **Hover formation** | Spread to `--prearm-hover-z` (default 1.50 m) |
-| 3 | **Vertical descend** | Shrink back to takeoff height (ground XY) |
-| 4 | **Ground** | Return to startup layout |
-
-Then cycle repeats from ground. All prearm moves and exit landing use the same axswarm-planned setpoint stream as gesture control.
-
-**Real swarm:** same key sequence and the same axswarm-planned setpoint stream (no separate blocking `goto`).
+Edit `config/drones.toml` and `config/settings.yaml` for real-swarm hardware. Sim/real defaults: `config/online_defaults.yaml`; MPC limits: `config/axswarm_settings.yaml`.
 
 ### Controls
 
 | Key | Action |
 |-----|--------|
-| `1` | Advance prearm: climb → formation → descend → ground (blocked while gesture armed) |
-| `Space` | **Arm / disarm** gesture control (hand-driven formation; use after hover formation) |
-| `0` | Arm / disarm left-hand whole-formation pose |
-| `q` or `Enter` | Quit (real: lands at TOML `home` when `land_on_exit = true`) |
+| `1` | Takeoff / descent (step through prearm phases) |
+| `Space` | Arm / disarm gesture control |
+| `0` | Arm / disarm left-hand whole-formation pose (L-move) |
+| `q` or `Enter` | Quit (real: auto-land when configured) |
 
-**Typical session:** `1` ×2 (climb → hover formation) → `Space` to arm gestures → `Space` to disarm → `1` ×2 (vertical shrink → ground) → `q`. (`1` is ignored while gesture is armed.)
-
-**Useful flags:** `--prearm-takeoff-z`, `--prearm-hover-z`, `--axswarm-settings`, `--profile-frame`, `--sim-render-every 2`.
-
-Legacy scripts and unit tests are on the **`backup-archive`** git branch.
-
----
+**Typical session:** `1` until hover formation → `Space` (gestures) → `Space` (disarm) → `1` to land → `q`.
 
 ## Code layout
 
 ```text
 src/
-  online_control_dual.py      # simulation entry (24 drones, axswarm @ 8 Hz)
+  online_control_dual.py      # simulation entry (24 drones)
   online_control_real_dual.py # real Crazyflie entry (8 morph points)
   online_control.py           # shared main loop (prearm phases, gestures, filter)
   functions/
-    display_sim/              # Orbbec hand pipeline, Crazyflow step/render
+    display_sim/              # production pipeline (no debug drawing)
+    dual_cam/                 # Orbbec capture, MP hand index helpers
+    mode_switch/              # M1–M5 mode, open/close, morph topology
+    swarm_motion/             # axswarm filter, prearm layouts, left-hand L-move pose
+    runtime/                  # boot, online_defaults.yaml loader, runtime config
     real_swarm/               # executor (swarmGPT DroneSwarm + sim→room setpoints)
-    swarm_motion/             # axswarm filter, prearm layouts, spacing
-config/
-  drones.toml                 # active drones (addr/channel → URI via settings.yaml)
-  settings.yaml               # radio.uri_base template (swarmGPT-compatible)
-  2drones.toml / 5drones.toml # lab presets with explicit [[drone]] URIs
-  axswarm_settings.yaml       # axswarm MPC / collision defaults (freq: 8 Hz)
-scripts/
-  setup_orbbec.sh             # download Orbbec K4A Wrapper
-  setup_mocap.sh              # clone/build motion_capture_tracking (deploy)
-  ensure_sqlite.sh            # deploy: libsqlite for swarm_gpt import (pixi activation)
+  debug/                      # optional overlays & diagnostics (off by default)
+config/                       # online_defaults, drones, axswarm MPC
+scripts/                      # Orbbec SDK, mocap, deploy helpers
 ```
 
 ---

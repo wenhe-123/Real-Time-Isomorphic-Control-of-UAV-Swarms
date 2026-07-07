@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
 from functions.mode_switch.hand_constants import WRIST_ID
 from functions.swarm_motion.left_pose_config import DEFAULT_LEFT_PALM_BASIS
-from functions.swarm_motion.left_palm_geom import _enforce_thumb_positive_x, palm_orthonormal_basis
+from functions.swarm_motion.left_palm_geom import palm_orthonormal_basis
 
 
 @dataclass
@@ -34,6 +35,8 @@ class LeftSwarmPoseState:
     frozen_cam_preset: str = ""
     #: Swarm XYZ at arm (sim m); reserved for arm-time diagnostics / traces.
     ref_swarm_targets: np.ndarray | None = None
+    #: Formation centroid (sim m) frozen at arm — rigid rotation pivot base.
+    ref_swarm_centroid_m: np.ndarray | None = None
     #: 2D/webcam palm basis at arm when dual-rotation fallback is enabled.
     ref_basis_image: np.ndarray | None = None
     #: Wrist (camera mm) at arm — debug / overlay only.
@@ -74,6 +77,10 @@ class LeftSwarmPoseState:
     last_rot_source: str = "depth"
     last_rot_blend_w: float = 0.0
     last_trans_blend_w: float = 0.0
+    #: Previous wrist→middle-MCP unit (camera); for +Y flip debug.
+    prev_middle_y_raw: np.ndarray | None = None
+    #: Last +Y sign decision trace (see ``debug/middle_y_sign_debug.py``).
+    last_middle_y_sign_debug: Any = None
 
     def reset_to_current(
         self,
@@ -88,9 +95,22 @@ class LeftSwarmPoseState:
         palm_center_override: np.ndarray | None = None,
         palm_pose: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> bool:
-        wrist_mm = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
-        if not np.all(np.isfinite(wrist_mm)):
-            return False
+        """Capture the current palm pose as the arm-time reference frame.
+
+        Args:
+            h: Hand landmarks in depth-camera mm, shape ``(21, 3)`` or larger.
+            palm_basis: Named palm basis preset for orthonormal frame construction.
+            sim_from_cam: Optional rotation matrix mapping camera deltas to sim (frozen at arm).
+            sim_trans_from_cam: Optional translation matrix; defaults to ``sim_from_cam``.
+            cam_preset_label: Label stored with frozen camera preset (diagnostics).
+            ref_swarm_targets: Swarm XYZ at arm, shape ``(n, 3+)`` (sim m).
+            ref_basis_image: Webcam/image palm basis at arm for dual-rotation fallback.
+            palm_center_override: Replace computed palm center (camera mm).
+            palm_pose: Precomputed ``(palm_center_mm, basis)``; skips basis re-fit.
+
+        Returns:
+            ``True`` when reference pose and EMA state were reset; ``False`` on invalid input.
+        """
         if palm_pose is not None:
             pc, B = palm_pose
             pc = np.asarray(pc, dtype=np.float64).reshape(3)
@@ -101,14 +121,17 @@ class LeftSwarmPoseState:
             )
             if out is None:
                 return False
-            origin, B = out
-            pc = np.asarray(origin, dtype=np.float64).reshape(3)
-        B = _enforce_thumb_positive_x(B, h, wrist_mm)
+            pc, B = out
+            pc = np.asarray(pc, dtype=np.float64).reshape(3)
         if palm_center_override is not None:
             pc_ov = np.asarray(palm_center_override, dtype=np.float64).reshape(3)
             if np.all(np.isfinite(pc_ov)):
                 pc = pc_ov
-        self.ref_wrist_mm = wrist_mm.copy()
+        if not np.all(np.isfinite(pc)):
+            return False
+        wrist_mm = np.asarray(h[WRIST_ID, :3], dtype=np.float64).reshape(3)
+        if np.all(np.isfinite(wrist_mm)):
+            self.ref_wrist_mm = wrist_mm.copy()
         self.ref_palm_center = np.asarray(pc, dtype=np.float64).reshape(3).copy()
         self.ref_basis = B.copy()
         self.initialized = True
@@ -140,8 +163,10 @@ class LeftSwarmPoseState:
             rs = np.asarray(ref_swarm_targets, dtype=np.float64)
             if rs.ndim == 2 and rs.shape[1] >= 3:
                 self.ref_swarm_targets = rs.astype(np.float32, copy=True)
+                self.ref_swarm_centroid_m = np.mean(rs[:, :3], axis=0).astype(np.float64)
         else:
             self.ref_swarm_targets = None
+            self.ref_swarm_centroid_m = None
         if ref_basis_image is not None:
             self.ref_basis_image = np.asarray(ref_basis_image, dtype=np.float64).reshape(3, 3).copy()
         else:
@@ -151,10 +176,19 @@ class LeftSwarmPoseState:
         return True
 
     def is_unwinding(self) -> bool:
+        """Return whether a smooth return-to-morph unwind is in progress.
+
+        Returns:
+            ``True`` while ``unwind_end_t`` is set and monotonic time is before it.
+        """
         return float(self.unwind_end_t) > 0.0 and time.monotonic() < float(self.unwind_end_t)
 
     def begin_unwind(self, duration_s: float) -> None:
-        """Fade rigid offset/rotation to identity over ``duration_s`` (smoothstep)."""
+        """Start a smoothstep fade of rigid offset and rotation back to identity.
+
+        Args:
+            duration_s: Unwind duration in seconds (clamped to at least 1 ms).
+        """
         d = float(max(duration_s, 1e-3))
         self.unwind_off0 = np.asarray(self.ema_offset, dtype=np.float64).copy()
         self.unwind_rv0 = np.asarray(self.ema_rotvec, dtype=np.float64).copy()
@@ -162,7 +196,10 @@ class LeftSwarmPoseState:
         self.unwind_end_t = time.monotonic() + d
 
     def cancel_unwind(self) -> None:
-        """Abort smooth restore (e.g. user re-arms); clears offset like disarm."""
+        """Abort smooth restore and clear pose state (e.g. user re-arms).
+
+        Resets EMA offset/rotation, tracking history, and frozen arm-time maps.
+        """
         self.unwind_end_t = 0.0
         self.unwind_duration = 0.0
         self.unwind_off0[:] = 0.0
@@ -184,4 +221,5 @@ class LeftSwarmPoseState:
         self.frozen_M_trans = None
         self.frozen_cam_preset = ""
         self.ref_swarm_targets = None
+        self.ref_swarm_centroid_m = None
         self.ref_basis_image = None

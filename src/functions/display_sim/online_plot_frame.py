@@ -8,9 +8,11 @@ from debug.gesture_report_debug import (
     ReportDebugPanels,
     update_report_debug_figures,
 )
-from functions.display_sim.online_plot import (
+from debug.formation_rigid_plot_debug import (
     _clear_formation_rigid_debug,
     draw_formation_rigid_debug_on_topo,
+)
+from functions.display_sim.online_plot import (
     refresh_3d_plot_nonblocking,
     update_online_3d_plot,
 )
@@ -25,6 +27,16 @@ def _pick_hand_for_plot(
     hands_3d_all: list,
     idx_l: int | None,
 ) -> list | None:
+    """Select the hand list to plot, preferring filtered left-hand data.
+
+    Args:
+        hands_3d: Pre-filtered hand list for plotting, or ``None``.
+        hands_3d_all: All detected hands as 21×3 mm arrays.
+        idx_l: Index of the left hand in ``hands_3d_all``, or ``None``.
+
+    Returns:
+        Single-element hand list for plotting, or ``None`` when no hands are available.
+    """
     if hands_3d:
         return hands_3d
     if idx_l is not None and 0 <= idx_l < len(hands_3d_all):
@@ -44,7 +56,20 @@ def update_online_plot_frame(
     left_swarm_R: np.ndarray | None,
     left_swarm_off: np.ndarray | None,
 ) -> bool:
-    """Update 3D plot if due; return updated plot_enabled (False if disabled after error)."""
+    """Update the 3D matplotlib plot when due for the current online control frame.
+
+    Args:
+        boot: Online runtime boot state (axes, figure, frame index, pose state).
+        cfg: Online runtime configuration (plot interval, debug flags).
+        gest: Gesture frame result with hand 3D points and left-hand index.
+        raw_target: Morph targets after left-hand rigid transform, shape ``(N, 3)``.
+        morph_targets_before_left_m: Morph-only targets before L-move, shape ``(N, 3)``.
+        left_swarm_R: Left-hand swarm rotation matrix, shape ``(3, 3)``, or ``None``.
+        left_swarm_off: Left-hand swarm translation in meters, shape ``(3,)``, or ``None``.
+
+    Returns:
+        Updated ``plot_enabled`` flag; ``False`` when plotting is disabled after an error.
+    """
     if not boot.plot_enabled or cfg.plot_every_n <= 0:
         return boot.plot_enabled
     if (boot.frame_idx % cfg.plot_every_n) != 0:

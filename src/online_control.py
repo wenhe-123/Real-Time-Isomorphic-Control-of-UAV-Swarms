@@ -20,6 +20,7 @@ from functions.display_sim.online_frame_present import present_online_frame
 from debug.gesture_report_debug import close_report_debug_figures
 from functions.display_sim.online_plot import close_3d_plot, init_3d_plot
 from functions.display_sim.online_plot_frame import update_online_plot_frame
+from functions.display_sim.orbbec_depth_fov_display import crop_orbbec_display_frame
 from functions.display_sim.orbbec_hand import create_hand_landmarker
 from functions.dual_cam.dual_view_utils import open_webcam_capture
 from functions.dual_cam.online_frame_capture import CaptureFrameInput, grab_orbbec_mp_frame
@@ -58,7 +59,11 @@ from functions.runtime.pipeline_tuning import PipelineTuning, online_pipeline_de
 from functions.display_sim.online_present_input import PresentFrameInput
 from functions.swarm_motion.online_frame_filter import filter_online_targets
 from functions.swarm_motion.online_left_swarm_frame import apply_left_swarm_frame
-from functions.swarm_motion.prearm import sim_chessboard_ground_layout, vertical_takeoff_layout
+from functions.swarm_motion.prearm import (
+    PREARM_FORMATION_RAMP_S,
+    prearm_formation_setpoint,
+    vertical_takeoff_layout,
+)
 from functions.swarm_motion.spacing_guard import closest_pair
 
 try:
@@ -255,9 +260,16 @@ def run_integrated_online_control(
                     )
                     raw_target = np.asarray(boot.live_target.get(), dtype=np.float32)
                 elif boot.prearm_phase == "formation":
-                    raw_target = np.asarray(boot.prearm_hover_layout, dtype=np.float32).copy()
+                    raw_target = prearm_formation_setpoint(
+                        boot.prearm_vertical_layout,
+                        boot.prearm_hover_layout,
+                        elapsed_s=elapsed,
+                        formation_start_s=float(boot.prearm_formation_start_s),
+                    )
                 elif boot.prearm_phase == "vertical":
-                    raw_target = np.asarray(boot.prearm_vertical_layout, dtype=np.float32).copy()
+                    raw_target = np.asarray(
+                        boot.prearm_vertical_layout, dtype=np.float32
+                    ).copy()
                 else:
                     raw_target = np.asarray(boot.ground_layout, dtype=np.float32).copy()
                 frame_prof.section("live_target")
@@ -275,10 +287,6 @@ def run_integrated_online_control(
                 if not boot.gesture_control_enabled:
                     if boot.prearm_phase == "vertical":
                         raw_target[:, 2] = float(boot.prearm_takeoff_z)
-                    elif boot.prearm_phase == "formation":
-                        raw_target[:, 2] = np.asarray(
-                            boot.prearm_hover_layout, dtype=np.float32
-                        )[:, 2]
                     elif boot.prearm_phase == "ground":
                         raw_target[:, 2] = float(boot.ground_z)
                 left_swarm_off = ls.left_swarm_off
@@ -300,21 +308,43 @@ def run_integrated_online_control(
                 frame_prof.section("plot3d")
 
                 axswarm_track_pos: np.ndarray | None = None
-                if boot.real_executor is not None:
-                    axswarm_track_pos = boot.real_executor.get_sim_track_positions(
-                        boot.prev_cmd_target,
+                axswarm_track_vel: np.ndarray | None = None
+                swarm_exec = boot.real_executor if boot.real_executor is not None else boot.sim_executor
+                if swarm_exec is not None:
+                    axswarm_track_pos = swarm_exec.get_sim_track_positions(
+                        raw_target,
                         boot.n_drones,
                     )
+                    if boot.real_executor is not None and axswarm_track_pos is None:
+                        # Mocap gap: keep MPC alive with last cmd (setpoints paused separately).
+                        axswarm_track_pos = np.asarray(boot.cmd_target, dtype=np.float32)
+                    if boot.sim_executor is not None and boot.sim is not None:
+                        axswarm_track_vel = np.asarray(
+                            boot.sim.data.states.vel[0], dtype=np.float32
+                        )
                 elif boot.sim is not None:
                     axswarm_track_pos = np.asarray(
                         boot.sim.data.states.pos[0], dtype=np.float32
+                    )
+                    axswarm_track_vel = np.asarray(
+                        boot.sim.data.states.vel[0], dtype=np.float32
                     )
 
                 if just_prearm_phase:
                     phase = str(boot.prearm_phase)
                     if phase == "formation":
-                        _layout_pos = np.asarray(
-                            boot.prearm_hover_layout, dtype=np.float32
+                        boot.prearm_formation_start_s = float(elapsed)
+                        print(
+                            f"Formation ramp: vertical → hover morph over "
+                            f"{PREARM_FORMATION_RAMP_S:.1f}s (axswarm-planned 3D)."
+                        )
+                    else:
+                        boot.prearm_formation_start_s = -1.0
+                    if phase == "formation":
+                        _layout_pos = (
+                            axswarm_track_pos
+                            if axswarm_track_pos is not None
+                            else np.asarray(boot.prearm_vertical_layout, dtype=np.float32)
                         )
                     elif phase == "vertical":
                         _layout_pos = np.asarray(
@@ -326,23 +356,16 @@ def run_integrated_online_control(
                         _layout_pos = (
                             axswarm_track_pos
                             if axswarm_track_pos is not None
-                            else boot.prev_cmd_target
+                            else np.asarray(boot.ground_layout, dtype=np.float32)
                         )
-                    _direct_3d_prearm = (
-                        phase == "formation"
-                        or (
-                            phase == "vertical"
-                            and str(boot.prearm_vertical_leg) == "descend"
-                        )
-                    )
                     _sync_pos = (
                         axswarm_track_pos
-                        if _direct_3d_prearm and axswarm_track_pos is not None
-                        else (
-                            boot.prev_cmd_target
-                            if _direct_3d_prearm
-                            else _layout_pos
+                        if (
+                            phase == "vertical"
+                            and str(boot.prearm_vertical_leg) == "descend"
+                            and axswarm_track_pos is not None
                         )
+                        else _layout_pos
                     )
                     boot.axswarm_rt.sync_gesture(
                         np.asarray(_sync_pos, dtype=np.float32),
@@ -357,10 +380,10 @@ def run_integrated_online_control(
                     morph_targets_before_left_m=morph_targets_before_left_m,
                     elapsed=elapsed,
                     track_pos=axswarm_track_pos,
+                    track_vel=axswarm_track_vel,
                 )
                 frame_prof.section("target_filter")
                 boot.cmd_target = filt.cmd_target
-                boot.prev_cmd_target = boot.cmd_target.copy()
                 boot.prev_prearm_climb_enabled = bool(boot.prearm_climb_enabled)
                 boot.prev_prearm_phase = str(boot.prearm_phase)
                 prev_gesture_armed = bool(boot.gesture_control_enabled)
@@ -402,11 +425,18 @@ def run_integrated_online_control(
                 else:
                     boot.render_enabled = present_online_frame(present_inp)
 
+                _orbbec_disp = cv2.flip(
+                    crop_orbbec_display_frame(
+                        cap.frame,
+                        boot.orbbec_depth_fov_crop if cfg.orbbec_display_depth_fov_only else None,
+                    ),
+                    1,
+                )
                 ui_key = poll_cv_key(
                     cv_poll_key=cv_poll_key,
                     imshow=(boot.frame_idx % cfg.imshow_every) == 0,
                     window=ocv_window_title,
-                    frame=cap.frame,
+                    frame=_orbbec_disp,
                 )
                 if _poll_keys(ui_key):
                     break
@@ -415,9 +445,13 @@ def run_integrated_online_control(
                 boot.frame_idx += 1
 
             if boot.real_executor is not None:
-                from functions.real_swarm.land_on_exit import try_stream_real_swarm_land_on_exit
+                from functions.real_swarm.land_on_exit import halt_real_swarm_control
 
-                try_stream_real_swarm_land_on_exit(boot, cfg)
+                halt_real_swarm_control(boot)
+                try:
+                    boot.real_executor.close()
+                except Exception as exc:
+                    print(f"[WARN] Real swarm close failed: {exc}", flush=True)
 
             if webcam.landmarker is not None:
                 try:
@@ -433,12 +467,20 @@ def run_integrated_online_control(
             except Exception:
                 pass
     except KeyboardInterrupt:
-        print("[INFO] Interrupted by user, stopping online control...")
+        print("[INFO] Interrupted by user, stopping online control...", flush=True)
         if boot.real_executor is not None:
-            from functions.real_swarm.land_on_exit import try_stream_real_swarm_land_on_exit
+            from functions.real_swarm.land_on_exit import halt_real_swarm_control
 
-            try_stream_real_swarm_land_on_exit(boot, cfg)
+            halt_real_swarm_control(boot)
+            try:
+                boot.real_executor.close()
+            except Exception as exc:
+                print(f"[WARN] Real swarm close failed: {exc}", flush=True)
     finally:
+        if boot.real_executor is not None and not boot.real_executor.control_halted:
+            from functions.real_swarm.land_on_exit import halt_real_swarm_control
+
+            halt_real_swarm_control(boot)
         if rigid_pose_recorder is not None:
             try:
                 rigid_pose_recorder.on_exit(
@@ -457,7 +499,7 @@ def run_integrated_online_control(
             try:
                 boot.real_executor.close()
             except Exception as exc:
-                print(f"[WARN] Real swarm close failed: {exc}")
+                print(f"[WARN] Real swarm close failed: {exc}", flush=True)
         elif boot.sim is not None:
             with warnings.catch_warnings():
                 try:

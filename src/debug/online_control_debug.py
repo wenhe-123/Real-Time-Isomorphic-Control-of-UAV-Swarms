@@ -64,6 +64,27 @@ def draw_drone_target_debug_hud(
     )
 
 
+def print_axswarm_cmd_source_debug(
+    *,
+    frame_idx: int,
+    cmd_source: str,
+    plan_drift_m: float,
+    mpc_due: bool,
+    solve_ok: bool,
+    solve_n_ok: int,
+    n_drones: int,
+    axswarm_status: str | None = None,
+) -> None:
+    """One line: MPC command source (always u_pos[:, 0] when available)."""
+    st = f" {axswarm_status}" if axswarm_status else ""
+    print(
+        f"[axswarm cmd] frame={frame_idx} source={cmd_source} "
+        f"plan_drift={float(plan_drift_m):.3f}m mpc_due={int(bool(mpc_due))} "
+        f"solve={int(solve_n_ok)}/{int(n_drones)} ok={int(bool(solve_ok))}{st}",
+        flush=True,
+    )
+
+
 def print_drone_position_debug(
     *,
     frame_idx: int,

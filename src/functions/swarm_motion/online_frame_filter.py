@@ -18,6 +18,9 @@ class TargetFilterResult:
     cmd_target: np.ndarray
     cmd_velocity: np.ndarray
     control_updated: bool
+    cmd_source: str = "unknown"
+    plan_drift_m: float = 0.0
+    mpc_due: bool = False
 
 
 def filter_online_targets(
@@ -29,8 +32,23 @@ def filter_online_targets(
     morph_targets_before_left_m: np.ndarray,
     elapsed: float,
     track_pos: np.ndarray | None,
+    track_vel: np.ndarray | None = None,
 ) -> tuple[TargetFilterResult, bool]:
-    """Return axswarm-planned targets and updated gesture flags."""
+    """Run axswarm MPC filtering on raw morph targets for one online frame.
+
+    Args:
+        boot: Online boot state (axswarm planner, gesture control flags).
+        cfg: Runtime config (spacing audit interval, min separation).
+        gest: Gesture frame result (open-hand alpha, visibility).
+        raw_target: Unfiltered morph targets (sim m).
+        morph_targets_before_left_m: Pre-left-pose targets (unused; reserved).
+        elapsed: Monotonic elapsed time since session start (s).
+        track_pos: Optional drone positions for MPC state tracking.
+        track_vel: Optional drone velocities for MPC state tracking.
+
+    Returns:
+        ``(result, prev_gesture_control_enabled)`` — filter output and updated gesture-arm flag.
+    """
     del morph_targets_before_left_m
     prev_gesture_control_enabled = boot.prev_gesture_control_enabled
 
@@ -64,11 +82,6 @@ def filter_online_targets(
         print("Gesture armed. Axswarm active.")
     prev_gesture_control_enabled = bool(boot.gesture_control_enabled)
 
-    _track = (
-        np.asarray(track_pos, dtype=np.float32)
-        if track_pos is not None
-        else np.asarray(boot.prev_cmd_target, dtype=np.float32)
-    )
     _hold_z: float | None = None
     _prearm_phase = str(boot.prearm_phase)
     _vertical_leg = str(boot.prearm_vertical_leg)
@@ -77,22 +90,26 @@ def filter_online_targets(
             _hold_z = float(boot.ground_z)
         elif _prearm_phase == "vertical" and _vertical_leg == "climb":
             _hold_z = float(boot.prearm_takeoff_z)
-    cmd_target = np.asarray(
-        boot.axswarm_rt.plan_targets(
-            elapsed,
-            axswarm_input,
-            track_pos=_track,
-            hold_z=_hold_z,
-        ),
-        dtype=np.float32,
+    _mpc_track = track_pos
+    if _mpc_track is None and boot.sim is None:
+        _mpc_track = np.asarray(boot.cmd_target, dtype=np.float32)
+    cmd = boot.axswarm_rt.plan_control(
+        elapsed,
+        axswarm_input,
+        sim=boot.sim,
+        track_pos=_mpc_track,
+        track_vel=track_vel,
+        hold_z=_hold_z,
     )
-    cmd_velocity = np.asarray(boot.axswarm_rt.current_control_velocity(), dtype=np.float32)
     return (
         TargetFilterResult(
             axswarm_input=np.asarray(axswarm_input, dtype=np.float32),
-            cmd_target=cmd_target,
-            cmd_velocity=cmd_velocity,
-            control_updated=boot.axswarm_rt.control_updated(),
+            cmd_target=np.asarray(cmd.pos, dtype=np.float32),
+            cmd_velocity=np.asarray(cmd.vel, dtype=np.float32),
+            control_updated=cmd.updated,
+            cmd_source=str(cmd.cmd_source),
+            plan_drift_m=float(cmd.plan_drift_m),
+            mpc_due=bool(cmd.mpc_due),
         ),
         prev_gesture_control_enabled,
     )

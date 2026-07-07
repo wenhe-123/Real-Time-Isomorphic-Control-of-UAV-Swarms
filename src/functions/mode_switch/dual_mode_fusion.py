@@ -25,7 +25,21 @@ def should_poll_webcam_for_dual(
     dual_rot_always: bool = False,
     orbbec_thumb_vis: float | None = None,
 ) -> bool:
-    """True when USB webcam should be read: preview, palm rotation, or low Orbbec visibility."""
+    """Return True when the USB webcam should be read for dual assist.
+
+    Args:
+        orbbec_vis_min: Minimum Orbbec joint visibility this frame.
+        rot_vis_thresh: Visibility threshold to prefer webcam for rotation.
+        mode_vis_min: Visibility threshold for mode-classify webcam assist.
+        rotating: Whether left-hand rotation is currently active.
+        show_preview: Force polling when dual-view preview is shown.
+        dual_mode_assist: Unused (kept for API compatibility).
+        dual_rot_always: Always poll regardless of visibility.
+        orbbec_thumb_vis: Thumb-tip visibility (occlusion triggers poll).
+
+    Returns:
+        True when ``poll_webcam_dual_cache`` should read the USB camera.
+    """
     _ = dual_mode_assist
     if bool(dual_rot_always):
         return True
@@ -56,11 +70,26 @@ def fuse_dual_mode_raw(
     orbbec_thumb_ok: bool | None = None,
     webcam_thumb_ok: bool | None = None,
 ) -> int:
-    """Choose mode_raw before debounce.
+    """Choose fused mode_raw before debounce from Orbbec and webcam classifiers.
 
-    Webcam is primary when Orbbec visibility is low, when rotating with M5 guard,
-    when USB sees M5 / thumb-up while Orbbec is stuck at M4, or when confidence
-    clearly favors the USB view (partial occlusion).
+    Webcam wins when Orbbec visibility is low, during rotation with M5 guard,
+    when USB sees M5 while Orbbec is stuck at M4, or when confidence favors USB.
+
+    Args:
+        mode_orbbec: Mode from Orbbec depth/3D classify.
+        mode_webcam: Mode from USB image-plane classify, or ``None``.
+        morph_mode: Current debounced morph mode (M5 guard context).
+        orbbec_vis_min: Minimum Orbbec joint visibility.
+        mode_vis_min: Visibility threshold for low-vis webcam override.
+        rotating: Whether left-hand rotation is active.
+        conf_orbbec: Classify confidence for Orbbec result.
+        conf_webcam: Classify confidence for webcam result.
+        orbbec_thumb_vis: Thumb-tip visibility on Orbbec.
+        orbbec_thumb_ok: Whether Orbbec debug marked thumb as extended.
+        webcam_thumb_ok: Whether webcam debug marked thumb as extended.
+
+    Returns:
+        Fused mode 1–5 before debounce.
     """
     if mode_webcam is None:
         return int(mode_orbbec)
@@ -134,7 +163,22 @@ def classify_mode_dual(
     classify_webcam_fn: Callable | None = None,
     orbbec_thumb_vis: float | None = None,
 ) -> Tuple[int, int]:
-    """Classify mode from Orbbec 3D + optional USB 2D image plane, with dual fusion."""
+    """Classify morph mode from Orbbec 3D and optional USB 2D with dual fusion.
+
+    Args:
+        pts_orbbec: Orbbec 3D hand landmarks, or ``None``.
+        pts_webcam: USB image-plane landmarks, or ``None``.
+        morph_mode: Current debounced morph mode.
+        orbbec_vis_min: Minimum Orbbec joint visibility.
+        mode_vis_min: Visibility threshold for webcam override.
+        rotating: Whether left-hand rotation is active.
+        classify_mode_fn: Orbbec classify callable ``(pts) -> (mode, tier, dbg)``.
+        classify_webcam_fn: Webcam classify callable (defaults to ``classify_mode_fn``).
+        orbbec_thumb_vis: Thumb-tip visibility on Orbbec.
+
+    Returns:
+        Tuple ``(fused_mode_raw, tier_count)``.
+    """
     w_fn = classify_webcam_fn or classify_mode_fn
     tier_count = -1
     mode_o = int(morph_mode)

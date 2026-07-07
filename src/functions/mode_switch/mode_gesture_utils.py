@@ -15,6 +15,17 @@ THUMB_PROMOTE_MAX_BELOW_MX4 = 0.36
 
 
 def palm_center_and_scale(hand_points: Sequence[Tuple[float, float, float]], wrist_id: int, mcp_ids: Sequence[int]):
+    """Compute palm centroid and a wrist-to-MCP scale factor.
+
+    Args:
+        hand_points: Sequence of 21 hand landmarks.
+        wrist_id: Index of the wrist joint.
+        mcp_ids: Indices of finger MCP joints.
+
+    Returns:
+        Tuple ``(palm_center, scale)`` as 3-vectors; ``(None, 1.0)`` when no valid
+        palm points remain.
+    """
     palm_ids = [wrist_id] + list(mcp_ids)
     palm_pts = np.array(
         [hand_points[i] for i in palm_ids if i < len(hand_points) and not np.isnan(hand_points[i][2])],
@@ -40,9 +51,25 @@ def classify_mode_from_fingers(
     thumb_promote_rel_mx4: float = THUMB_PROMOTE_REL_MX4,
     thumb_promote_max_below_mx4: float = THUMB_PROMOTE_MAX_BELOW_MX4,
 ):
-    """
-    Extension tiers → mode. Index/middle/ring/pinky define tiers 1–4; thumb upgrades to 5 only
-    when four fingers already read as tier 4 and thumb meets strict thresholds (reduces M4/M5 confusion).
+    """Classify morph mode M1–M5 from finger extension tiers.
+
+    Index/middle/ring/pinky define tiers 1–4; thumb upgrades to 5 only when
+    four fingers already read as tier 4 and thumb meets strict thresholds.
+
+    Args:
+        hand_points: Normalized or metric hand landmarks (21 joints).
+        mode_count_tip_ids: Fingertip indices used for extension measurement.
+        mode_extend_min: Minimum normalized tip distance for any extension.
+        mode_tier_gap: Gap below max tip distance that defines a tier boundary.
+        wrist_id: Index of the wrist joint.
+        mcp_ids: MCP indices for palm scale.
+        thumb_promote_abs_min: Absolute thumb threshold for tier-5 promotion.
+        thumb_promote_rel_mx4: Relative thumb threshold vs max of four fingers.
+        thumb_promote_max_below_mx4: Max allowed thumb deficit below four-finger max.
+
+    Returns:
+        Tuple ``(mode, tier_count, debug)`` where ``mode`` is 1–5, ``tier_count``
+        mirrors the tier, and ``debug`` holds distances and decision metadata.
     """
     pc, scale = palm_center_and_scale(hand_points, wrist_id, mcp_ids)
     if pc is None:
@@ -119,10 +146,19 @@ def mode_classify_confidence(
     thumb_tip_vis: float | None = None,
     hand_vis_min: float | None = None,
 ) -> float:
-    """Score in [0, 1] for how trustworthy a mode_classify result is (higher = more confident).
+    """Score how trustworthy a mode-classify result is.
 
-    Optional ``thumb_tip_vis`` / ``hand_vis_min`` (Orbbec MP) down-weight tier calls when
-    fingertips are occluded even if overall hand visibility still looks acceptable.
+    Optional Orbbec visibility inputs down-weight tier calls when fingertips
+    are occluded even if overall hand visibility looks acceptable.
+
+    Args:
+        mode: Classified mode 1–5.
+        debug: Debug dict from ``classify_mode_from_fingers``.
+        thumb_tip_vis: Optional thumb-tip visibility on Orbbec.
+        hand_vis_min: Optional minimum joint visibility on Orbbec.
+
+    Returns:
+        Confidence in ``[0, 1]`` (higher = more trustworthy).
     """
     reason = str(debug.get("reason", ""))
     if reason == "no_palm":

@@ -13,18 +13,23 @@ _SECTION_KEYS = ("Display", "Camera", "Morph", "Sim", "Prearm", "LeftHandPose")
 
 @dataclass(frozen=True, slots=True)
 class DisplayDefaults:
+    """Orbbec HUD cadence, trail buffers, and preview window names."""
+
     left_pose_frame_viz_every: int
     webcam_rot_stride: int
     trail_draw_every_frames: int
     led_apply_every_frames: int
     sim_render_every: int
     online_imshow_every: int
+    orbbec_display_depth_fov_only: bool
     trail_buffer_maxlen: int
     wcam_preview_window: str
 
 
 @dataclass(frozen=True, slots=True)
 class CameraDefaults:
+    """Orbbec capture rate, MediaPipe input scaling, and depth/hand options."""
+
     orbbec_fps: str
     mp_input_scale: float
     mp_detect_every: int
@@ -35,6 +40,8 @@ class CameraDefaults:
 
 @dataclass(frozen=True, slots=True)
 class MorphDefaults:
+    """Morph target smoothing, world scale, and visibility latch thresholds."""
+
     target_alpha: float
     morph_world_scale: float
     mode_rot_freeze_latch: int
@@ -44,24 +51,33 @@ class MorphDefaults:
 
 @dataclass(frozen=True, slots=True)
 class SimDefaults:
+    """MuJoCo sim model, control rate, MPC horizon, and ground plane height."""
+
     drone_model: str
+    control_freq_hz: float
+    mpc_horizon_steps: int
     max_sim_substeps_per_frame: int
     ground_z: float
 
 
 @dataclass(frozen=True, slots=True)
 class PrearmDefaults:
+    """Hover and takeoff heights for the prearm climb sequence."""
+
     prearm_hover_z: float
     prearm_takeoff_z: float
 
 
 @dataclass(frozen=True, slots=True)
 class LeftHandPoseDefaults:
+    """Left-hand whole-formation pose control tuning from ``LeftHandPose`` yaml."""
+
     left_swarm_pose: bool
     left_rot_direct_follow: bool
     left_swarm_depth_frame_motion: bool
     left_pose_debug: bool
     left_pose_debug_every: int
+    left_y_sign_debug: bool
     left_pose_frame_viz: bool
     left_unwind_s: float
     left_cam_preset: str
@@ -94,6 +110,8 @@ class LeftHandPoseDefaults:
 
 @dataclass(frozen=True, slots=True)
 class OnlineDefaults:
+    """Production online-control defaults loaded from ``online_defaults.yaml``."""
+
     display: DisplayDefaults
     camera: CameraDefaults
     morph: MorphDefaults
@@ -103,6 +121,20 @@ class OnlineDefaults:
 
     @classmethod
     def load(cls, path: Path | None = None) -> OnlineDefaults:
+        """Load defaults from yaml on disk.
+
+        Args:
+            path: Yaml file path; bundled ``config/online_defaults.yaml`` when
+                ``None``.
+
+        Returns:
+            Parsed defaults for all online-control sections.
+
+        Raises:
+            ValueError: If the yaml root is not a mapping.
+            KeyError: If required sections are missing or unknown.
+            TypeError: If a section is not a mapping.
+        """
         settings_path = default_online_defaults_path() if path is None else Path(path)
         with open(settings_path) as f:
             raw = yaml.safe_load(f)
@@ -112,6 +144,19 @@ class OnlineDefaults:
 
     @classmethod
     def from_yaml(cls, raw: dict[str, Any]) -> OnlineDefaults:
+        """Build defaults from an already-parsed yaml mapping.
+
+        Args:
+            raw: Root mapping with ``Display``, ``Camera``, ``Morph``, ``Sim``,
+                ``Prearm``, and ``LeftHandPose`` sections.
+
+        Returns:
+            Validated ``OnlineDefaults`` instance.
+
+        Raises:
+            KeyError: If required sections are missing or unknown.
+            TypeError: If a section is not a mapping.
+        """
         unknown = sorted(set(raw) - set(_SECTION_KEYS))
         if unknown:
             raise KeyError(f"unknown online_defaults.yaml sections: {', '.join(unknown)}")
@@ -135,6 +180,7 @@ class OnlineDefaults:
                 led_apply_every_frames=int(d["led_apply_every_frames"]),
                 sim_render_every=int(d["sim_render_every"]),
                 online_imshow_every=int(d["online_imshow_every"]),
+                orbbec_display_depth_fov_only=bool(d.get("orbbec_display_depth_fov_only", True)),
                 trail_buffer_maxlen=int(d["trail_buffer_maxlen"]),
                 wcam_preview_window=str(d["wcam_preview_window"]),
             ),
@@ -155,6 +201,8 @@ class OnlineDefaults:
             ),
             sim=SimDefaults(
                 drone_model=str(s["drone_model"]),
+                control_freq_hz=float(s.get("control_freq_hz", 10.0)),
+                mpc_horizon_steps=max(1, int(s.get("mpc_horizon_steps", 1))),
                 max_sim_substeps_per_frame=int(s["max_sim_substeps_per_frame"]),
                 ground_z=float(s["ground_z"]),
             ),
@@ -168,6 +216,7 @@ class OnlineDefaults:
                 left_swarm_depth_frame_motion=bool(l["left_swarm_depth_frame_motion"]),
                 left_pose_debug=bool(l["left_pose_debug"]),
                 left_pose_debug_every=int(l["left_pose_debug_every"]),
+                left_y_sign_debug=bool(l.get("left_y_sign_debug", False)),
                 left_pose_frame_viz=bool(l["left_pose_frame_viz"]),
                 left_unwind_s=float(l["left_unwind_s"]),
                 left_cam_preset=str(l["left_cam_preset"]),
@@ -201,7 +250,11 @@ class OnlineDefaults:
 
 
 def default_online_defaults_path() -> Path:
-    """Bundled ``config/online_defaults.yaml``."""
+    """Return path to bundled ``config/online_defaults.yaml``.
+
+    Returns:
+        Absolute path to the repo config file.
+    """
     return Path(__file__).resolve().parents[3] / "config" / "online_defaults.yaml"
 
 
