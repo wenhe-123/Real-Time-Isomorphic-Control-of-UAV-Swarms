@@ -6,6 +6,17 @@ import numpy as np
 
 
 def metric_hand_to_shape_normalized(points, *, wrist_id: int, mcp_ids, fingertip_ids):
+    """Normalize hand landmarks relative to wrist and mean MCP scale.
+
+    Args:
+        points: Hand landmark array, at least 21×3.
+        wrist_id: Index of the wrist joint.
+        mcp_ids: Indices of finger MCP joints used for scale estimation.
+        fingertip_ids: Fallback fingertip indices when MCP scale is unavailable.
+
+    Returns:
+        List of 21 normalized ``(x, y, z)`` tuples (wrist-centric, unit scale).
+    """
     arr = np.asarray(points, dtype=float)
     if arr.shape[0] < 21:
         return [tuple(float(x) for x in row) for row in arr]
@@ -33,6 +44,18 @@ def metric_hand_to_shape_normalized(points, *, wrist_id: int, mcp_ids, fingertip
 
 
 def palm_plane_basis_from_world(points, *, wrist_id: int, index_mcp_id: int = 5, middle_mcp_id: int = 9):
+    """Build a right-handed palm-plane frame from wrist and two MCPs.
+
+    Args:
+        points: Hand landmark array in world or depth-camera mm.
+        wrist_id: Index of the wrist joint.
+        index_mcp_id: Index MCP joint (default 5).
+        middle_mcp_id: Middle MCP joint (default 9).
+
+    Returns:
+        Tuple ``(origin, R)`` where ``origin`` is wrist position and ``R`` is a
+        3×3 rotation matrix (columns = basis axes), or ``None`` on degeneracy.
+    """
     arr = np.asarray(points, dtype=float)
     if arr.shape[0] < 21:
         return None
@@ -67,6 +90,18 @@ def palm_plane_basis_from_world(points, *, wrist_id: int, index_mcp_id: int = 5,
 
 
 def metric_hand_to_palm_plane_normalized(points, *, wrist_id: int, mcp_ids):
+    """Express landmarks in a palm-plane frame normalized by MCP scale.
+
+    Falls back to wrist-centric shape normalization when plane fit fails.
+
+    Args:
+        points: Hand landmark array, at least 21×3.
+        wrist_id: Index of the wrist joint.
+        mcp_ids: MCP indices used for scale estimation.
+
+    Returns:
+        List of 21 normalized ``(x, y, z)`` tuples in palm-plane coordinates.
+    """
     basis = palm_plane_basis_from_world(points, wrist_id=wrist_id)
     if basis is None:
         return metric_hand_to_shape_normalized(points, wrist_id=wrist_id, mcp_ids=mcp_ids, fingertip_ids=[4, 8, 12, 16, 20])
@@ -96,6 +131,16 @@ def metric_hand_to_palm_plane_normalized(points, *, wrist_id: int, mcp_ids):
 
 
 def palm_plane_curl_metrics(points_21, *, fingertip_ids_four):
+    """Compute in-plane radial and out-of-plane curl metrics for fingertips.
+
+    Args:
+        points_21: 21 landmarks already expressed in palm-plane normalized coords.
+        fingertip_ids_four: Indices of index, middle, ring, and pinky tips.
+
+    Returns:
+        Dict with ``mean_r_xy_four``, ``mean_abs_z_four``, ``thumb_r_xy``, and
+        ``thumb_abs_z`` keys (values may be ``None`` when landmarks are invalid).
+    """
     arr = np.asarray(points_21, dtype=float)
     if arr.shape[0] < 21:
         return None

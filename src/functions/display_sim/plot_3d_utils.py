@@ -6,6 +6,18 @@ import numpy as np
 
 
 def setup_hand_axis(ax_hand, title: str, *, shape_normalized: bool, hand_frame: str, palm_plane_frame: str):
+    """Clear and label the hand 3D subplot axes.
+
+    Args:
+        ax_hand: Matplotlib 3D axis for the hand skeleton.
+        title: Subplot title string.
+        shape_normalized: When ``True``, use normalized axis labels.
+        hand_frame: Active hand frame mode (scaled, palm-plane, or metric).
+        palm_plane_frame: Constant string for palm-plane frame mode.
+
+    Returns:
+        None.
+    """
     ax_hand.clear()
     ax_hand.set_title(title)
     if shape_normalized:
@@ -24,6 +36,15 @@ def setup_hand_axis(ax_hand, title: str, *, shape_normalized: bool, hand_frame: 
 
 
 def setup_topology_axis(ax_topo, title: str):
+    """Clear and label the morph topology 3D subplot axes.
+
+    Args:
+        ax_topo: Matplotlib 3D axis for morph topology.
+        title: Subplot title string.
+
+    Returns:
+        None.
+    """
     ax_topo.clear()
     ax_topo.set_title(title)
     ax_topo.set_xlabel("X (mm)")
@@ -32,6 +53,17 @@ def setup_topology_axis(ax_topo, title: str):
 
 
 def plot_hand_points_connections(ax_hand, arr: np.ndarray, valid_mask: np.ndarray, connections):
+    """Scatter valid hand points and draw skeleton connections on a 3D axis.
+
+    Args:
+        ax_hand: Matplotlib 3D axis for the hand skeleton.
+        arr: Hand keypoints, shape ``(21, 3)``.
+        valid_mask: Boolean mask of finite keypoints to scatter.
+        connections: Iterable of ``(a, b)`` skeleton edge index pairs.
+
+    Returns:
+        None.
+    """
     pts = arr[valid_mask]
     ax_hand.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c="r", s=20)
     for a, b in connections:
@@ -54,6 +86,19 @@ def apply_hand_axis_limits(
     norm_axis_halflim: float,
     morph_axis_lim_mm: float,
 ):
+    """Set symmetric axis limits centered on the valid hand keypoints.
+
+    Args:
+        ax_hand: Matplotlib 3D axis for the hand skeleton.
+        arr: Hand keypoints, shape ``(21, 3)``.
+        valid_mask: Boolean mask of finite keypoints used for centering.
+        shape_normalized: When ``True``, use normalized half-limit constants.
+        norm_axis_halflim: Maximum half-span for normalized coordinates.
+        morph_axis_lim_mm: Maximum half-span for metric mm coordinates.
+
+    Returns:
+        None.
+    """
     sub = arr[valid_mask]
     ctr_hand = sub.mean(axis=0)
     span = float(np.max(np.ptp(sub, axis=0)))
@@ -67,6 +112,16 @@ def apply_hand_axis_limits(
 
 
 def finalize_dual_3d_axes(ax_hand, ax_topo, *, morph_axis_lim_mm: float):
+    """Apply consistent camera angles, aspect, and topology limits to dual 3D axes.
+
+    Args:
+        ax_hand: Matplotlib 3D axis for the hand skeleton, or ``None``.
+        ax_topo: Matplotlib 3D axis for morph topology.
+        morph_axis_lim_mm: Symmetric half-limit for topology axis bounds in mm.
+
+    Returns:
+        None.
+    """
     if ax_hand is not None:
         ax_hand.view_init(elev=20, azim=-70)
     ax_topo.view_init(elev=22, azim=-58)

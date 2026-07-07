@@ -12,6 +12,8 @@ from functions.open_close.morph_renderers import init_fixed_surface_points, mapp
 
 @dataclass
 class ScaleConfig:
+    """Morph mm→sim-m workspace scaling parameters."""
+
     xy_radius: float
     hover_z: float
     z_amplitude: float
@@ -19,23 +21,18 @@ class ScaleConfig:
     reference_z_extent_mm: float
     z_mm_scale: float = 1.0
     morph_world_scale: float = 0.55
-    # Legacy gesture band (normalize_morph_points only); defaults track hover_z.
-    z_center: float | None = None
-    z_min: float | None = None
-    z_max: float | None = None
-
-    def __post_init__(self) -> None:
-        hz = float(self.hover_z)
-        if self.z_center is None:
-            object.__setattr__(self, "z_center", hz)
-        if self.z_min is None:
-            object.__setattr__(self, "z_min", hz - float(self.z_amplitude))
-        if self.z_max is None:
-            object.__setattr__(self, "z_max", hz + float(self.z_amplitude))
 
 
 def summarize_target_workspace(points_m: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
-    """Return (max_xy_radius_m, xyz_min, xyz_max) for a target set in meters."""
+    """Summarize XY extent and axis-aligned bounds of a target set.
+
+    Args:
+        points_m: Target positions in sim meters, shape ``(N, 3)``.
+
+    Returns:
+        Tuple ``(max_xy_radius_m, xyz_min, xyz_max)``. Returns zeros when input
+        is empty or malformed.
+    """
     pts = np.asarray(points_m, dtype=np.float32)
     if pts.ndim != 2 or pts.shape[0] == 0 or pts.shape[1] < 3:
         z = np.zeros((3,), dtype=np.float32)
@@ -51,7 +48,18 @@ def fixed_morph_points(
     open_alpha: float,
     shape_t: float | None,
 ) -> np.ndarray:
-    """Generate fixed indexed morph points (same as webcam/Orbbec demos)."""
+    """Generate fixed-index morph surface samples in millimeters.
+
+    Args:
+        point_count: Number of surface sample indices to initialize.
+        radius_mm: Superellipsoid radius in millimeters.
+        morph_mode: Morph mode index (1–5).
+        open_alpha: Openness in ``[0, 1]``.
+        shape_t: Optional left-hand shape blend for ε pair selection.
+
+    Returns:
+        Mapped surface points in mm, shape ``(point_count, 3)``.
+    """
     init_fixed_surface_points(point_count)
     epsilon1, epsilon2 = mode_epsilon_pair(int(morph_mode), shape_t)
     return mapped_fixed_surface_points(
@@ -66,7 +74,15 @@ def fixed_morph_points(
 
 
 def _morph_xy_scale(points_mm: np.ndarray, scale: ScaleConfig) -> float:
-    """XY meters-per-mm without coupling to the legacy gesture Z band."""
+    """Compute XY meters-per-mm without coupling to the legacy gesture Z band.
+
+    Args:
+        points_mm: Morph samples in mm (values unused; kept for API symmetry).
+        scale: Workspace scaling configuration.
+
+    Returns:
+        XY scale factor in meters per millimeter.
+    """
     pts = np.asarray(points_mm, dtype=np.float32)
     xy_den = max(float(scale.reference_xy_extent_mm), 1.0)
     xy_s0 = float(scale.xy_radius) / xy_den
@@ -75,7 +91,15 @@ def _morph_xy_scale(points_mm: np.ndarray, scale: ScaleConfig) -> float:
 
 
 def _morph_z_rel_scale(points_mm: np.ndarray, scale: ScaleConfig) -> float:
-    """Z topology meters-per-mm (relative offsets before anchoring at ``hover_z``)."""
+    """Compute Z topology meters-per-mm before anchoring at ``hover_z``.
+
+    Args:
+        points_mm: Morph samples in mm (values unused; kept for API symmetry).
+        scale: Workspace scaling configuration.
+
+    Returns:
+        Relative Z scale factor in meters per millimeter.
+    """
     pts = np.asarray(points_mm, dtype=np.float32)
     z_den = max(float(scale.reference_z_extent_mm), 1.0)
     z_s0 = (float(scale.xy_radius) / z_den) * float(scale.z_mm_scale)
@@ -83,68 +107,21 @@ def _morph_z_rel_scale(points_mm: np.ndarray, scale: ScaleConfig) -> float:
     return z_s0 * world_scale
 
 
-def _morph_world_scales(
-    points_mm: np.ndarray,
-    scale: ScaleConfig,
-) -> tuple[float, float]:
-    """Return ``(xy_s, z_s)`` meters-per-mm scale factors for morph mapping."""
-    pts = np.asarray(points_mm, dtype=np.float32)
-    xy_den = max(float(scale.reference_xy_extent_mm), 1.0)
-    z_den = max(float(scale.reference_z_extent_mm), 1.0)
-    xy_s0 = float(scale.xy_radius) / xy_den
-    z_s0 = (float(scale.xy_radius) / z_den) * float(scale.z_mm_scale)
-    world_scale = float(max(0.25, scale.morph_world_scale))
-    z_off = pts[:, 2] * z_s0 * world_scale
-    max_d = float(np.max(z_off)) if z_off.size else 0.0
-    min_d = float(np.min(z_off)) if z_off.size else 0.0
-    z_top = float(scale.z_max) - float(scale.z_center)
-    z_bot = float(scale.z_center) - float(scale.z_min)
-    margin = 5e-3
-    s_up = (z_top - margin) / max(max_d, 1e-9) if max_d > 1e-9 else 1e9
-    s_dn = (z_bot - margin) / max(-min_d, 1e-9) if min_d < -1e-9 else 1e9
-    s_fit = float(min(1.0, s_up, s_dn))
-    xy_s = xy_s0 * s_fit * world_scale
-    z_s = z_s0 * s_fit * world_scale
-    return xy_s, z_s
-
-
-def normalize_morph_points(
-    points_mm: np.ndarray,
-    scale: ScaleConfig,
-) -> np.ndarray:
-    """Map morph-renderer millimeter targets into the Crazyflow workspace."""
-    pts = np.asarray(points_mm, dtype=np.float32)
-    xy_s, z_s = _morph_world_scales(pts, scale)
-    zc = float(scale.z_center)
-    zmin = float(scale.z_min)
-    zmax = float(scale.z_max)
-    z_raw = zc + pts[:, 2] * z_s
-    z_clip = np.clip(z_raw, zmin, zmax)
-    n_clip = int(np.sum(np.abs(z_clip - z_raw) > 1e-6))
-    if n_clip > 0:
-        margin_z = 5e-3
-        z_hi_need = float(np.max(z_raw)) - zc
-        z_lo_need = zc - float(np.min(z_raw))
-        s_z_hi = (zmax - margin_z - zc) / max(z_hi_need, 1e-9)
-        s_z_lo = (zc - margin_z - zmin) / max(z_lo_need, 1e-9)
-        shrink = float(min(1.0, s_z_hi, s_z_lo))
-        if shrink < 0.999:
-            xy_s *= shrink
-            z_s *= shrink
-            z_raw = zc + pts[:, 2] * z_s
-            z_clip = np.clip(z_raw, zmin, zmax)
-    out = np.empty_like(pts, dtype=np.float32)
-    out[:, 0] = pts[:, 0] * xy_s
-    out[:, 1] = pts[:, 1] * xy_s
-    out[:, 2] = z_clip.astype(np.float32)
-    return out
-
-
 def normalize_morph_points_at_hover(
     points_mm: np.ndarray,
     scale: ScaleConfig,
 ) -> np.ndarray:
-    """Map morph mm → world m; superellipsoid center at (0, 0, hover_z) in sim."""
+    """Map morph mm targets to sim m with superellipsoid center at hover height.
+
+    Recenters samples in mm so the formation centroid lands on ``(0, 0, hover_z)``.
+
+    Args:
+        points_mm: Morph samples in millimeters, shape ``(N, 3)``.
+        scale: Workspace scaling configuration.
+
+    Returns:
+        Normalized target in sim meters, shape ``(N, 3)``.
+    """
     pts = np.asarray(points_mm, dtype=np.float32)
     # Fixed surface samples are not symmetric about the parametric origin (plane
     # blend / mode layout); recenter in mm so sim centroid lands on hover_z.

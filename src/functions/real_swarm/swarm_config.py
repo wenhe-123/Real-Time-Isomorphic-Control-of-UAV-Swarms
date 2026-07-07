@@ -23,6 +23,14 @@ class RealFrameMapping:
     yaw_rad: float
 
     def sim_to_real(self, sim_xyz: np.ndarray) -> np.ndarray:
+        """Map gesture/sim coordinates into the mocap room frame.
+
+        Args:
+            sim_xyz: Point(s) in sim meters, shape ``(3,)`` or ``(N, 3)``.
+
+        Returns:
+            Room-frame position(s) with the same leading shape as the input.
+        """
         pts = np.asarray(sim_xyz, dtype=np.float64)
         single = pts.ndim == 1
         if single:
@@ -33,7 +41,17 @@ class RealFrameMapping:
         return out[0] if single else out
 
     def real_to_sim(self, real_xyz: np.ndarray) -> np.ndarray:
-        """Inverse of :meth:`sim_to_real` (room / mocap → gesture sim frame)."""
+        """Inverse of :meth:`sim_to_real` (room / mocap → gesture sim frame).
+
+        Args:
+            real_xyz: Point(s) in room meters, shape ``(3,)`` or ``(N, 3)``.
+
+        Returns:
+            Sim-frame position(s) with the same leading shape as the input.
+
+        Raises:
+            ValueError: If ``scale`` is zero.
+        """
         pts = np.asarray(real_xyz, dtype=np.float64)
         single = pts.ndim == 1
         if single:
@@ -50,6 +68,8 @@ class RealFrameMapping:
 
 @dataclass(frozen=True)
 class RealSwarmOptions:
+    """Control rates and safety thresholds from the drones TOML ``[swarm]`` table."""
+
     ctrl_freq: float
     update_freq: float
     col_freq: float
@@ -58,7 +78,11 @@ class RealSwarmOptions:
 
 
 def default_settings_path() -> Path:
-    """Bundled ``config/settings.yaml`` (radio URI template for drones.toml)."""
+    """Return path to bundled ``config/settings.yaml``.
+
+    Returns:
+        Absolute path to the radio URI template config file.
+    """
     return Path(__file__).resolve().parents[3] / "config" / "settings.yaml"
 
 
@@ -172,7 +196,7 @@ def load_drones_config(
     *,
     settings_path: Path | None = None,
 ) -> tuple[dict[str, dict], RealFrameMapping, RealSwarmOptions]:
-    """Parse a drones TOML file.
+    """Parse a Crazyflie swarm layout and sim↔room frame mapping from TOML.
 
     Supports two layouts (swarmGPT-compatible):
 
@@ -180,6 +204,18 @@ def load_drones_config(
       ``addr``, ``channel``, and ``pos``. URIs come from ``radio.uri_base`` in
       ``config/settings.yaml`` (or ``[radio]`` in the same TOML).
     * **Explicit URIs** — ``[[drone]]`` rows with ``id``, ``uri``, and ``home``.
+
+    Args:
+        path: Path to the drones TOML file.
+        settings_path: Optional override for ``settings.yaml`` URI template lookup.
+
+    Returns:
+        Tuple of ``(drones, mapping, opts)`` where ``drones`` maps string ids to
+        uri/pos dicts, ``mapping`` is sim↔room transform, and ``opts`` holds
+        control frequencies and safety limits.
+
+    Raises:
+        ValueError: On missing drones, invalid home vectors, or bad settings path.
     """
     path = Path(path).expanduser().resolve()
     with open(path, "rb") as f:

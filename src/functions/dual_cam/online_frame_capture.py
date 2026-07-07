@@ -16,7 +16,7 @@ from functions.display_sim.orbbec_hand import (
     HAND_3D_SOURCE_MP,
     HAND_FRAME_SCALED,
     POINT_EMA_ALPHA,
-    draw_hand,
+    fuse_hand_landmarks,
 )
 from functions.dual_cam.stream_runtime_utils import (
     capture_orbbec_frame,
@@ -61,7 +61,17 @@ class CaptureFrameInput:
 def grab_orbbec_mp_frame(
     inp: CaptureFrameInput,
 ) -> tuple[OrbbecCaptureFrame | None, np.ndarray | None, bool]:
-    """Return (payload, poll_frame, flip_depth_warned). poll_frame is set when MP detect fails."""
+    """Capture one Orbbec frame, run MediaPipe, and fuse depth hand geometry.
+
+    Args:
+        inp: Per-frame capture inputs (boot, config, landmarker, caches, timing).
+
+    Returns:
+        Tuple ``(payload, poll_frame, flip_depth_warned)`` where ``payload`` is
+        an ``OrbbecCaptureFrame`` on success, ``poll_frame`` is a BGR frame to
+        show when MP detect fails (else ``None``), and ``flip_depth_warned`` is
+        whether a horizontal-flip depth mismatch warning was emitted.
+    """
     boot = inp.boot
     cfg = inp.cfg
     section = inp.section
@@ -116,7 +126,7 @@ def grab_orbbec_mp_frame(
         calib_for_draw = boot.calib if use_depth_fusion else None
         fusion_w = float(boot.pipe.depth_fusion_weight) if use_depth_fusion else 0.0
         ema_3d = inp.ema_3d
-        frame, hands_3d_all, ema_3d = draw_hand(
+        frame, hands_3d_all, ema_3d = fuse_hand_landmarks(
             frame,
             result,
             depth_raw=depth_raw_for_draw,

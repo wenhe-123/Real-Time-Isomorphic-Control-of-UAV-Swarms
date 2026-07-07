@@ -25,11 +25,26 @@ if TYPE_CHECKING:
 
 
 def default_axswarm_settings_path() -> Path:
-    """Bundled ``config/axswarm_settings.yaml`` (pip ``.[sim]``; no submodule required)."""
+    """Return the bundled axswarm settings YAML path.
+
+    Returns:
+        Path to ``config/axswarm_settings.yaml`` relative to the project root.
+    """
     return Path(__file__).resolve().parents[3] / "config" / "axswarm_settings.yaml"
 
 
 def resolve_axswarm_settings_path(settings_path: Path | None) -> Path:
+    """Resolve axswarm settings YAML path from explicit path or bundled default.
+
+    Args:
+        settings_path: User-provided settings path, or ``None`` to use bundled config.
+
+    Returns:
+        Resolved settings file path.
+
+    Raises:
+        FileNotFoundError: When no explicit path is given and the bundled file is missing.
+    """
     if settings_path is not None:
         return Path(settings_path)
     bundled = default_axswarm_settings_path()
@@ -42,6 +57,14 @@ def resolve_axswarm_settings_path(settings_path: Path | None) -> Path:
 
 
 def ensure_axswarm_import() -> Path:
+    """Verify the axswarm package is importable.
+
+    Returns:
+        Path to the axswarm package root directory.
+
+    Raises:
+        ImportError: When axswarm is not installed (sim extras required).
+    """
     try:
         import axswarm
     except ImportError as exc:
@@ -50,6 +73,14 @@ def ensure_axswarm_import() -> Path:
 
 
 def load_axswarm_yaml(settings_path: Path) -> tuple[dict, dict[str, np.ndarray]]:
+    """Load axswarm solver settings and dynamics matrices from YAML.
+
+    Args:
+        settings_path: Path to ``axswarm_settings.yaml``.
+
+    Returns:
+        ``(settings_dict, dynamics)`` — solver settings and named dynamics arrays.
+    """
     with open(settings_path) as f:
         config = yaml.safe_load(f)
     settings_dict = dict(config["SolverSettings"])
@@ -61,6 +92,14 @@ def load_axswarm_yaml(settings_path: Path) -> tuple[dict, dict[str, np.ndarray]]
 
 
 def min_separation_from_envelope(collision_envelope: np.ndarray) -> float:
+    """Convert axswarm collision envelope half-extents to center-to-center distance.
+
+    Args:
+        collision_envelope: Per-axis envelope half-widths, shape ``(3,)`` (m).
+
+    Returns:
+        Minimum center separation (m) as ``2 * max(envelope)``.
+    """
     env = np.asarray(collision_envelope, dtype=np.float64)
     return float(2.0 * np.max(env))
 
@@ -69,7 +108,14 @@ def load_axswarm_min_separation(
     *,
     settings_path: Path | None = None,
 ) -> float:
-    """Read ``collision_envelope`` from yaml and convert it to center distance."""
+    """Read collision envelope from axswarm YAML and return min center separation.
+
+    Args:
+        settings_path: Optional settings path; uses bundled default when ``None``.
+
+    Returns:
+        Minimum drone center separation (m).
+    """
     path = resolve_axswarm_settings_path(settings_path)
     settings_dict, _ = load_axswarm_yaml(path)
     env = np.asarray(settings_dict.get("collision_envelope", [0.15, 0.15, 0.15]))
@@ -78,7 +124,11 @@ def load_axswarm_min_separation(
 
 @contextlib.contextmanager
 def _axswarm_force_cpu_init():
-    """Keep axswarm ``SolverData.init`` on CPU even if the package was patched for GPU."""
+    """Context manager forcing axswarm ``SolverData.init`` onto CPU devices.
+
+    Yields:
+        None — restores ``jax.devices`` on exit.
+    """
     import jax
 
     real_devices = jax.devices
@@ -137,6 +187,19 @@ class AxswarmPlanner:
         settings_path: Path | None = None,
         horizon_steps: int = 1,
     ) -> AxswarmPlanner:
+        """Construct an axswarm MPC planner from YAML settings.
+
+        Args:
+            n_drones: Number of drones (must be >= 8).
+            settings_path: Optional path to axswarm settings YAML.
+            horizon_steps: MPC horizon steps to cache (``1``–``K``).
+
+        Returns:
+            Configured ``AxswarmPlanner`` instance.
+
+        Raises:
+            ValueError: When ``n_drones < 8`` or ``horizon_steps > K``.
+        """
         if n_drones < 8:
             raise ValueError(f"axswarm planner requires n_drones >= 8, got {n_drones}")
         ensure_axswarm_import()
@@ -182,6 +245,15 @@ class AxswarmPlanner:
         n_drones: int,
         cfg: Any,
     ) -> AxswarmPlanner:
+        """Build planner from online runtime config fields.
+
+        Args:
+            n_drones: Number of drones.
+            cfg: Runtime config with ``axswarm_settings`` and ``mpc_horizon_steps``.
+
+        Returns:
+            Configured ``AxswarmPlanner`` instance.
+        """
         return cls.create(
             n_drones,
             settings_path=Path(cfg.axswarm_settings) if cfg.axswarm_settings else None,
@@ -190,19 +262,34 @@ class AxswarmPlanner:
 
     @property
     def mpc_period_s(self) -> float:
+        """MPC solve period in seconds (``1 / freq``).
+
+        Returns:
+            Period between MPC solves (s).
+        """
         return 1.0 / max(float(self.mpc_hz), 1e-6)
 
     @property
     def replan_period_s(self) -> float:
-        """Wall time between MPC solves when streaming ``u_pos[:, 0:M]``."""
+        """Wall time between MPC solves when streaming a multi-step horizon.
+
+        Returns:
+            ``horizon_steps * mpc_period_s`` (s).
+        """
         return float(self.horizon_steps) * self.mpc_period_s
 
     def _clear_horizon_cache(self) -> None:
+        """Invalidate cached MPC horizon position/velocity buffers."""
         self._horizon_pos = None
         self._horizon_vel = None
         self._horizon_anchor_s = -1e9
 
     def _cache_horizon(self, solved_data: Any) -> None:
+        """Store the first ``horizon_steps`` MPC inputs from a solve result.
+
+        Args:
+            solved_data: Axswarm solver output containing ``u_pos`` and ``u_vel``.
+        """
         m = int(self.horizon_steps)
         try:
             pos = np.asarray(solved_data.u_pos[:, :m], dtype=np.float32)
@@ -219,12 +306,28 @@ class AxswarmPlanner:
         self._horizon_vel = vel
 
     def _horizon_step_index(self, elapsed_s: float) -> int:
+        """Map elapsed time to the active index within the cached horizon.
+
+        Args:
+            elapsed_s: Monotonic elapsed time since session start (s).
+
+        Returns:
+            Horizon step index in ``[0, horizon_steps - 1]``.
+        """
         if self._horizon_pos is None or self.horizon_steps <= 1:
             return 0
         steps_elapsed = int((float(elapsed_s) - self._horizon_anchor_s) / self.mpc_period_s)
         return int(min(max(0, steps_elapsed), self.horizon_steps - 1))
 
     def _needs_replan(self, elapsed_s: float) -> bool:
+        """Return whether a new MPC solve is due at ``elapsed_s``.
+
+        Args:
+            elapsed_s: Monotonic elapsed time since session start (s).
+
+        Returns:
+            ``True`` when solver is uninitialized or the cached horizon is exhausted.
+        """
         if self.solver_data is None:
             return True
         if self.horizon_steps <= 1:
@@ -237,6 +340,14 @@ class AxswarmPlanner:
     def _cmd_from_horizon(
         self, elapsed_s: float
     ) -> tuple[np.ndarray | None, np.ndarray | None, int]:
+        """Fetch position/velocity command from cached horizon or latest solve.
+
+        Args:
+            elapsed_s: Monotonic elapsed time since session start (s).
+
+        Returns:
+            ``(pos, vel, horizon_idx)`` — command arrays and active horizon index.
+        """
         if self.horizon_steps > 1 and self._horizon_pos is not None:
             idx = self._horizon_step_index(elapsed_s)
             return self._horizon_pos[:, idx], self._horizon_vel[:, idx], idx
@@ -245,6 +356,15 @@ class AxswarmPlanner:
 
     @staticmethod
     def _lock_vertical_z(pts: np.ndarray, hold_z: float | None) -> np.ndarray:
+        """Clamp all drone Z coordinates to a fixed altitude when prearming.
+
+        Args:
+            pts: Drone positions, shape ``(n, 3)``.
+            hold_z: Fixed Z altitude (m), or ``None`` to pass through unchanged.
+
+        Returns:
+            Position array with Z locked when ``hold_z`` is set, float32.
+        """
         if hold_z is None:
             return np.asarray(pts, dtype=np.float32)
         out = np.asarray(pts, dtype=np.float32).copy()
@@ -252,6 +372,15 @@ class AxswarmPlanner:
         return out
 
     def reset(self, initial_pos: np.ndarray, initial_vel: np.ndarray | None = None) -> None:
+        """Initialize or re-initialize MPC solver state from drone positions.
+
+        Args:
+            initial_pos: Initial drone positions, shape ``(n_drones, 3)``.
+            initial_vel: Initial velocities; zero when ``None``.
+
+        Raises:
+            ValueError: When ``initial_pos`` shape is invalid.
+        """
         pos = np.asarray(initial_pos, dtype=np.float32)
         if pos.shape != (self.n_drones, 3):
             raise ValueError(f"initial_pos must be ({self.n_drones}, 3), got {pos.shape}")
@@ -283,11 +412,20 @@ class AxswarmPlanner:
         self._clear_horizon_cache()
 
     def sync_gesture(self, gesture: np.ndarray, sim_vel: np.ndarray | None = None) -> None:
-        """Re-init MPC state from current gesture (e.g. SPACE armed)."""
+        """Re-initialize MPC from current gesture setpoint (e.g. SPACE armed).
+
+        Args:
+            gesture: Gesture target positions, shape ``(n_drones, 3)``.
+            sim_vel: Optional initial velocities; zero when ``None``.
+        """
         self.reset(gesture, sim_vel)
 
     def _planned_cmd(self) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """First MPC input from solver state (``u_pos[:, 0]`` / ``u_vel[:, 0]``)."""
+        """Read first MPC input from current solver state.
+
+        Returns:
+            ``(u_pos[:, 0], u_vel[:, 0])`` or ``(None, None)`` when unavailable.
+        """
         if self.solver_data is None:
             return None, None
         try:
@@ -302,6 +440,15 @@ class AxswarmPlanner:
         return pos, vel
 
     def _run_mpc(self, states: np.ndarray, gesture_setpoint: np.ndarray) -> bool:
+        """Execute one axswarm MPC solve and update internal solver/horizon state.
+
+        Args:
+            states: Current drone states, shape ``(n_drones, 6)`` (pos + vel).
+            gesture_setpoint: Position setpoint from gesture, shape ``(n_drones, 3)``.
+
+        Returns:
+            ``True`` when all drones solved successfully.
+        """
         sp = np.asarray(gesture_setpoint, dtype=np.float32)
         zero_sp = np.zeros((self.n_drones, 3), dtype=np.float32)
         self.solver_data = self.solver_data.replace(
@@ -340,6 +487,19 @@ class AxswarmPlanner:
         track_pos: np.ndarray | None,
         track_vel: np.ndarray | None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Build MPC tracking state from sim or explicit position/velocity arrays.
+
+        Args:
+            sim: Optional Crazyflow sim for live state readback.
+            track_pos: Explicit drone positions, shape ``(n_drones, 3)``.
+            track_vel: Explicit drone velocities; zero when ``None``.
+
+        Returns:
+            ``(pos, vel)`` arrays, each shape ``(n_drones, 3)``.
+
+        Raises:
+            ValueError: When shapes are invalid or neither ``sim`` nor ``track_pos`` is given.
+        """
         if track_pos is not None:
             pos = np.asarray(track_pos, dtype=np.float32)
             if pos.shape != (self.n_drones, 3):
@@ -367,7 +527,19 @@ class AxswarmPlanner:
         track_vel: np.ndarray | None = None,
         hold_z: float | None = None,
     ) -> AxswarmControl:
-        """Run MPC (when due) and return the active horizon command for Crazyflow."""
+        """Run MPC when due and return the active horizon command for Crazyflow.
+
+        Args:
+            elapsed_s: Monotonic elapsed time since session start (s).
+            gesture_setpoint: Raw gesture target positions, shape ``(n_drones, 3)``.
+            sim: Optional Crazyflow sim for state tracking.
+            track_pos: Explicit drone positions for MPC state (overrides ``sim``).
+            track_vel: Explicit drone velocities for MPC state.
+            hold_z: Optional fixed Z altitude for prearm vertical hold.
+
+        Returns:
+            ``AxswarmControl`` with position, velocity, update flag, and diagnostics.
+        """
         el = float(elapsed_s)
         sp = self._lock_vertical_z(np.asarray(gesture_setpoint, dtype=np.float32), hold_z)
         pos, vel = self._track_state(sim=sim, track_pos=track_pos, track_vel=track_vel)
@@ -420,7 +592,19 @@ class AxswarmPlanner:
         track_vel: np.ndarray | None = None,
         hold_z: float | None = None,
     ) -> np.ndarray:
-        """Return axswarm's planned position target for the raw setpoint."""
+        """Return axswarm planned position targets for a gesture setpoint.
+
+        Args:
+            elapsed_s: Monotonic elapsed time since session start (s).
+            gesture_setpoint: Raw gesture targets, shape ``(n_drones, 3)``.
+            sim: Optional Crazyflow sim for state tracking.
+            track_pos: Explicit drone positions for MPC state.
+            track_vel: Explicit drone velocities for MPC state.
+            hold_z: Optional fixed Z altitude for prearm vertical hold.
+
+        Returns:
+            Planned position targets, shape ``(n_drones, 3)``.
+        """
         return self.plan_control(
             elapsed_s,
             gesture_setpoint,
@@ -431,7 +615,11 @@ class AxswarmPlanner:
         ).pos
 
     def current_control(self) -> np.ndarray:
-        """Crazyflow ``state_control`` slice: ``(n_drones, 6)`` pos + vel."""
+        """Return Crazyflow ``state_control`` slice (pos + vel concatenated).
+
+        Returns:
+            Control array, shape ``(n_drones, 6)``.
+        """
         pos, vel, _ = self._cmd_from_horizon(self._horizon_anchor_s)
         if pos is None:
             pos = np.zeros((self.n_drones, 3), dtype=np.float32)
@@ -440,23 +628,40 @@ class AxswarmPlanner:
         return np.concatenate([pos, vel], axis=-1)
 
     def current_control_velocity(self) -> np.ndarray:
+        """Return the velocity portion of the current MPC command.
+
+        Returns:
+            Velocity array, shape ``(n_drones, 3)``.
+        """
         _, vel, _ = self._cmd_from_horizon(self._horizon_anchor_s)
         if vel is None:
             return np.zeros((self.n_drones, 3), dtype=np.float32)
         return vel
 
     def control_updated(self) -> bool:
+        """Return whether the last plan step produced a fresh MPC command.
+
+        Returns:
+            ``True`` when a new control command was written since the last query.
+        """
         return bool(self._control_updated)
 
     @property
     def last_solve_ok(self) -> bool:
+        """Return whether the most recent MPC solve succeeded for all drones."""
         return bool(self._last_ok)
 
     @property
     def last_solve_n_ok(self) -> int:
+        """Return the number of drones that succeeded in the most recent MPC solve."""
         return int(self._last_solve_n_ok)
 
     def status_line(self) -> str:
+        """Format a one-line MPC health summary for HUD/logging.
+
+        Returns:
+            Human-readable status string (Hz, success rate, last solve time).
+        """
         if self._solve_count == 0:
             return "axswarm: idle"
         ok_frac = 1.0 - self._fail_count / max(1, self._solve_count)

@@ -33,7 +33,21 @@ def analytical_depth_fov_crop_rect(
     rgb_hfov_deg: float = _RGB_HFOV_DEG,
     rgb_vfov_deg: float = _RGB_VFOV_DEG,
 ) -> tuple[int, int, int, int]:
-    """Center crop on the color image that approximates the depth-camera FOV."""
+    """Compute a center crop on the color image that approximates the depth-camera FOV.
+
+    Uses nominal horizontal/vertical FOV ratios when calibration is unavailable.
+
+    Args:
+        color_w: Color image width in pixels.
+        color_h: Color image height in pixels.
+        depth_hfov_deg: Depth camera horizontal field of view in degrees.
+        depth_vfov_deg: Depth camera vertical field of view in degrees.
+        rgb_hfov_deg: RGB camera horizontal field of view in degrees.
+        rgb_vfov_deg: RGB camera vertical field of view in degrees.
+
+    Returns:
+        Crop rectangle ``(x0, y0, x1, y1)`` in color pixel coordinates.
+    """
     cw = max(int(color_w), 1)
     ch = max(int(color_h), 1)
     crop_w = int(round(cw * _half_tan_deg(depth_hfov_deg) / max(_half_tan_deg(rgb_hfov_deg), 1e-9)))
@@ -54,7 +68,21 @@ def compute_depth_fov_crop_rect(
     depth_h: int,
     reference_depth_mm: float = 1000.0,
 ) -> tuple[int, int, int, int]:
-    """Map depth-image corners at ``reference_depth_mm`` into color pixels; return ``(x0,y0,x1,y1)``."""
+    """Map depth-image corners at ``reference_depth_mm`` into color pixels.
+
+    Falls back to :func:`analytical_depth_fov_crop_rect` when calibration or corner mapping fails.
+
+    Args:
+        calibration: PyK4A calibration object, or ``None``.
+        color_w: Color image width in pixels.
+        color_h: Color image height in pixels.
+        depth_w: Depth image width in pixels.
+        depth_h: Depth image height in pixels.
+        reference_depth_mm: Depth in mm at which depth corners are unprojected.
+
+    Returns:
+        Crop rectangle ``(x0, y0, x1, y1)`` in color pixel coordinates.
+    """
     cw = max(int(color_w), 1)
     ch = max(int(color_h), 1)
     dw = max(int(depth_w), 1)
@@ -95,7 +123,17 @@ def crop_orbbec_display_frame(
     *,
     draw_border: bool = True,
 ) -> np.ndarray:
-    """Return a display copy cropped to ``crop_rect``; full frame when ``crop_rect`` is None."""
+    """Return a display copy cropped to ``crop_rect``.
+
+    Args:
+        frame: Source BGR or RGB image.
+        crop_rect: Inclusive-exclusive crop ``(x0, y0, x1, y1)``, or ``None`` to return
+            ``frame`` unchanged.
+        draw_border: When ``True``, draw a labeled border on the cropped output.
+
+    Returns:
+        Cropped image copy, or the original ``frame`` when ``crop_rect`` is ``None``.
+    """
     if crop_rect is None:
         return frame
     x0, y0, x1, y1 = (int(v) for v in crop_rect)

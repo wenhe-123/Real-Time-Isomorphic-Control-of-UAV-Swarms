@@ -13,6 +13,13 @@ from functions.runtime.pipeline_tuning import ONLINE_PLOT_EVERY_N
 
 
 def build_online_control_parser() -> argparse.ArgumentParser:
+    """Build the argparse parser for the online Crazyflow control CLI.
+
+    Returns:
+        Parser with session morph controls, left-hand overrides, hotkeys, and
+        debug/profiling flags. Production tuning defaults come from
+        ``config/online_defaults.yaml``, not from this module.
+    """
     parser = argparse.ArgumentParser(
         description="Run online Crazyflow control from Orbbec/Webcam morph targets."
     )
@@ -212,6 +219,15 @@ def build_online_control_parser() -> argparse.ArgumentParser:
 
 
 def report_debug_panels_from_args(args) -> ReportDebugPanels:
+    """Resolve gesture-report Matplotlib panel flags from parsed CLI args.
+
+    Args:
+        args: Namespace returned by :func:`build_online_control_parser`.
+
+    Returns:
+        ``ReportDebugPanels`` instance with per-panel enable flags derived from
+        ``--debug-report-*`` and ``--debug-report-viz``.
+    """
     from debug.gesture_report_debug import ReportDebugPanels
 
     return ReportDebugPanels.from_cli(

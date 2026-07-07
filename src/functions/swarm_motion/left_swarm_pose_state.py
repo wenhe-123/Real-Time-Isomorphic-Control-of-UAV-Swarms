@@ -95,6 +95,22 @@ class LeftSwarmPoseState:
         palm_center_override: np.ndarray | None = None,
         palm_pose: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> bool:
+        """Capture the current palm pose as the arm-time reference frame.
+
+        Args:
+            h: Hand landmarks in depth-camera mm, shape ``(21, 3)`` or larger.
+            palm_basis: Named palm basis preset for orthonormal frame construction.
+            sim_from_cam: Optional rotation matrix mapping camera deltas to sim (frozen at arm).
+            sim_trans_from_cam: Optional translation matrix; defaults to ``sim_from_cam``.
+            cam_preset_label: Label stored with frozen camera preset (diagnostics).
+            ref_swarm_targets: Swarm XYZ at arm, shape ``(n, 3+)`` (sim m).
+            ref_basis_image: Webcam/image palm basis at arm for dual-rotation fallback.
+            palm_center_override: Replace computed palm center (camera mm).
+            palm_pose: Precomputed ``(palm_center_mm, basis)``; skips basis re-fit.
+
+        Returns:
+            ``True`` when reference pose and EMA state were reset; ``False`` on invalid input.
+        """
         if palm_pose is not None:
             pc, B = palm_pose
             pc = np.asarray(pc, dtype=np.float64).reshape(3)
@@ -160,10 +176,19 @@ class LeftSwarmPoseState:
         return True
 
     def is_unwinding(self) -> bool:
+        """Return whether a smooth return-to-morph unwind is in progress.
+
+        Returns:
+            ``True`` while ``unwind_end_t`` is set and monotonic time is before it.
+        """
         return float(self.unwind_end_t) > 0.0 and time.monotonic() < float(self.unwind_end_t)
 
     def begin_unwind(self, duration_s: float) -> None:
-        """Fade rigid offset/rotation to identity over ``duration_s`` (smoothstep)."""
+        """Start a smoothstep fade of rigid offset and rotation back to identity.
+
+        Args:
+            duration_s: Unwind duration in seconds (clamped to at least 1 ms).
+        """
         d = float(max(duration_s, 1e-3))
         self.unwind_off0 = np.asarray(self.ema_offset, dtype=np.float64).copy()
         self.unwind_rv0 = np.asarray(self.ema_rotvec, dtype=np.float64).copy()
@@ -171,7 +196,10 @@ class LeftSwarmPoseState:
         self.unwind_end_t = time.monotonic() + d
 
     def cancel_unwind(self) -> None:
-        """Abort smooth restore (e.g. user re-arms); clears offset like disarm."""
+        """Abort smooth restore and clear pose state (e.g. user re-arms).
+
+        Resets EMA offset/rotation, tracking history, and frozen arm-time maps.
+        """
         self.unwind_end_t = 0.0
         self.unwind_duration = 0.0
         self.unwind_off0[:] = 0.0

@@ -44,16 +44,3 @@ PALM_CENTER_IDS = (
     RING_MCP_ID,
     PINKY_MCP_ID,
 )
-
-# Wrist-relative span proxy (mean distance to these landmarks).
-HAND_SPAN_LANDMARK_IDS = (
-    THUMB_MCP_ID,
-    THUMB_TIP_ID,
-    INDEX_MCP_ID,
-    INDEX_TIP_ID,
-    MIDDLE_MCP_ID,
-    MIDDLE_TIP_ID,
-    RING_MCP_ID,
-    RING_TIP_ID,
-    PINKY_TIP_ID,
-)

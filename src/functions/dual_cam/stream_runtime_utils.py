@@ -9,6 +9,15 @@ import mediapipe as mp
 
 
 def safe_get_capture(k4a, warn_prefix: str = "get_capture"):
+    """Call ``k4a.get_capture()`` and return None on failure.
+
+    Args:
+        k4a: Orbbec/K4A device wrapper.
+        warn_prefix: Prefix for warning log messages.
+
+    Returns:
+        Capture object from the device, or ``None`` on exception.
+    """
     try:
         return k4a.get_capture()
     except Exception as exc:
@@ -17,6 +26,14 @@ def safe_get_capture(k4a, warn_prefix: str = "get_capture"):
 
 
 def capture_orbbec_frame(capture) -> Optional[Tuple]:
+    """Unpack color and depth from an Orbbec capture.
+
+    Args:
+        capture: Device capture object with ``color`` and ``depth`` fields.
+
+    Returns:
+        Tuple ``(frame_bgr, depth_raw, capture)``, or ``None`` when color is missing.
+    """
     if capture is None or capture.color is None:
         return None
     color = capture.color
@@ -28,6 +45,16 @@ def capture_orbbec_frame(capture) -> Optional[Tuple]:
 
 
 def get_aligned_depth(capture, frame, enabled: bool):
+    """Return color-aligned depth when transformed depth matches color resolution.
+
+    Args:
+        capture: Device capture object with ``transformed_depth``.
+        frame: BGR color frame used for shape validation.
+        enabled: If False, returns ``None`` immediately.
+
+    Returns:
+        Transformed depth array matching ``frame`` shape, or ``None``.
+    """
     if not enabled:
         return None
     try:
@@ -41,22 +68,31 @@ def get_aligned_depth(capture, frame, enabled: bool):
     return None
 
 
-def normalize_webcam_bgr(frame_web):
-    if frame_web is None:
-        return None
-    if frame_web.ndim == 2:
-        return cv2.cvtColor(frame_web, cv2.COLOR_GRAY2BGR)
-    if frame_web.ndim == 3 and frame_web.shape[2] == 4:
-        return cv2.cvtColor(frame_web, cv2.COLOR_BGRA2BGR)
-    return frame_web
-
-
 def make_mp_image_from_bgr(frame_bgr):
+    """Wrap a BGR OpenCV frame as a MediaPipe SRGB ``Image``.
+
+    Args:
+        frame_bgr: BGR uint8 array.
+
+    Returns:
+        MediaPipe ``Image`` ready for ``detect_for_video``.
+    """
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
 
 def detect_for_video_safe(landmarker, mp_image, t_ms: int, warn_prefix: str = "detect_for_video"):
+    """Run MediaPipe VIDEO-mode detection and return None on failure.
+
+    Args:
+        landmarker: MediaPipe hand landmarker instance.
+        mp_image: MediaPipe ``Image`` input.
+        t_ms: Frame timestamp in milliseconds.
+        warn_prefix: Prefix for warning log messages.
+
+    Returns:
+        MediaPipe hand landmarker result, or ``None`` on exception.
+    """
     try:
         return landmarker.detect_for_video(mp_image, int(t_ms))
     except Exception as exc:

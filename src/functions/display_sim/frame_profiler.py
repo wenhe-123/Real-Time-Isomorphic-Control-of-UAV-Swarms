@@ -20,17 +20,30 @@ class FrameSectionProfiler:
     _skipped: int = 0
 
     def cancel(self) -> None:
+        """Abort the current frame without recording ``frame_total`` or printing.
+
+        Increments the skipped-frame counter when profiling was active mid-frame.
+        """
         if self.enabled and self._active:
             self._skipped += 1
         self._active = False
 
     def frame_start(self) -> None:
+        """Mark the start of a profiled control-loop frame.
+
+        No-op when ``enabled`` is ``False``.
+        """
         if not self.enabled:
             return
         self._active = True
         self._frame_t0 = self._last = time.perf_counter()
 
     def section(self, name: str) -> None:
+        """Accumulate wall time since the previous ``section`` or ``frame_start``.
+
+        Args:
+            name: Section label aggregated in periodic profile reports.
+        """
         if not self.enabled or not self._active:
             return
         now = time.perf_counter()
@@ -40,6 +53,11 @@ class FrameSectionProfiler:
         self._counts[name] = self._counts.get(name, 0) + 1
 
     def frame_end(self, frame_idx: int) -> None:
+        """Finalize the current frame, optionally print timing summary, and reset accumulators.
+
+        Args:
+            frame_idx: Current frame index; controls report cadence via ``report_every``.
+        """
         if not self.enabled or not self._active:
             return
         self.section("ui_wait")

@@ -34,7 +34,21 @@ def filter_online_targets(
     track_pos: np.ndarray | None,
     track_vel: np.ndarray | None = None,
 ) -> tuple[TargetFilterResult, bool]:
-    """Return axswarm-planned targets and updated gesture flags."""
+    """Run axswarm MPC filtering on raw morph targets for one online frame.
+
+    Args:
+        boot: Online boot state (axswarm planner, gesture control flags).
+        cfg: Runtime config (spacing audit interval, min separation).
+        gest: Gesture frame result (open-hand alpha, visibility).
+        raw_target: Unfiltered morph targets (sim m).
+        morph_targets_before_left_m: Pre-left-pose targets (unused; reserved).
+        elapsed: Monotonic elapsed time since session start (s).
+        track_pos: Optional drone positions for MPC state tracking.
+        track_vel: Optional drone velocities for MPC state tracking.
+
+    Returns:
+        ``(result, prev_gesture_control_enabled)`` — filter output and updated gesture-arm flag.
+    """
     del morph_targets_before_left_m
     prev_gesture_control_enabled = boot.prev_gesture_control_enabled
 

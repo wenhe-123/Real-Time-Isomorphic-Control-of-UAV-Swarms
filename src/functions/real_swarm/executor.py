@@ -24,7 +24,11 @@ _MODE_LED_COLORS = {
 
 
 def _ensure_rclpy() -> None:
-    """ROSConnector (mocap) requires ``rclpy.ok()`` in this process."""
+    """Initialize ROS 2 if needed for mocap (``DroneSwarm`` / ``ROSConnector``).
+
+    Raises:
+        ImportError: If ``rclpy`` is not installed.
+    """
     import rclpy
 
     if not rclpy.ok():
@@ -41,6 +45,16 @@ class RealSwarmExecutor:
         morph_point_count: int | None = None,
         dry_run: bool = False,
     ):
+        """Connect Crazyflie swarm and load sim↔room frame mapping from TOML.
+
+        Args:
+            config_path: Path to drones layout TOML (``active`` or ``[[drone]]``).
+            morph_point_count: Virtual morph sample count; must be ≥ physical drones.
+            dry_run: When ``True``, skip radio and ROS mocap connect (pipeline only).
+
+        Raises:
+            ValueError: When ``morph_point_count`` is smaller than the physical count.
+        """
         drones, mapping, opts = load_drones_config(config_path)
         n_physical = len(drones)
         if morph_point_count is not None and int(morph_point_count) < n_physical:
@@ -98,10 +112,25 @@ class RealSwarmExecutor:
 
     @property
     def ctrl_freq(self) -> float:
+        """Return configured Crazyflie setpoint rate from TOML options.
+
+        Returns:
+            Control frequency in Hz.
+        """
         return float(self.opts.ctrl_freq)
 
     def _physical_cmd(self, sim_layout: np.ndarray) -> np.ndarray:
-        """First ``n_physical`` rows of the virtual formation → real drones."""
+        """Slice the first physical-drone rows from a virtual formation layout.
+
+        Args:
+            sim_layout: Sim-frame positions, shape ``(N, 3)``.
+
+        Returns:
+            First ``n_physical`` rows, shape ``(n_physical, 3)``.
+
+        Raises:
+            ValueError: If layout shape is invalid or too few rows.
+        """
         pts = np.asarray(sim_layout, dtype=np.float64)
         if pts.ndim != 2 or pts.shape[1] != 3:
             raise ValueError(f"cmd_target must be (N,3), got {pts.shape}")
@@ -112,7 +141,15 @@ class RealSwarmExecutor:
         return pts[: self.n_physical]
 
     def _room_targets(self, sim_layout: np.ndarray) -> dict[str, list[float]]:
-        """Sim-frame layout → room-frame ``{uri: [x,y,z,yaw]}`` for every configured drone."""
+        """Map sim-frame layout to room-frame setpoints for each drone URI.
+
+        Args:
+            sim_layout: Sim-frame positions, shape ``(N, 3)``.
+
+        Returns:
+            Mapping ``{uri: [x, y, z, yaw]}`` with yaw fixed at ``0.0``, or empty
+            when the swarm is not connected.
+        """
         if self.swarm is None:
             return {}
         real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
@@ -128,7 +165,19 @@ class RealSwarmExecutor:
         plane_layout: np.ndarray,
         min_separation_m: float,
     ) -> np.ndarray:
-        """TOML ``home`` for physical rows; plane-morph XY at ground Z for virtual rows."""
+        """Build sim ground layout: TOML homes for physical rows, plane morph for rest.
+
+        Args:
+            n_morph: Total virtual morph sample count.
+            plane_layout: Plane morph XY layout at ground Z, shape ``(N, 3)``.
+            min_separation_m: Unused; kept for caller API compatibility.
+
+        Returns:
+            Ground layout in sim meters, shape ``(n_morph, 3)``.
+
+        Raises:
+            ValueError: If ``plane_layout`` shape is invalid or too small.
+        """
         del min_separation_m  # spacing comes from morph plane layout; arg kept for callers
         from functions.swarm_motion.prearm import plane_ground_layout
 
@@ -149,7 +198,20 @@ class RealSwarmExecutor:
     def get_sim_track_positions(
         self, morph_fallback: np.ndarray, n_morph: int
     ) -> np.ndarray | None:
-        """Mocap poses (ROS TF) → sim frame for physical rows; morph fallback for virtual."""
+        """Fuse mocap poses with morph fallback for the full virtual formation.
+
+        Args:
+            morph_fallback: Sim-frame morph targets when mocap is unavailable,
+                shape ``(N, 3)``.
+            n_morph: Number of virtual rows to return.
+
+        Returns:
+            Sim-frame positions, shape ``(n_morph, 3)``, or ``None`` when mocap
+            poses are missing for any active drone.
+
+        Raises:
+            ValueError: If ``morph_fallback`` shape is invalid or too small.
+        """
         real_pos = self.get_positions_for_debug()
         if real_pos is None:
             return None
@@ -165,7 +227,15 @@ class RealSwarmExecutor:
         return out
 
     def verify_near_sim_layout(self, sim_layout: np.ndarray) -> bool:
-        """Check drones are close to mapped sim layout before arming."""
+        """Check that active drones are near the mapped sim layout before arming.
+
+        Args:
+            sim_layout: Proposed arm layout in sim meters, shape ``(N, 3)``.
+
+        Returns:
+            ``True`` when every active drone is within ``max_pos_error_m`` of its
+            mapped room pose (always ``True`` in dry-run mode).
+        """
         if self._dry_run:
             return True
         real = self.mapping.sim_to_real(self._physical_cmd(sim_layout))
@@ -195,20 +265,34 @@ class RealSwarmExecutor:
         return ok
 
     def mocap_ok(self) -> bool:
-        """True when every active drone has a fresh mocap pose."""
+        """Return whether every active drone has a fresh mocap pose.
+
+        Returns:
+            ``True`` when :meth:`get_positions_for_debug` succeeds for all URIs.
+        """
         return self.get_positions_for_debug() is not None
 
     @property
     def control_halted(self) -> bool:
+        """Return whether low-level setpoint streaming is paused.
+
+        Returns:
+            ``True`` during HL maneuvers, emergency stop, or before takeoff.
+        """
         return bool(self._control_halted)
 
     def pause_setpoints_for_hl(self) -> None:
-        """Stop low-level setpoint stream without emergency stop (before HL commander)."""
+        """Stop the low-level setpoint stream before a high-level commander action."""
         self._control_halted = True
         self._pending_sim_layout = None
 
     def high_level_takeoff(self, height_m: float, *, duration_s: float = 3.0) -> None:
-        """Block until HL takeoff completes; then allow axswarm low-level setpoints."""
+        """Run blocking high-level takeoff, then re-enable axswarm setpoints.
+
+        Args:
+            height_m: Target altitude gain in room meters.
+            duration_s: HL commander maneuver duration in seconds.
+        """
         if self._dry_run or self.swarm is None:
             self._control_halted = False
             self.physical_armed = True
@@ -232,7 +316,13 @@ class RealSwarmExecutor:
         duration_s: float = 3.0,
         settle_s: float | None = None,
     ) -> None:
-        """Block until HL in-place vertical descent completes (current XY, −Z)."""
+        """Run blocking high-level in-place vertical descent at current XY.
+
+        Args:
+            distance_m: Descent distance in room meters (positive down).
+            duration_s: HL ``goto`` maneuver duration in seconds.
+            settle_s: Hover time at target before land; defaults to prearm constant.
+        """
         if self._dry_run or self.swarm is None:
             self._control_halted = True
             return
@@ -270,7 +360,12 @@ class RealSwarmExecutor:
             time.sleep(hover_s)
 
     def high_level_land(self, height_m: float = 0.0, *, duration_s: float = 3.0) -> None:
-        """Block until HL land completes; keep setpoint stream off afterward."""
+        """Run blocking high-level land and keep setpoint stream halted afterward.
+
+        Args:
+            height_m: Target landing height in room meters.
+            duration_s: HL land maneuver duration in seconds.
+        """
         if self._dry_run or self.swarm is None:
             self._control_halted = True
             self.physical_armed = False
@@ -287,7 +382,7 @@ class RealSwarmExecutor:
         self.physical_armed = False
 
     def halt_control(self) -> None:
-        """Stop setpoint stream immediately and cut Crazyflie low-level control."""
+        """Stop setpoint streaming and send Crazyflie emergency stop."""
         if self._control_halted:
             return
         self._control_halted = True
@@ -300,9 +395,15 @@ class RealSwarmExecutor:
             logger.warning("Emergency stop failed: %s", exc)
 
     def send_sim_layout(self, sim_layout: np.ndarray, *, force: bool = False) -> bool:
-        """Stream one low-level position setpoint batch (throttled to ``ctrl_freq``).
+        """Stream one throttled low-level position setpoint batch to the radio.
 
-        Returns True when a setpoint was sent to the radio.
+        Args:
+            sim_layout: Sim-frame target layout, shape ``(N, 3)``.
+            force: When ``True``, bypass the ``ctrl_freq`` throttle.
+
+        Returns:
+            ``True`` when a setpoint batch was sent; ``False`` when halted,
+            throttled, or mocap is unavailable.
         """
         if self._control_halted:
             return False
@@ -344,6 +445,20 @@ class RealSwarmExecutor:
         just_prearm_phase: bool = False,
         prearm_vertical_layout: np.ndarray | None = None,
     ) -> None:
+        """Apply one frame of real-swarm tracking, LEDs, and prearm phase logging.
+
+        Args:
+            cmd_target: Filtered axswarm command layout in sim meters.
+            gesture_enabled: Whether morph gesture control is armed.
+            just_armed: ``True`` on the frame gesture control was just enabled.
+            morph_mode: Active morph mode for mode LED coloring.
+            led_every_n: Apply mode LED every N frames (0 disables).
+            frame_idx: Monotonic outer-loop frame counter.
+            prearm_phase: Current prearm phase (``ground``, ``vertical``, etc.).
+            prearm_vertical_leg: Vertical leg name (``climb`` or return leg).
+            just_prearm_phase: ``True`` when prearm phase changed this frame.
+            prearm_vertical_layout: Takeoff/hover layout for phase logging.
+        """
         if self._control_halted:
             return
         cmd = np.asarray(cmd_target, dtype=np.float32)
@@ -406,6 +521,7 @@ class RealSwarmExecutor:
                 logger.warning("LED update failed: %s", exc)
 
     def close(self) -> None:
+        """Halt control and release Crazyflie swarm resources."""
         if self._closed:
             return
         self._closed = True
@@ -414,6 +530,12 @@ class RealSwarmExecutor:
             self.swarm.close()
 
     def get_positions_for_debug(self) -> np.ndarray | None:
+        """Read current mocap positions for all configured drone URIs.
+
+        Returns:
+            Room-frame positions, shape ``(n_physical, 3)``, or ``None`` when the
+            swarm is disconnected or any active URI lacks a pose.
+        """
         if self.swarm is None:
             return None
         rows = []

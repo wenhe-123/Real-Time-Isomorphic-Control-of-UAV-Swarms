@@ -45,6 +45,15 @@ PAIR_MEASURED_SEC: Dict[Tuple[int, int], float] = {
 
 
 def pair_measured_sec(mode_a: int, mode_b: int) -> float:
+    """Return tuned transition duration for a morph-mode pair.
+
+    Args:
+        mode_a: First mode id (1–5).
+        mode_b: Second mode id (1–5).
+
+    Returns:
+        Measured transition length in seconds (defaults to 6.0 for unknown pairs).
+    """
     a, b = int(mode_a), int(mode_b)
     if a == b:
         return 1.0
@@ -53,6 +62,14 @@ def pair_measured_sec(mode_a: int, mode_b: int) -> float:
 
 
 def target_switch_frames(fps: Optional[float]) -> int:
+    """Compute frame count for epsilon display settling after a mode switch.
+
+    Args:
+        fps: Nominal frame rate; uses ``DEFAULT_FPS`` when invalid.
+
+    Returns:
+        Number of blend frames, at least 12.
+    """
     f = float(fps) if fps is not None and float(fps) > 0 else DEFAULT_FPS
     return int(max(12, round(f * TARGET_TRANSITION_SEC)))
 
@@ -62,7 +79,16 @@ def _fallback_wrist_mcp_scale(
     wrist_id: int,
     mcp_ids: Sequence[int],
 ) -> Optional[float]:
-    """Mean ‖wrist − MCP‖ when palm_center_and_scale fails (e.g. NaN on some palm joints)."""
+    """Mean wrist-to-MCP distance when ``palm_center_and_scale`` fails.
+
+    Args:
+        hand_points: Hand landmark sequence.
+        wrist_id: Index of the wrist joint.
+        mcp_ids: MCP indices for distance averaging.
+
+    Returns:
+        Mean distance plus epsilon, or ``None`` when no valid MCPs remain.
+    """
     if wrist_id >= len(hand_points):
         return None
     w = np.asarray(hand_points[wrist_id], dtype=float).reshape(3)
@@ -87,7 +113,16 @@ def index_mcp_tip_segment_norm(
     wrist_id: int,
     mcp_ids: Sequence[int],
 ) -> Optional[float]:
-    """‖index_tip − index_MCP‖ / palm scale (same normalization as mode-gesture tip distances)."""
+    """Normalized index MCP-to-tip segment length in palm-scale units.
+
+    Args:
+        hand_points: Hand landmark sequence (21 joints).
+        wrist_id: Index of the wrist joint.
+        mcp_ids: MCP indices for palm scale (same as mode-gesture normalization).
+
+    Returns:
+        ``‖index_tip − index_MCP‖ / palm_scale``, or ``None`` on invalid landmarks.
+    """
     if len(hand_points) <= max(INDEX_TIP_ID, INDEX_MCP_ID):
         return None
     p_t = np.asarray(hand_points[INDEX_TIP_ID], dtype=float).reshape(3)
@@ -127,7 +162,16 @@ def advance_lp_shape_p(
     *,
     fps: Optional[float] = None,
 ) -> None:
-    """Update shape_t EMA, per-mode refs, and epsilon_pair_display. Calls reset_lp_scatter_inertia on mode change."""
+    """Update shape_t EMA, per-mode refs, and smoothed epsilon display.
+
+    Resets LP scatter inertia on morph mode change.
+
+    Args:
+        dist_norm: Current normalized index MCP-tip distance, or ``None``.
+        active_morph_mode: Active morph mode 1–5.
+        state: Mutable ``LpShapePipelineState``.
+        fps: Nominal frame rate for switch-blend frame count.
+    """
     active = int(active_morph_mode)
     if active != state.last_scatter_mode:
         reset_lp_scatter_inertia()
@@ -185,7 +229,16 @@ def shape_t_from_reference_distance(
     *,
     half_range: float = LEFT_SHAPE_RANGE_HALF_NORM,
 ) -> Optional[float]:
-    """Map (current − ref) / half to t around 0.5; clamp to [0, 1]."""
+    """Map normalized finger distance to shape parameter ``t`` around 0.5.
+
+    Args:
+        current: Current normalized segment length.
+        ref: Per-mode reference distance captured on mode entry.
+        half_range: Half-width of the linear mapping range.
+
+    Returns:
+        Shape parameter in ``[0, 1]``, or ``None`` when inputs are missing.
+    """
     if current is None or ref is None:
         return None
     half = max(1e-6, float(half_range))
@@ -201,7 +254,18 @@ def step_mode_p_display(
     transition_scale: float = 1.0,
     switch_blend_frames: int = MODE_P_SWITCH_BLEND_FRAMES,
 ) -> float:
-    """EMA + slew-rate limit on one channel (ε₁ or ε₂; avoids visible jumps)."""
+    """Apply EMA and slew-rate limiting to one epsilon display channel.
+
+    Args:
+        p_target: Target epsilon value for this frame.
+        p_prev: Previous displayed value, or ``None`` to snap to target.
+        frames_since_mode_switch: Frames elapsed since the last mode change.
+        transition_scale: Pair-specific step scaling from measured transition time.
+        switch_blend_frames: Length of the post-switch blend window.
+
+    Returns:
+        Smoothed display value with per-frame step clamping.
+    """
     if p_prev is None:
         return float(p_target)
     blend_n = max(1, int(switch_blend_frames))
@@ -236,6 +300,19 @@ def step_epsilon_pair_display(
     transition_scale: float = 1.0,
     switch_blend_frames: int = MODE_P_SWITCH_BLEND_FRAMES,
 ) -> Tuple[float, float]:
+    """Smooth both epsilon display channels after a mode or shape update.
+
+    Args:
+        e1_target: Target first epsilon component.
+        e2_target: Target second epsilon component.
+        e_prev: Previous ``(ε₁, ε₂)`` display pair, or ``None`` to snap.
+        frames_since_mode_switch: Frames elapsed since the last mode change.
+        transition_scale: Pair-specific step scaling.
+        switch_blend_frames: Length of the post-switch blend window.
+
+    Returns:
+        Tuple ``(ε₁_display, ε₂_display)`` after independent channel smoothing.
+    """
     if e_prev is None:
         return float(e1_target), float(e2_target)
     e1p, e2p = e_prev

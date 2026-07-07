@@ -44,7 +44,23 @@ def detect_webcam_hand(
     palm_basis: str,
     prefer_hand_idx: int | None,
 ) -> tuple[np.ndarray | None, Any | None, np.ndarray | None, int]:
-    """Read USB webcam, run MediaPipe, return (B_rot, result, frame_bgr, new_frame_idx)."""
+    """Read USB webcam, run MediaPipe, and compute palm rotation basis.
+
+    Args:
+        webcam_cap: OpenCV ``VideoCapture`` for the USB camera.
+        webcam_landmarker: MediaPipe hand landmarker in VIDEO mode.
+        fps: Nominal frame rate for timestamping.
+        webcam_frame_idx: Monotonic frame counter for MediaPipe timestamps.
+        mp_input_scale: Downscale factor for MediaPipe input (``(0, 1)``).
+        palm_basis: Palm basis variant passed to ``palm_basis_from_mp_image_plane``.
+        prefer_hand_idx: Orbbec left-hand index when handedness is ambiguous.
+
+    Returns:
+        Tuple ``(B_rot, result, frame_bgr, new_frame_idx)`` where ``B_rot`` is the
+        3×3 palm basis or ``None``, ``result`` is the MediaPipe output,
+        ``frame_bgr`` is the full-resolution BGR frame, and ``new_frame_idx`` is
+        the incremented frame counter.
+    """
     if webcam_cap is None or webcam_landmarker is None:
         return None, None, None, webcam_frame_idx
     ok_w, wfr = webcam_cap.read()
@@ -94,7 +110,35 @@ def poll_webcam_dual_cache(
     prefer_hand_idx: int | None = None,
     webcam_frame_idx: int = 0,
 ) -> tuple[np.ndarray | None, Any | None, np.ndarray | None, int | None, int]:
-    """Read USB webcam when rotating, thumb occluded, or Orbbec visibility is low."""
+    """Poll USB webcam when rotation assist or low Orbbec visibility requires it.
+
+    Reads on stride boundaries and caches results between polls. Skips polling
+    when Orbbec visibility is good and dual assist is not needed.
+
+    Args:
+        webcam_cap: OpenCV ``VideoCapture`` for the USB camera.
+        webcam_landmarker: MediaPipe hand landmarker in VIDEO mode.
+        cache: Mutable dict storing ``"B"``, ``"res"``, ``"fr"``, ``"idx"`` keys.
+        frame_idx: Current Orbbec frame index (controls poll stride).
+        stride: Poll every N Orbbec frames.
+        show_preview: Force polling when dual-view preview is shown.
+        orbbec_vis_min: Minimum Orbbec joint visibility this frame.
+        rot_vis_thresh: Visibility threshold to switch rotation to webcam.
+        mode_vis_min: Visibility threshold for mode-classify webcam assist.
+        rotating: Whether left-hand rotation is currently active.
+        dual_mode_assist: Enable webcam mode fusion when Orbbec is occluded.
+        dual_rot_always: Always poll webcam regardless of visibility.
+        orbbec_thumb_vis: Thumb-tip visibility on Orbbec (occlusion hint).
+        fps: Nominal frame rate for MediaPipe timestamps.
+        mp_input_scale: Downscale factor for MediaPipe input.
+        palm_basis: Palm basis variant for rotation.
+        prefer_hand_idx: Orbbec left-hand index for handedness fallback.
+        webcam_frame_idx: Monotonic USB frame counter.
+
+    Returns:
+        Tuple ``(B, result, frame_bgr, w_idx, new_webcam_frame_idx)``; entries
+        are ``None`` when polling is skipped or detection fails.
+    """
     if webcam_cap is None or webcam_landmarker is None:
         return None, None, None, None, webcam_frame_idx
     if not should_poll_webcam_for_dual(
@@ -157,7 +201,30 @@ def resolve_dual_left_rotation(
     prefetch_result: Any = None,
     prefetch_frame_bgr: np.ndarray | None = None,
 ) -> tuple[DualRotationFrame, int]:
-    """Pick palm basis for rotation; translation must still use depth wrist elsewhere."""
+    """Select palm basis for left-hand rotation (depth vs USB webcam).
+
+    Translation must still use depth wrist elsewhere; this only resolves rotation.
+
+    Args:
+        enabled: Whether dual-webcam rotation assist is active.
+        orbbec_result: MediaPipe result from the Orbbec color frame.
+        orbbec_idx_l: Left-hand index in the Orbbec result.
+        do_arm: If True, populate ``arm_ref_img`` instead of ``B_rot``.
+        palm_basis: Palm basis variant string.
+        vis_thresh: Switch to webcam when Orbbec ``vis_min`` falls below this.
+        webcam_cap: OpenCV ``VideoCapture`` for the USB camera.
+        webcam_landmarker: MediaPipe hand landmarker for the USB camera.
+        fps: Nominal frame rate for MediaPipe timestamps.
+        webcam_frame_idx: Monotonic USB frame counter.
+        mp_input_scale: Downscale factor for MediaPipe input.
+        prefetch_B: Pre-fetched palm basis from ``poll_webcam_dual_cache``.
+        prefetch_result: Pre-fetched MediaPipe result from cache.
+        prefetch_frame_bgr: Pre-fetched USB BGR frame from cache.
+
+    Returns:
+        Tuple ``(DualRotationFrame, new_webcam_frame_idx)`` with rotation source,
+        debug text, visibility scores, and optional webcam preview data.
+    """
     out = DualRotationFrame()
     if not enabled or orbbec_idx_l is None or orbbec_result is None:
         return out, webcam_frame_idx

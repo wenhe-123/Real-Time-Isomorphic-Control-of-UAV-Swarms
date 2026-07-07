@@ -41,7 +41,18 @@ def _positions_world_xyz(sim) -> np.ndarray:
 
 
 def led_rgba_for_morph_mode(morph_mode: int, pos_xyz: np.ndarray) -> np.ndarray:
-    """Return per-drone RGBA (n, 4) from world positions (n, 3)."""
+    """Compute per-drone LED RGBA colors from world positions and morph mode.
+
+    Mode 1 uses a continuous plasma colormap by world *z*; modes 2–5 use cap-band
+    magenta and middle-band blue (gold reserved for corner anchors).
+
+    Args:
+        morph_mode: Active morph mode index (1–5).
+        pos_xyz: Drone positions in world meters, shape ``(n, 3)``.
+
+    Returns:
+        Per-drone RGBA array, shape ``(n, 4)``, dtype ``float64``.
+    """
     pos_xyz = np.asarray(pos_xyz, dtype=np.float64).reshape(-1, 3)
     n = int(pos_xyz.shape[0])
     if n == 0:
@@ -75,7 +86,17 @@ def led_rgba_for_morph_mode(morph_mode: int, pos_xyz: np.ndarray) -> np.ndarray:
 
 
 def apply_morph_led_theme(sim, morph_mode: int) -> None:
-    """Update ``led_top`` / ``led_bot`` for all drones; no-op if materials missing."""
+    """Update ``led_top`` / ``led_bot`` materials for all drones by morph mode.
+
+    No-op when Crazyflow material APIs or drone positions are unavailable.
+
+    Args:
+        sim: Crazyflow simulation instance.
+        morph_mode: Active morph mode index (1–5).
+
+    Returns:
+        None.
+    """
     if _change_material_led is None:
         return
     pos = _positions_world_xyz(sim)

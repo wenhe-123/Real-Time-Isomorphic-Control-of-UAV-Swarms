@@ -61,6 +61,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class OnlineBoot:
+    """Startup bundle: Orbbec, sim or real swarm, prearm layouts, axswarm, hotkeys."""
+
     k4a: PyK4A
     calib: Any
     sim: Sim | None
@@ -130,6 +132,13 @@ class OnlineBoot:
 
 
 def print_pipeline_mode(pipe: PipelineTuning, *, draw_hand_debug: bool, mp_delegate_key: str) -> None:
+    """Log MediaPipe delegate and Orbbec hand-3D pipeline mode at startup.
+
+    Args:
+        pipe: Depth fusion and mode debounce settings.
+        draw_hand_debug: Whether skeleton overlay is enabled on the Orbbec preview.
+        mp_delegate_key: MediaPipe delegate string (``"cpu"`` or ``"gpu"``).
+    """
     print(f"MediaPipe HandLandmarker delegate: {mp_delegate_key} (GPU falls back to CPU if unavailable)")
     if draw_hand_debug:
         print("Orbbec hand overlay: ON (--draw-hand-debug).")
@@ -140,7 +149,7 @@ def print_pipeline_mode(pipe: PipelineTuning, *, draw_hand_debug: bool, mp_deleg
         )
     else:
         print(
-            "Orbbec hand 3D: MediaPipe world only (no per-joint depth fusion in draw_hand). "
+            "Orbbec hand 3D: MediaPipe world only (no per-joint depth fusion in fuse_hand_landmarks). "
             "Depth still used for L-move via left_hand_pose_matrix_depth_mm. "
             "Use --draw-hand-debug for skeleton on preview; --debug-webcam-pipeline for demo tuning."
         )
@@ -151,7 +160,16 @@ def boot_online_control(
     live_target: LiveTargetState,
     cfg: OnlineRuntimeConfig,
 ) -> OnlineBoot:
-    """Open Orbbec + sim or real swarm, run prearm, wire axswarm and hotkeys."""
+    """Open Orbbec, sim or real swarm, run prearm, wire axswarm and hotkeys.
+
+    Args:
+        live_target: Thread-safe morph target seeded before boot.
+        cfg: Normalized runtime config from :func:`build_online_runtime_config`.
+
+    Returns:
+        ``OnlineBoot`` with camera, executors, prearm layouts, plot handles, and
+        hotkey state ready for the main control loop.
+    """
     n_drones = int(cfg.point_count)
     scale = cfg.scale
     orbbec_fps = FPS.FPS_15 if ONLINE_DEFAULTS.camera.orbbec_fps == "15" else FPS.FPS_30
@@ -261,9 +279,6 @@ def boot_online_control(
     scale = replace(
         scale,
         hover_z=prearm_hover_z,
-        z_center=prearm_hover_z,
-        z_min=prearm_hover_z - float(scale.z_amplitude),
-        z_max=prearm_hover_z + float(scale.z_amplitude),
     )
     _hover_mm = fixed_morph_points(
         n_drones,
@@ -582,6 +597,17 @@ def boot_online_control(
 
 
 def make_key_poller(boot: OnlineBoot, *, global_hotkeys: bool):
+    """Build a key-polling callback for the online control loop.
+
+    Args:
+        boot: Boot bundle providing key queue and mutable control state.
+        global_hotkeys: When ``True``, listen via pynput/keyboard; otherwise
+            only OpenCV window keys are processed.
+
+    Returns:
+        Callable ``(cv_key: int | None) -> bool`` that processes hotkeys and
+        returns ``True`` when the session should exit.
+    """
     ctx = OnlineKeyContext.from_boot(boot)
 
     def _poll_keys(cv_key: int | None = None) -> bool:
@@ -596,6 +622,11 @@ def make_key_poller(boot: OnlineBoot, *, global_hotkeys: bool):
 
 
 def sync_armed_flags(boot: OnlineBoot) -> None:
+    """Copy mutable box flags from hotkey handlers into ``OnlineBoot`` fields.
+
+    Args:
+        boot: Boot bundle whose ``*_box`` list wrappers were updated in place.
+    """
     boot.gesture_control_enabled = bool(boot.gesture_control_enabled_box[0])
     boot.prearm_climb_enabled = bool(boot.prearm_climb_enabled_box[0])
     boot.prearm_phase = str(boot.prearm_phase_box[0])

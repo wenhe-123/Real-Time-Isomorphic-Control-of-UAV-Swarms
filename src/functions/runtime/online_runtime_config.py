@@ -17,6 +17,8 @@ from functions.swarm_motion.left_pose_tuning import LeftPoseRuntime, build_left_
 
 @dataclass(frozen=True, slots=True)
 class OnlineRuntimeConfig:
+    """Immutable per-run settings for the online control main loop."""
+
     point_count: int
     fps: int
     min_separation_m: float
@@ -65,6 +67,8 @@ class OnlineRuntimeConfig:
 
 @dataclass
 class OnlineWebcamState:
+    """Mutable USB webcam capture and palm-rotation cache for dual-cam mode."""
+
     cap: Any | None = None
     landmarker: Any | None = None
     frame_idx: int = 0
@@ -83,7 +87,20 @@ def build_online_runtime_config(
     panels: ReportDebugPanels,
     defaults: OnlineDefaults | None = None,
 ) -> OnlineRuntimeConfig:
-    """Map minimal CLI args + yaml defaults into a normalized runtime config."""
+    """Map CLI args and yaml defaults into a normalized runtime config.
+
+    Args:
+        args: Parsed namespace from :func:`build_online_control_parser`.
+        point_count: Number of morph surface samples for this session.
+        scale: Morph mm→m workspace scaling parameters.
+        pipeline: Depth fusion, debounce, and plot cadence tuning.
+        panels: Gesture-report Matplotlib panel flags.
+        defaults: Optional yaml defaults override; uses bundled yaml when
+            ``None``.
+
+    Returns:
+        Frozen config consumed by :func:`boot_online_control` and the main loop.
+    """
     d = ONLINE_DEFAULTS if defaults is None else defaults
     debug_drone_pos_every = max(0, int(args.debug_drone_pos_every))
     if bool(args.debug_drone_pos) and debug_drone_pos_every == 0:

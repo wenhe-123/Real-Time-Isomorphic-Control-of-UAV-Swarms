@@ -1,12 +1,23 @@
-"""Orbbec per-frame draw pipeline: depth reads, MP mm coords, fused raw, base selection, smoothed viz points."""
+"""Orbbec per-frame hand pipeline: depth reads, MP mm coords, fused raw, base selection, smoothed viz points."""
 
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
 
 def extract_points_and_depth(hand_landmarks, h: int, w: int, depth_reader):
+    """Convert MediaPipe landmarks to color pixels and read depth at each joint.
+
+    Args:
+        hand_landmarks: Iterable of MediaPipe normalized hand landmarks.
+        h: Color image height in pixels.
+        w: Color image width in pixels.
+        depth_reader: Callable ``(x, y, h, w) -> depth_mm | None`` for each pixel.
+
+    Returns:
+        ``(points, depth_vals)`` where ``points`` is a list of ``(x, y)`` tuples and
+        ``depth_vals`` holds the corresponding depth in mm (or ``None``).
+    """
     points = []
     depth_vals = []
     for lm in hand_landmarks:
@@ -18,6 +29,16 @@ def extract_points_and_depth(hand_landmarks, h: int, w: int, depth_reader):
 
 
 def build_mp_mm(world_landmarks, n_kp: int, mp_world_to_mm):
+    """Build per-keypoint MediaPipe world coordinates in millimeters.
+
+    Args:
+        world_landmarks: MediaPipe world landmark list, or ``None``.
+        n_kp: Number of keypoints to produce (typically 21).
+        mp_world_to_mm: Callable converting one world landmark to an ``(x, y, z)`` mm tuple.
+
+    Returns:
+        List of ``n_kp`` ``(x, y, z)`` tuples; missing landmarks are ``(nan, nan, nan)``.
+    """
     if world_landmarks is None:
         return [(np.nan, np.nan, np.nan)] * n_kp
     out = []
@@ -45,6 +66,26 @@ def compute_fused_raw(
     transform_point_rigid_4x4_mm,
     fuse_cam_and_mp,
 ):
+    """Fuse depth-unprojected and MediaPipe mm coordinates for each keypoint.
+
+    Args:
+        points: Color pixel ``(x, y)`` list per keypoint.
+        depth_vals: Depth in mm per keypoint (parallel to ``points``).
+        mp_mm: MediaPipe world coordinates in mm per keypoint.
+        calibration: PyK4A calibration for unprojection, or ``None``.
+        h: Color image height in pixels.
+        w: Color image width in pixels.
+        depth_aligned: Depth registered to the color frame, or ``None``.
+        depth_raw: Native depth image, or ``None``.
+        depth_unproject_rigid_T: Optional 4×4 rigid correction after unprojection.
+        fusion_weight: Blend weight between depth and MediaPipe (see :func:`fuse_cam_and_mp`).
+        unproject_to_depth_cam_mm: Unprojection callable for each landmark.
+        transform_point_rigid_4x4_mm: Rigid transform callable applied after unprojection.
+        fuse_cam_and_mp: Fusion callable blending camera and MP points.
+
+    Returns:
+        List of fused ``(x, y, z)`` tuples in mm, one per keypoint.
+    """
     fused_raw = []
     for kp_id in range(len(points)):
         x, y = points[kp_id]
@@ -59,6 +100,19 @@ def compute_fused_raw(
 
 
 def select_base_mm(*, hand_3d_source, hand_3d_source_fused, world_landmarks, mp_mm, fused_raw):
+    """Choose the raw mm keypoint source before frame normalization.
+
+    Args:
+        hand_3d_source: Active source tag (``"mp"`` or ``"fused"``).
+        hand_3d_source_fused: Constant for the fused source tag.
+        world_landmarks: MediaPipe world landmarks, or ``None``.
+        mp_mm: MediaPipe coordinates in mm per keypoint.
+        fused_raw: Depth-fused coordinates in mm per keypoint.
+
+    Returns:
+        List of 21 ``(x, y, z)`` mm tuples from the selected source; falls back to
+        ``fused_raw`` when MP data is incomplete.
+    """
     if hand_3d_source == hand_3d_source_fused:
         return fused_raw
     if world_landmarks is not None:
@@ -78,6 +132,19 @@ def select_viz_points(
     metric_hand_to_palm_plane_normalized,
     metric_hand_to_shape_normalized,
 ):
+    """Apply the selected hand coordinate frame for visualization.
+
+    Args:
+        hand_frame: Frame mode string (palm-plane, scaled, or raw metric).
+        hand_frame_palm_plane: Constant for palm-plane normalization.
+        hand_frame_scaled: Constant for shape normalization.
+        base_mm: Raw mm keypoints before normalization.
+        metric_hand_to_palm_plane_normalized: Callable for palm-plane frame.
+        metric_hand_to_shape_normalized: Callable for shape-normalized frame.
+
+    Returns:
+        List of 21 visualization points in the chosen coordinate frame.
+    """
     if hand_frame == hand_frame_palm_plane:
         return metric_hand_to_palm_plane_normalized(base_mm)
     if hand_frame == hand_frame_scaled:
@@ -86,61 +153,20 @@ def select_viz_points(
 
 
 def smooth_viz_points(viz_pts, hand_ema_in, ema_alpha: float, ema_point_triplet):
+    """Apply per-keypoint EMA smoothing to visualization points.
+
+    Args:
+        viz_pts: Current visualization points (21 entries).
+        hand_ema_in: Previous EMA state for this hand, or ``None``.
+        ema_alpha: EMA smoothing factor passed to ``ema_point_triplet``.
+        ema_point_triplet: Callable ``(prev, cur, alpha) -> smoothed triplet``.
+
+    Returns:
+        List of smoothed ``(x, y, z)`` tuples, one per keypoint.
+    """
     out = []
     for kp_id in range(len(viz_pts)):
         prev_k = hand_ema_in[kp_id] if hand_ema_in is not None and kp_id < len(hand_ema_in) else None
         out.append(ema_point_triplet(prev_k, viz_pts[kp_id], ema_alpha))
     return out
-
-
-def draw_2d_overlay(
-    frame,
-    *,
-    idx: int,
-    hand_landmarks,
-    points,
-    depth_vals,
-    norm_depth_label: bool,
-    print_depth: bool,
-    draw_wrist_label: bool,
-    handed_label: str | None,
-    hand_connections,
-):
-    for kp_id, _lm in enumerate(hand_landmarks):
-        x, y = points[kp_id]
-        cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
-        depth_mm = depth_vals[kp_id]
-        if depth_mm is not None and depth_mm > 0:
-            dw = depth_vals[0]
-            if norm_depth_label and dw is not None and dw > 0:
-                label = f"{depth_mm - dw:+d}"
-            else:
-                label = f"{depth_mm}"
-            cv2.putText(
-                frame,
-                label,
-                (x + 6, y - 6),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (0, 255, 255),
-                1,
-            )
-            if print_depth:
-                print(f"hand:{idx} kp:{kp_id:02d} x:{x:4d} y:{y:4d} depth_mm:{depth_mm:5d}")
-
-    for a, b in hand_connections:
-        p1 = points[a]
-        p2 = points[b]
-        cv2.line(frame, p1, p2, (255, 0, 0), 2)
-
-    if draw_wrist_label and handed_label:
-        cv2.putText(
-            frame,
-            handed_label,
-            points[0],
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 255, 0),
-            2,
-        )
 

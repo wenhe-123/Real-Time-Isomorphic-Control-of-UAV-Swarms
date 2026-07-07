@@ -20,7 +20,18 @@ def prearm_formation_setpoint(
     formation_start_s: float,
     ramp_s: float = PREARM_FORMATION_RAMP_S,
 ) -> np.ndarray:
-    """Ramp setpoint from vertical column to hover morph (avoids instant 3 m MPC jump)."""
+    """Ramp setpoint from vertical column layout to hover morph formation.
+
+    Args:
+        vertical_layout: Vertical-column drone positions, shape ``(n, 3)``.
+        hover_layout: Target hover morph positions, shape ``(n, 3)``.
+        elapsed_s: Current elapsed time (s).
+        formation_start_s: Time when the ramp begins (s); ``< 0`` skips ramping.
+        ramp_s: Ramp duration (s).
+
+    Returns:
+        Blended setpoint array, shape ``(n, 3)``, float32.
+    """
     v = np.asarray(vertical_layout, dtype=np.float32)
     h = np.asarray(hover_layout, dtype=np.float32)
     if formation_start_s < 0.0:
@@ -33,33 +44,20 @@ def prearm_formation_setpoint(
     return ((1.0 - alpha) * v + alpha * h).astype(np.float32)
 
 
-def prearm_return_to_vertical_setpoint(
-    vertical_layout: np.ndarray,
-    hover_layout: np.ndarray,
-    *,
-    elapsed_s: float,
-    return_start_s: float,
-    ramp_s: float = PREARM_FORMATION_RAMP_S,
-) -> np.ndarray:
-    """Ramp setpoint from hover morph back to vertical column (formation → vertical)."""
-    v = np.asarray(vertical_layout, dtype=np.float32)
-    h = np.asarray(hover_layout, dtype=np.float32)
-    if return_start_s < 0.0:
-        return v.copy()
-    t = min(
-        1.0,
-        max(0.0, (float(elapsed_s) - float(return_start_s)) / max(float(ramp_s), 1e-6)),
-    )
-    alpha = 1.0 - t
-    return ((1.0 - alpha) * v + alpha * h).astype(np.float32)
-
-
 def plane_ground_layout(
     plane_layout: np.ndarray,
     *,
     z_ground: float,
 ) -> np.ndarray:
-    """Plane formation XY at ground altitude (sim home / prearm spawn)."""
+    """Place a plane formation at ground altitude for prearm spawn.
+
+    Args:
+        plane_layout: Plane formation XY layout, shape ``(n, 3+)``.
+        z_ground: Ground altitude in simulation meters.
+
+    Returns:
+        Layout copy with all Z coordinates set to ``z_ground``, float32.
+    """
     layout = np.asarray(plane_layout, dtype=np.float32).copy()
     layout[:, 2] = float(z_ground)
     return layout
@@ -71,7 +69,16 @@ def vertical_takeoff_layout(
     takeoff_z: float,
     min_separation_m: float,
 ) -> np.ndarray:
-    """Keep ground XY; lift every drone vertically to ``takeoff_z``."""
+    """Lift a ground layout vertically to takeoff altitude while preserving XY.
+
+    Args:
+        ground_layout: Ground spawn positions, shape ``(n, 3+)``.
+        takeoff_z: Target takeoff altitude (m).
+        min_separation_m: Reserved for spacing checks (currently unused).
+
+    Returns:
+        Layout copy with all Z coordinates set to ``takeoff_z``, float32.
+    """
     del min_separation_m
     layout = np.asarray(ground_layout, dtype=np.float32).copy()
     layout[:, 2] = float(takeoff_z)

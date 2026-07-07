@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
 
-def hand_label(result, hand_idx: int) -> str:
-    if result.handedness and hand_idx < len(result.handedness):
-        return result.handedness[hand_idx][0].category_name
-    return "?"
-
-
 def find_hand_index_by_side(result, side: str) -> Optional[int]:
-    """side: 'right' or 'left' (case-insensitive)."""
+    """Find the hand index whose MediaPipe handedness label matches ``side``.
+
+    Args:
+        result: MediaPipe hand landmarker result.
+        side: ``"left"`` or ``"right"`` (case-insensitive).
+
+    Returns:
+        Hand index, or ``None`` when no matching hand is detected.
+    """
     if not result.hand_landmarks or not result.handedness:
         return None
     side = side.lower()
@@ -32,10 +34,18 @@ def resolve_webcam_left_hand_index(
     prefer_hand_idx: Optional[int] = None,
     invert_handedness: bool = False,
 ) -> Optional[int]:
-    """Pick the physical-left hand on USB webcam MP results.
+    """Pick the physical-left hand on USB webcam MediaPipe results.
 
     Handedness labels are often wrong on a side-mounted USB cam; fall back to
     ``prefer_hand_idx`` (Orbbec mode-hand index) or the sole detected hand.
+
+    Args:
+        result: MediaPipe hand landmarker result.
+        prefer_hand_idx: Orbbec left-hand index to use when handedness is ambiguous.
+        invert_handedness: If True, treat MediaPipe ``"Right"`` as physical left.
+
+    Returns:
+        Webcam hand index for the physical left hand, or ``None``.
     """
     if not result or not getattr(result, "hand_landmarks", None):
         return None
@@ -50,10 +60,14 @@ def resolve_webcam_left_hand_index(
 
 
 def find_left_right_indices(result, *, invert_handedness: bool = False) -> Tuple[Optional[int], Optional[int]]:
-    """Return (idx_left, idx_right) using MediaPipe handedness labels.
+    """Return left and right hand indices from MediaPipe handedness labels.
 
     Args:
-        invert_handedness: if True, swap left/right interpretation (for mirrored inputs).
+        result: MediaPipe hand landmarker result.
+        invert_handedness: If True, swap left/right interpretation (mirrored input).
+
+    Returns:
+        Tuple ``(idx_left, idx_right)``; either entry may be ``None``.
     """
     if invert_handedness:
         idx_left = find_hand_index_by_side(result, "right")
@@ -73,6 +87,13 @@ def resolve_mode_open_hand_indices(
 
     One visible hand: Left → mode, Right → open (the other channel holds last value).
     ``swap_mp_hands`` inverts label interpretation (mirror / ``orbbec_hand_swap``).
+
+    Args:
+        result: MediaPipe hand landmarker result.
+        swap_mp_hands: If True, invert left/right label interpretation.
+
+    Returns:
+        Tuple ``(idx_mode, idx_open)``; either entry may be ``None``.
     """
     if not result or not getattr(result, "hand_landmarks", None):
         return None, None
@@ -80,7 +101,15 @@ def resolve_mode_open_hand_indices(
 
 
 def extract_world_points_mm_result(result, hand_idx: int):
-    """21×(x,y,z) mm from MediaPipe world landmarks."""
+    """Extract 21 world landmarks in depth-camera millimeters.
+
+    Args:
+        result: MediaPipe hand landmarker result.
+        hand_idx: Index into ``result.hand_world_landmarks``.
+
+    Returns:
+        List of 21 ``(x, y, z)`` tuples in mm, or ``None`` when unavailable.
+    """
     if not result.hand_world_landmarks or hand_idx >= len(result.hand_world_landmarks):
         return None
     wlm = result.hand_world_landmarks[hand_idx]
@@ -97,10 +126,18 @@ def extract_world_points_mm_result(result, hand_idx: int):
 
 
 def extract_image_plane_points_mm_result(result, hand_idx: int):
-    """21×(x,y,z) pseudo-mm from 2D normalized landmarks (z from MP relative depth).
+    """Extract 21 pseudo-mm points from 2D normalized image landmarks.
 
-    Better for USB-webcam finger-tier mode classify than ``hand_world_landmarks``,
-    which can disagree with visible 2D extension when depth is unavailable.
+    Z comes from MediaPipe relative depth. Better for USB-webcam finger-tier mode
+    classify than ``hand_world_landmarks``, which can disagree with visible 2D
+    extension when depth is unavailable.
+
+    Args:
+        result: MediaPipe hand landmarker result.
+        hand_idx: Index into ``result.hand_landmarks``.
+
+    Returns:
+        List of 21 ``(x, y, z)`` tuples in pseudo-mm, or ``None`` when unavailable.
     """
     if not result.hand_landmarks or hand_idx >= len(result.hand_landmarks):
         return None
@@ -118,7 +155,16 @@ def extract_image_plane_points_mm_result(result, hand_idx: int):
 
 
 def extract_landmark_visibilities(result, hand_idx: int = 0) -> Optional[np.ndarray]:
-    """Per-joint confidence in [0,1]: visibility, else presence, else 1."""
+    """Return per-joint visibility scores for one hand.
+
+    Args:
+        result: MediaPipe hand landmarker result.
+        hand_idx: Index into ``result.hand_landmarks``.
+
+    Returns:
+        Array of shape ``(21,)`` with values in ``[0, 1]`` (visibility, else
+        presence, else 1.0), or ``None`` when landmarks are unavailable.
+    """
     if not result.hand_landmarks or hand_idx >= len(result.hand_landmarks):
         return None
     hlm = result.hand_landmarks[hand_idx]
@@ -132,27 +178,17 @@ def extract_landmark_visibilities(result, hand_idx: int = 0) -> Optional[np.ndar
     return out
 
 
-def summarize_mp_visibility(vis: Optional[np.ndarray]) -> Optional[Dict[str, float]]:
-    """Mean and min over 21 joints for quick per-view confidence summary."""
-    if vis is None or vis.size < 1:
-        return None
-    return {
-        "mean": float(np.mean(vis)),
-        "min": float(np.min(vis)),
-    }
-
-
-def confidence_color_bgr(mean_vis: float) -> Tuple[int, int, int]:
-    """BGR color for confidence overlays."""
-    if mean_vis >= 0.72:
-        return (60, 220, 80)
-    if mean_vis >= 0.45:
-        return (80, 200, 255)
-    return (100, 120, 255)
-
-
 def orbbec_resolve_swap_mp_hands(*, hand_swap: str, flip_horizontal: bool, use_orbbec: bool) -> bool:
-    """Whether to swap MediaPipe left/right indices for mode vs open (Orbbec path only)."""
+    """Decide whether to swap MediaPipe left/right for mode vs open (Orbbec only).
+
+    Args:
+        hand_swap: ``"auto"``, ``"on"``, or ``"off"``; ``"auto"`` follows flip.
+        flip_horizontal: Whether the Orbbec color frame is horizontally flipped.
+        use_orbbec: If False, always returns False (webcam-only path).
+
+    Returns:
+        True when left/right MediaPipe indices should be swapped.
+    """
     if not use_orbbec:
         return False
     hs = str(hand_swap).strip().lower()
@@ -161,31 +197,4 @@ def orbbec_resolve_swap_mp_hands(*, hand_swap: str, flip_horizontal: bool, use_o
     if hs == "auto":
         return bool(flip_horizontal)
     return hs == "on"
-
-
-def middle_finger_mp_xy_dir(result, hand_idx: int | None) -> np.ndarray | None:
-    """Unit 2D wrist → middle MCP (MP normalized image; used for +Y sign only)."""
-    if (
-        result is None
-        or hand_idx is None
-        or not getattr(result, "hand_landmarks", None)
-        or int(hand_idx) >= len(result.hand_landmarks)
-    ):
-        return None
-    from functions.mode_switch.hand_constants import MIDDLE_MCP_ID, WRIST_ID
-
-    hlm = result.hand_landmarks[int(hand_idx)]
-    if len(hlm) <= int(MIDDLE_MCP_ID):
-        return None
-    v = np.array(
-        [
-            float(hlm[MIDDLE_MCP_ID].x) - float(hlm[WRIST_ID].x),
-            float(hlm[MIDDLE_MCP_ID].y) - float(hlm[WRIST_ID].y),
-        ],
-        dtype=np.float64,
-    )
-    n = float(np.linalg.norm(v))
-    if n < 1e-8:
-        return None
-    return v / n
 

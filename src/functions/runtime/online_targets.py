@@ -27,6 +27,19 @@ def _bootstrap_initial_target(
     shape_t: float | None,
     scale: ScaleConfig,
 ) -> np.ndarray:
+    """Generate and normalize the initial morph target; log spacing diagnostics.
+
+    Args:
+        point_count: Number of fixed surface sample indices.
+        radius_mm: Superellipsoid radius in millimeters.
+        morph_mode: Morph mode index (1–5).
+        open_alpha: Initial openness in ``[0, 1]``.
+        shape_t: Optional left-hand shape blend parameter for ε tuning.
+        scale: Workspace mm→m scaling configuration.
+
+    Returns:
+        Normalized Crazyflow target in sim meters, shape ``(point_count, 3)``.
+    """
     points_mm = fixed_morph_points(point_count, radius_mm, morph_mode, open_alpha, shape_t)
     target = normalize_morph_points_at_hover(points_mm, scale)
     dist, i, j = closest_pair(target)
@@ -54,6 +67,19 @@ def make_initial_live_target(
     shape_t: float | None,
     scale: ScaleConfig,
 ) -> LiveTargetState:
+    """Bootstrap morph targets and wrap them in thread-safe live state.
+
+    Args:
+        point_count: Number of fixed surface sample indices.
+        radius_mm: Superellipsoid radius in millimeters.
+        morph_mode: Initial morph mode index (1–5).
+        open_alpha: Initial openness in ``[0, 1]``.
+        shape_t: Optional left-hand shape blend parameter for ε tuning.
+        scale: Workspace mm→m scaling configuration.
+
+    Returns:
+        ``LiveTargetState`` seeded with the normalized initial target and mode/open.
+    """
     target = _bootstrap_initial_target(
         point_count=point_count,
         radius_mm=radius_mm,
@@ -86,6 +112,20 @@ def update_live_target_from_state(
     radius_mm: float,
     open_out: float | None,
 ) -> None:
+    """Refresh the live morph target from debounced mode/open hand state.
+
+    Skips the update when the normalized XY extent is too small (degenerate
+    or unstable morph layout).
+
+    Args:
+        live_target: Shared target state updated in place when layout is valid.
+        mode_state: Debounced morph mode from the gesture pipeline.
+        right_state: Right-hand openness pipeline state.
+        lp_shape: Left-hand shape-t EMA for ε pair selection.
+        scale: Workspace mm→m scaling configuration.
+        radius_mm: Superellipsoid radius in millimeters.
+        open_out: Override openness; falls back to right-hand or previous target.
+    """
     open_v = float(
         open_out
         if open_out is not None

@@ -13,7 +13,15 @@ def _apply_axis_sign_world_rotation(
     R_world: np.ndarray,
     axis_sign: np.ndarray | None,
 ) -> np.ndarray:
-    """Match translation ``sign * (M @ v)``: conjugate world rotation by diag(axis_sign)."""
+    """Conjugate a world rotation by ``diag(axis_sign)`` to match translation sign flips.
+
+    Args:
+        R_world: Rotation matrix in world/sim coordinates, shape ``(3, 3)``.
+        axis_sign: Per-axis sign multipliers, shape ``(3,)``, or ``None`` to pass through.
+
+    Returns:
+        Signed rotation matrix, shape ``(3, 3)``.
+    """
     if axis_sign is None:
         return np.asarray(R_world, dtype=np.float64).reshape(3, 3)
     s = np.asarray(axis_sign, dtype=np.float64).reshape(3)
@@ -30,7 +38,18 @@ def palm_world_rotvec_from_basis_delta(
     *,
     axis_sign: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Palm ΔR expressed in simulation/world coordinates."""
+    """Express palm basis change as a world-frame rotation vector.
+
+    Args:
+        Mc_rot: Camera→sim rotation matrix, shape ``(3, 3)``, or ``None`` for camera frame.
+        B_current: Current palm orthonormal basis, shape ``(3, 3)``.
+        B_arm: Reference palm basis at arm, shape ``(3, 3)``.
+        axis_sign: Optional per-axis sign applied in world frame.
+
+    Returns:
+        Rotation vector in world coordinates (rad), shape ``(3,)``. Zero when the delta
+        exceeds 180°.
+    """
     B_cur = np.asarray(B_current, dtype=np.float64).reshape(3, 3)
     B0 = np.asarray(B_arm, dtype=np.float64).reshape(3, 3)
     R_delta_cam = B_cur @ B0.T
@@ -46,43 +65,20 @@ def palm_world_rotvec_from_basis_delta(
     return rv
 
 
-def palm_world_rotvec_from_local_delta(
-    Mc_rot: np.ndarray | None,
-    rv_local: np.ndarray,
-    B_arm: np.ndarray,
-    *,
-    axis_sign: np.ndarray | None = None,
-) -> np.ndarray:
-    """Palm-local Δ rotvec expressed through camera→simulation rotation."""
-    del B_arm
-    rv = np.asarray(rv_local, dtype=np.float64).reshape(3).copy()
-    R_local = rotvec_to_R(rv)
-    if Mc_rot is not None:
-        M = np.asarray(Mc_rot, dtype=np.float64).reshape(3, 3)
-        R_world = M @ R_local @ M.T
-    else:
-        R_world = R_local
-    R_world = _apply_axis_sign_world_rotation(R_world, axis_sign)
-    return np.asarray(R_to_rotvec(R_world), dtype=np.float64).reshape(3)
-
-
 def palm_cam_rotvec_from_basis_delta(B_current: np.ndarray, B_arm: np.ndarray) -> np.ndarray:
-    """Intrinsic palm rotation in camera frame (for classify; less false rot on 3D translation)."""
+    """Intrinsic palm rotation in the camera frame (for motion classification).
+
+    Args:
+        B_current: Current palm orthonormal basis, shape ``(3, 3)``.
+        B_arm: Reference palm basis at arm, shape ``(3, 3)``.
+
+    Returns:
+        Camera-frame rotation vector (rad), shape ``(3,)``. Zero when the delta exceeds 180°.
+    """
     R = np.asarray(B_current, dtype=np.float64).reshape(3, 3) @ np.asarray(B_arm, dtype=np.float64).reshape(
         3, 3
     ).T
     rv = np.asarray(R_to_rotvec(R), dtype=np.float64).reshape(3)
-    if float(np.linalg.norm(rv)) > np.deg2rad(180.0):
-        return np.zeros(3, dtype=np.float64)
-    return rv
-
-
-def palm_local_rotvec_from_basis_delta(B_current: np.ndarray, B_arm: np.ndarray) -> np.ndarray:
-    """Palm-frame relative rotvec; local z is palm-normal twist."""
-    R_local = np.asarray(B_arm, dtype=np.float64).reshape(3, 3).T @ np.asarray(
-        B_current, dtype=np.float64
-    ).reshape(3, 3)
-    rv = np.asarray(R_to_rotvec(R_local), dtype=np.float64).reshape(3)
     if float(np.linalg.norm(rv)) > np.deg2rad(180.0):
         return np.zeros(3, dtype=np.float64)
     return rv
@@ -97,7 +93,19 @@ def sanitize_palm_rotvec_apply(
     delta_cam_mm: np.ndarray | None = None,
     max_step_rad: float | None = None,
 ) -> np.ndarray:
-    """Drop rotation only when a large translation jump also causes a basis spike."""
+    """Suppress rotation spikes caused by large translation jumps.
+
+    Args:
+        rv_world: Proposed world rotation vector (rad), shape ``(3,)``.
+        prev_basis: Previous palm basis from the active rotation source, or ``None``.
+        B_current: Current palm basis, shape ``(3, 3)``.
+        Mc_rot: Camera→sim rotation for step measurement in world frame.
+        delta_cam_mm: Frame-to-frame palm center delta in camera mm.
+        max_step_rad: Maximum allowed basis step (rad); defaults to 32°.
+
+    Returns:
+        Sanitized rotation vector (rad), shape ``(3,)`` — zero when a pan+jump spike is detected.
+    """
     rv_w = np.asarray(rv_world, dtype=np.float64).reshape(3)
     step_cap = float(max_step_rad if max_step_rad is not None else np.deg2rad(32.0))
     pan_step_mm = 0.0
@@ -129,10 +137,27 @@ def axis_locked_trans_rot_blend_weights(
     none_below: float = 0.12,
     rot_noise_rad: float = 0.10,
 ) -> tuple[str, float, float]:
-    """Compare normalized translation vs rotation strength; return primary motion + blend weights.
+    """Classify dominant motion and return translation/rotation blend weights.
 
-    Rotation score uses **camera-frame** palm twist (``rv_cam``), not ``M @ R @ M.T`` (inflates on
-  pans). Translation score uses world m **and** raw palm-center mm so metric scale is not lost.
+    Compares normalized translation vs rotation strength. Rotation score uses camera-frame
+    palm twist (``rv_cam``), not ``M @ R @ M.T`` (which inflates on pans). Translation score
+    uses world meters and raw palm-center millimeters.
+
+    Args:
+        delta_world_m: Gated world translation (m), shape ``(3,)``.
+        rv_world_rad: World rotation vector (rad), shape ``(3,)``.
+        trans_on_m: Translation threshold for full motion (m).
+        rot_on_rad: Rotation threshold for full motion (rad).
+        rv_cam_rad: Camera-frame rotation vector for classification.
+        delta_cam_mm: Frame-to-frame palm delta in camera mm.
+        delta_trans_mm: Arm-relative palm translation delta in camera mm.
+        secondary_frac: Blend weight for the secondary motion mode.
+        none_below: Normalized score below which motion is classified as ``none``.
+        rot_noise_rad: Rotation magnitudes below this are treated as noise.
+
+    Returns:
+        ``(motion, w_rot, w_trans)`` where ``motion`` is ``translate`` | ``rotate`` |
+        ``none``, and blend weights are in ``[0, 1]``.
     """
     rv_w = np.asarray(rv_world_rad, dtype=np.float64).reshape(3)
     rv_c = (
@@ -216,7 +241,21 @@ def axis_locked_trans_metric_world_m(
     rot_on_rad: float = 0.011,
     ignore_world_y_when_rotating: bool = True,
 ) -> float:
-    """Translation score for classify — drop world Y when palm is already twisting (stops rot→fwd/back leak)."""
+    """Compute translation score for motion classification.
+
+    Drops world Y when the palm is already twisting to reduce rotation leaking into
+    forward/back translation.
+
+    Args:
+        delta_world_m: World translation (m), shape ``(3,)``.
+        rv_intrinsic_rad: Camera/intrinsic rotation vector (rad), shape ``(3,)``.
+        trans_on_m: Reference translation scale (m).
+        rot_on_rad: Reference rotation scale (rad).
+        ignore_world_y_when_rotating: Zero world Y when rotation exceeds 72% of ``rot_on_rad``.
+
+    Returns:
+        Scalar translation metric (m).
+    """
     d = np.asarray(delta_world_m, dtype=np.float64).reshape(3).copy()
     r = float(np.linalg.norm(np.asarray(rv_intrinsic_rad, dtype=np.float64).reshape(3)))
     if bool(ignore_world_y_when_rotating) and r >= 0.72 * float(max(rot_on_rad, 1e-9)):
@@ -229,7 +268,14 @@ def axis_locked_trans_metric_world_m(
 
 
 def rotvec_to_R(v: np.ndarray) -> np.ndarray:
-    """Rodrigues: rotation vector (axis * angle) -> 3x3."""
+    """Convert a rotation vector to a 3×3 rotation matrix (Rodrigues).
+
+    Args:
+        v: Rotation vector (axis × angle), shape ``(3,)``.
+
+    Returns:
+        Rotation matrix, shape ``(3, 3)``. Identity when ``v`` is near zero.
+    """
     v = np.asarray(v, dtype=np.float64).reshape(3)
     theta = float(np.linalg.norm(v))
     if theta < 1e-12:
@@ -241,7 +287,14 @@ def rotvec_to_R(v: np.ndarray) -> np.ndarray:
 
 
 def R_to_rotvec(R: np.ndarray) -> np.ndarray:
-    """Rotation matrix -> rotation vector (axis * angle), angle in [0, pi]."""
+    """Convert a rotation matrix to a rotation vector (axis × angle).
+
+    Args:
+        R: Rotation matrix, shape ``(3, 3)``.
+
+    Returns:
+        Rotation vector with angle in ``[0, π]``, shape ``(3,)``.
+    """
     R = np.asarray(R, dtype=np.float64).reshape(3, 3)
     c = float(np.clip((float(np.trace(R)) - 1.0) * 0.5, -1.0, 1.0))
     theta = float(np.arccos(c))
@@ -270,7 +323,14 @@ def R_to_rotvec(R: np.ndarray) -> np.ndarray:
 
 
 def R_to_quat(R: np.ndarray) -> np.ndarray:
-    """Rotation matrix → unit quaternion ``(w, x, y, z)``."""
+    """Convert a rotation matrix to a unit quaternion.
+
+    Args:
+        R: Rotation matrix, shape ``(3, 3)``.
+
+    Returns:
+        Unit quaternion ``(w, x, y, z)``, shape ``(4,)``.
+    """
     M = np.asarray(R, dtype=np.float64).reshape(3, 3)
     tr = float(np.trace(M))
     if tr > 0.0:
@@ -305,7 +365,14 @@ def R_to_quat(R: np.ndarray) -> np.ndarray:
 
 
 def quat_to_R(q: np.ndarray) -> np.ndarray:
-    """Unit quaternion ``(w,x,y,z)`` → 3×3 rotation matrix."""
+    """Convert a unit quaternion to a rotation matrix.
+
+    Args:
+        q: Quaternion ``(w, x, y, z)``, shape ``(4,)``.
+
+    Returns:
+        Rotation matrix, shape ``(3, 3)``.
+    """
     w, x, y, z = [float(v) for v in np.asarray(q, dtype=np.float64).reshape(4)]
     return np.array(
         [
@@ -318,7 +385,16 @@ def quat_to_R(q: np.ndarray) -> np.ndarray:
 
 
 def quat_slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
-    """Spherical interpolation; ``t=0`` → ``q0``, ``t=1`` → ``q1``."""
+    """Spherical linear interpolation between two unit quaternions.
+
+    Args:
+        q0: Start quaternion ``(w, x, y, z)``, shape ``(4,)``.
+        q1: End quaternion ``(w, x, y, z)``, shape ``(4,)``.
+        t: Interpolation parameter in ``[0, 1]`` (0 → ``q0``, 1 → ``q1``).
+
+    Returns:
+        Interpolated unit quaternion, shape ``(4,)``.
+    """
     a = np.asarray(q0, dtype=np.float64).reshape(4)
     b = np.asarray(q1, dtype=np.float64).reshape(4)
     a /= max(float(np.linalg.norm(a)), 1e-12)
@@ -341,7 +417,16 @@ def quat_slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
 
 
 def scale_rotation_matrix(R: np.ndarray, *, scale: float, gain: float = 1.0) -> np.ndarray:
-    """Scale a proper rotation about identity, allowing modest gain above 1."""
+    """Scale a proper rotation about identity, allowing modest gain above 1.
+
+    Args:
+        R: Input rotation matrix, shape ``(3, 3)``.
+        scale: Base scale factor in ``[0, 2]`` after clipping with ``gain``.
+        gain: Multiplier applied before clipping (default 1.0).
+
+    Returns:
+        Scaled rotation matrix, shape ``(3, 3)``. Identity when the effective scale is near zero.
+    """
     s = float(np.clip(scale * max(0.0, gain), 0.0, 2.0))
     if s <= 1e-12:
         return np.eye(3, dtype=np.float64)
@@ -358,7 +443,13 @@ def scale_rotation_matrix(R: np.ndarray, *, scale: float, gain: float = 1.0) -> 
 
 
 def sync_left_swarm_pose_output(state: "LeftSwarmPoseState", off: np.ndarray, R: np.ndarray) -> None:
-    """Keep internal pose state aligned with the rigid transform actually applied."""
+    """Keep internal EMA pose state aligned with the rigid transform actually applied.
+
+    Args:
+        state: Left-hand pose state to update.
+        off: Applied world offset (m), shape ``(3,)``.
+        R: Applied world rotation matrix, shape ``(3, 3)``.
+    """
     state.ema_offset = np.asarray(off, dtype=np.float64).reshape(3).copy()
     state.ema_rotvec = np.asarray(R_to_rotvec(R), dtype=np.float64).reshape(3).copy()
 
@@ -369,6 +460,18 @@ def _resolve_cam_world_mats(
     cam_delta_to_world: np.ndarray | None,
     cam_translation_to_world: np.ndarray | None,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Resolve camera→world rotation and translation matrices for this frame.
+
+    Prefers arm-time frozen matrices from ``state`` when present.
+
+    Args:
+        state: Left-hand pose state (may hold frozen arm-time maps).
+        cam_delta_to_world: Live camera-delta→world rotation, shape ``(3, 3)``.
+        cam_translation_to_world: Live camera-delta→world translation matrix.
+
+    Returns:
+        ``(Mc_rot, Mc_trans)`` pair; either entry may be ``None`` when unconfigured.
+    """
     if state.frozen_M_rot is not None:
         Mc_rot = np.asarray(state.frozen_M_rot, dtype=np.float64).reshape(3, 3)
         Mc_trans = (
@@ -405,7 +508,27 @@ def _rigid_target_from_hand(
     trans_deadzone_m: float,
     rot_deadzone_rad: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Absolute rigid target ``(off, R, off_raw, rv_world)`` from arm-relative hand pose."""
+    """Compute absolute rigid target from arm-relative hand pose.
+
+    Args:
+        delta_cam_arm: Palm center delta from arm reference in camera mm, shape ``(3,)``.
+        B: Current palm basis, shape ``(3, 3)``.
+        ref_b_rot: Reference palm basis for rotation, shape ``(3, 3)``.
+        rv_world_override: Optional precomputed world rotvec (e.g. webcam basis).
+        Mc_rot: Camera→sim rotation matrix.
+        Mc_trans: Camera→sim translation matrix.
+        sign: Per-axis sign multipliers, shape ``(3,)``.
+        trans_scale: Translation scale (mm→m factor applied via ``Mc_trans``).
+        rot_scale: Rotation scale factor.
+        rot_gain: Rotation gain multiplier.
+        rot_world_z_scale: Extra scale on world Z rotation component.
+        trans_deadzone_m: Translation deadzone (m).
+        rot_deadzone_rad: Rotation deadzone (rad).
+
+    Returns:
+        ``(off, R, off_raw, rv_world)`` — gated offset (m), rotation matrix, raw offset (m),
+        and world rotvec before deadzone (rad).
+    """
     if Mc_trans is not None:
         off_raw = float(trans_scale) * (Mc_trans @ delta_cam_arm) * sign
     else:
@@ -444,6 +567,20 @@ def _smooth_rigid_pose(
     max_offset_m: float,
     max_trans_step_m: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Step held pose toward target with translation and rotation caps.
+
+    Args:
+        off_hold: Current held offset (m), shape ``(3,)``.
+        R_hold: Current held rotation matrix, shape ``(3, 3)``.
+        off_tgt: Target offset (m), shape ``(3,)``.
+        R_tgt: Target rotation matrix, shape ``(3, 3)``.
+        max_step_rad: Maximum rotation step per frame (rad).
+        max_offset_m: Clamp on offset magnitude (m); ``0`` disables.
+        max_trans_step_m: Maximum translation step per frame (m); ``0`` disables.
+
+    Returns:
+        ``(off, R)`` after capping — smoothed offset (m) and rotation matrix.
+    """
     off0 = np.asarray(off_hold, dtype=np.float64).reshape(3)
     off1 = np.asarray(off_tgt, dtype=np.float64).reshape(3)
     step = off1 - off0
@@ -474,7 +611,18 @@ def _reject_noisy_pose_frame(
     depth_hold: bool = False,
     depth_outlier_prev: bool = False,
 ) -> tuple[bool, str]:
-    """True → soft-reject (partial blend). Only obvious tracking loss (too few MCPs)."""
+    """Soft-reject noisy pose frames based on tracking quality.
+
+    Args:
+        delta_cam: Frame-to-frame palm center delta in camera mm, shape ``(3,)``.
+        mcp_valid: Count of valid MCP landmarks used for palm geometry.
+        depth_hold: Whether depth outlier hold is active this frame.
+        depth_outlier_prev: Whether depth outlier hold was active on the previous frame.
+
+    Returns:
+        ``(rejected, reason)`` — ``True`` triggers partial blend/hold; ``reason`` is
+        ``mcp`` | ``jump`` | ``""``.
+    """
     if int(mcp_valid) < 3:
         return True, "mcp"
     dc = np.asarray(delta_cam, dtype=np.float64).reshape(3)

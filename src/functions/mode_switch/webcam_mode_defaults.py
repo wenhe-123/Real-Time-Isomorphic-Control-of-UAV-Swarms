@@ -32,10 +32,8 @@ HAND_3D_SOURCE_MP = "mp"
 HAND_3D_SOURCE_FUSED = "fused"
 HAND_FRAME_SCALED = "scaled"
 HAND_FRAME_PALM_PLANE = "palm_plane"
-HAND_FRAME_METRIC_MM = "metric_mm"
 
 PLOT_EVERY_N_FRAMES = 2
-ENABLE_3D_PLOT = True
 
 PLANE_SNAP_ON = 0.82
 PLANE_SNAP_OFF = 0.78
@@ -48,10 +46,6 @@ HUD_METRIC_STEP = 0.05
 
 SNAP_SHOW_AFTER_FRAMES = 6
 SNAP_HOLD_AFTER_RELEASE_FRAMES = 10
-EPSILON_TRANSITION_K = 0.2
-PLOT_EVERY_N_MAX = 16
-PLOT_ADAPT_UP_FPS = 22.0
-PLOT_ADAPT_DOWN_FPS = 27.0
 
 MODE_EXTEND_MIN = 0.62
 MODE_TIER_GAP = 0.38
@@ -59,10 +53,26 @@ MODE_DEBOUNCE_FRAMES = 7
 
 
 def palm_center_and_scale(hand_points: Sequence[Tuple[float, float, float]]):
+    """Compute palm centroid and scale using runtime wrist/MCP constants.
+
+    Args:
+        hand_points: Sequence of 21 hand landmarks.
+
+    Returns:
+        Tuple ``(palm_center, scale)`` from shared ``palm_center_and_scale``.
+    """
     return _shared_palm_center_and_scale(hand_points, WRIST_ID, MCP_IDS)
 
 
 def classify_mode_from_fingers(hand_points: Sequence[Tuple[float, float, float]]):
+    """Classify morph mode M1–M5 using runtime extension thresholds.
+
+    Args:
+        hand_points: Hand landmarks (normalized or metric).
+
+    Returns:
+        Tuple ``(mode, tier_count, debug)`` from shared finger-tier classifier.
+    """
     return _shared_classify_mode_from_fingers(
         hand_points,
         mode_count_tip_ids=MODE_COUNT_TIP_IDS,
@@ -74,7 +84,16 @@ def classify_mode_from_fingers(hand_points: Sequence[Tuple[float, float, float]]
 
 
 def classify_mode_from_fingers_webcam_image(hand_points: Sequence[Tuple[float, float, float]]):
-    """2D image-plane landmarks: slightly relaxed thumb promote for M4→M5 on USB cam."""
+    """Classify mode from 2D image-plane landmarks with relaxed thumb promote.
+
+    Slightly relaxed thumb thresholds help M4→M5 on USB cameras.
+
+    Args:
+        hand_points: Image-plane pseudo-mm landmarks from USB MediaPipe.
+
+    Returns:
+        Tuple ``(mode, tier_count, debug)`` from shared finger-tier classifier.
+    """
     return _shared_classify_mode_from_fingers(
         hand_points,
         mode_count_tip_ids=MODE_COUNT_TIP_IDS,
@@ -89,6 +108,14 @@ def classify_mode_from_fingers_webcam_image(hand_points: Sequence[Tuple[float, f
 
 
 def analyze_hand_topology(hand_points):
+    """Run topology PCA analysis using runtime gamma and label thresholds.
+
+    Args:
+        hand_points: Sequence of 21 hand landmarks.
+
+    Returns:
+        Topology analysis dict, or ``None`` when too few valid points remain.
+    """
     return analyze_hand_topology_common(
         hand_points,
         wrist_id=WRIST_ID,

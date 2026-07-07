@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 
 
 def closest_pair(points: np.ndarray) -> tuple[float, int, int]:
-    """Smallest pairwise distance (m) and drone indices (i, j)."""
+    """Find the closest pair of drones in a target formation.
+
+    Args:
+        points: Drone positions, shape ``(n, 3+)`` in meters.
+
+    Returns:
+        ``(distance_m, index_i, index_j)`` for the minimum pairwise separation.
+        Returns ``(inf, -1, -1)`` when fewer than two points are present.
+    """
     p = np.asarray(points, dtype=np.float64)
     n = int(p.shape[0])
     if n < 2:
@@ -20,34 +26,3 @@ def closest_pair(points: np.ndarray) -> tuple[float, int, int]:
     flat = d2[iu, ju]
     k = int(np.argmin(flat))
     return float(np.sqrt(float(flat[k]))), int(iu[k]), int(ju[k])
-
-
-@dataclass(frozen=True)
-class FormationSpacingReport:
-    """Spacing audit before/after guards (compare to axswarm ``collision_envelope``)."""
-
-    label: str
-    n_drones: int
-    open_alpha: float
-    min_mm: float
-    min_raw_m: float
-    min_safe_m: float
-    pair_raw: tuple[int, int]
-    pair_safe: tuple[int, int]
-    min_separation_m: float
-    collision_envelope_m: float
-
-    def print_lines(self) -> None:
-        gap_raw = self.min_separation_m - self.min_raw_m
-        env = self.collision_envelope_m
-        print(
-            f"[spacing {self.label}] n={self.n_drones} open={self.open_alpha:.2f} "
-            f"mm_min={self.min_mm:.1f}mm | "
-            f"raw={self.min_raw_m:.3f}m pair={self.pair_raw} "
-            f"(Δvs min_sep={gap_raw:+.3f}m, vs axswarm_env={self.min_raw_m - env:+.3f}m)"
-        )
-        if self.min_raw_m < env - 0.02:
-            print(
-                f"  WARN: morph→world spacing tighter than axswarm collision_envelope ({env:.2f}m); "
-                f"raise morph_world_scale in online_defaults.yaml or axswarm collision_envelope."
-            )

@@ -68,6 +68,15 @@ class LeftPoseRuntime:
 def _left_axis_sign_from_cli(
     args: argparse.Namespace, defaults: OnlineDefaults
 ) -> tuple[float, float, float]:
+    """Apply CLI axis flip flags to yaml default left-hand axis signs.
+
+    Args:
+        args: Parsed CLI namespace with optional ``left_flip_x/y/z`` flags.
+        defaults: Online defaults bundle containing base axis signs.
+
+    Returns:
+        Per-axis sign tuple ``(sx, sy, sz)`` after CLI overrides.
+    """
     base = defaults.left_hand_pose.left_axis_sign
     return (
         base[0] * (-1.0 if bool(getattr(args, "left_flip_x", False)) else 1.0),
@@ -86,6 +95,20 @@ def _build_left_tuning(
     left_axis_sign: tuple[float, float, float],
     direct_follow: bool,
 ) -> LeftPoseTuning:
+    """Assemble immutable left-hand pose tuning from yaml defaults and CLI flags.
+
+    Args:
+        args: Parsed CLI namespace.
+        panels: Debug panel flags affecting viz toggles.
+        defaults: Online defaults bundle.
+        fps: Target loop rate (Hz).
+        show_webcam_preview: Whether dual webcam preview is enabled.
+        left_axis_sign: Per-axis sign multipliers after CLI flips.
+        direct_follow: When ``True``, relax rotation gates for direct follow mode.
+
+    Returns:
+        Frozen ``LeftPoseTuning`` instance for one online run.
+    """
     lp = defaults.left_hand_pose
     rot_scale = float(lp.left_rot_scale)
     rot_gain = float(lp.left_rot_gain)
@@ -143,7 +166,18 @@ def build_left_pose_runtime(
     fps: int,
     show_webcam_preview: bool,
 ) -> LeftPoseRuntime:
-    """Build left pose runtime from yaml defaults and minimal CLI overrides."""
+    """Build left-hand swarm pose runtime from yaml defaults and CLI overrides.
+
+    Args:
+        args: Parsed CLI namespace.
+        panels: Debug panel flags.
+        defaults: Online defaults bundle; uses ``ONLINE_DEFAULTS`` when ``None``.
+        fps: Target loop rate (Hz).
+        show_webcam_preview: Whether dual webcam preview is enabled.
+
+    Returns:
+        ``LeftPoseRuntime`` bundle with enable flags, camera preset, and nested tuning.
+    """
     d = ONLINE_DEFAULTS if defaults is None else defaults
     lp = d.left_hand_pose
     direct_follow = bool(lp.left_rot_direct_follow) and not bool(

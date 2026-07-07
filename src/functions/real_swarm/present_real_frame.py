@@ -12,7 +12,12 @@ from functions.display_sim.online_present_input import PresentFrameInput
 
 
 def present_real_online_frame(inp: PresentFrameInput) -> None:
-    """Draw HUD and stream ``cmd_target`` to physical drones."""
+    """Draw Orbbec HUD and stream filtered ``cmd_target`` to physical drones.
+
+    Args:
+        inp: Per-frame presentation bundle (boot, cfg, gesture, filter output,
+            raw target, timing hooks, and arm/phase edge flags).
+    """
     boot = inp.boot
     cfg = inp.cfg
     gest = inp.gest

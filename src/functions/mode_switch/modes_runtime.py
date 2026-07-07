@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import cv2
 import numpy as np
 
 # While left palm rotation or large translation is active, morph mode (M1..M5) is frozen.
@@ -70,10 +69,26 @@ ALL_MODES_HINT = " ".join([MODE_1.hint, MODE_2.hint, MODE_3.hint, MODE_4.hint, M
 
 
 def topology_label_from_morph_alpha(alpha: float) -> str:
+    """Map morph alpha to topology label using runtime plane/sphere thresholds.
+
+    Args:
+        alpha: Morph openness blend in ``[0, 1]``.
+
+    Returns:
+        ``"plane"``, ``"sphere"``, or ``"intermediate"``.
+    """
     return topology_label_from_alpha(alpha, plane_thr=TOPO_ALPHA_PLANE, sphere_thr=TOPO_ALPHA_SPHERE)
 
 
 def palm_plane_curl_metrics(points_21):
+    """Compute palm-plane curl metrics using shared four-finger tip indices.
+
+    Args:
+        points_21: 21 landmarks in palm-plane normalized coordinates.
+
+    Returns:
+        Curl metric dict from ``palm_plane_curl_metrics`` (may contain ``None`` fields).
+    """
     return _palm_plane_curl_metrics_shared(points_21, fingertip_ids_four=FINGERTIP_IDS_FOUR)
 
 
@@ -94,7 +109,18 @@ def obvious_left_rotation_for_mode_hold(
     blend_thresh: float = DEFAULT_MODE_ROT_FREEZE_BLEND,
     rv_deg_min: float = DEFAULT_MODE_ROT_FREEZE_RV_DEG,
 ) -> bool:
-    """True when the previous pose step classified obvious palm rotation (freeze M1..M5)."""
+    """Return True when the prior pose step had obvious palm rotation.
+
+    Used to freeze morph mode M1–M5 during left-swarm rotation.
+
+    Args:
+        left_pose_state: Left swarm pose state object.
+        blend_thresh: Minimum rotation blend weight to count as rotating.
+        rv_deg_min: Minimum angular velocity magnitude in degrees per second.
+
+    Returns:
+        True when rotation should hold the current morph mode.
+    """
     if left_pose_state is None or not bool(getattr(left_pose_state, "enabled", False)):
         return False
     lm = str(getattr(left_pose_state, "last_axis_motion", ""))
@@ -120,10 +146,20 @@ def obvious_left_translation_for_mode_hold(
     arm_mm_min: float = DEFAULT_MODE_TRANS_FREEZE_ARM_MM,
     frame_idle_mm: float = DEFAULT_MODE_TRANS_FREEZE_FRAME_IDLE_MM,
 ) -> bool:
-    """True when the previous pose step had obvious palm translation (freeze M1..M5).
+    """Return True when the prior pose step had obvious palm translation.
 
-    Uses palm center delta vs the previous frame only. ``last_delta_h_world`` and arm
-    offset must not count — the hand can stay displaced while idle without locking mode.
+    Uses palm center delta vs the previous frame only; accumulated arm offset
+    must not count as motion while the hand is idle.
+
+    Args:
+        left_pose_state: Left swarm pose state object.
+        blend_thresh: Minimum translation blend weight.
+        cmd_m_min: Unused (reserved); kept for API compatibility.
+        arm_mm_min: Minimum palm delta norm to count as large translation (mm).
+        frame_idle_mm: Delta below this is treated as frame noise (mm).
+
+    Returns:
+        True when translation should hold the current morph mode.
     """
     _ = cmd_m_min
     if left_pose_state is None or not bool(getattr(left_pose_state, "enabled", False)):
@@ -151,7 +187,19 @@ def left_swarm_motion_holds_mode(
     trans_cmd_m_min: float = DEFAULT_MODE_TRANS_FREEZE_CMD_M,
     trans_arm_mm_min: float = DEFAULT_MODE_TRANS_FREEZE_ARM_MM,
 ) -> bool:
-    """True when prior left-swarm step was obvious rotation or large translation."""
+    """Return True when prior left-swarm motion should freeze morph mode.
+
+    Args:
+        left_pose_state: Left swarm pose state object.
+        rot_blend_thresh: Rotation blend threshold (see ``obvious_left_rotation``).
+        rv_deg_min: Minimum rotation rate in deg/s.
+        trans_blend_thresh: Translation blend threshold.
+        trans_cmd_m_min: Passed through to translation hold check.
+        trans_arm_mm_min: Minimum palm delta for translation hold (mm).
+
+    Returns:
+        True when either rotation or large translation holds mode.
+    """
     return bool(
         obvious_left_rotation_for_mode_hold(
             left_pose_state,
@@ -177,7 +225,20 @@ def mode_frozen_for_rotation(
     trans_cmd_m_min: float = DEFAULT_MODE_TRANS_FREEZE_CMD_M,
     trans_arm_mm_min: float = DEFAULT_MODE_TRANS_FREEZE_ARM_MM,
 ) -> bool:
-    """Latch or live left-swarm motion flag — morph mode must not change this frame."""
+    """Return True when morph mode must not change this frame.
+
+    Args:
+        mode_state: Mutable mode state with optional freeze latch.
+        left_pose_state: Left swarm pose state object.
+        blend_thresh: Rotation blend threshold.
+        rv_deg_min: Minimum rotation rate in deg/s.
+        trans_blend_thresh: Translation blend threshold.
+        trans_cmd_m_min: Translation command threshold (mm).
+        trans_arm_mm_min: Minimum palm delta for translation hold (mm).
+
+    Returns:
+        True when mode classify should be skipped or held.
+    """
     if int(mode_state.mode_freeze_latch) > 0:
         return True
     return left_swarm_motion_holds_mode(
@@ -201,7 +262,20 @@ def tick_mode_rotation_freeze_latch(
     trans_cmd_m_min: float = DEFAULT_MODE_TRANS_FREEZE_CMD_M,
     trans_arm_mm_min: float = DEFAULT_MODE_TRANS_FREEZE_ARM_MM,
 ) -> None:
-    """After pose update: extend latch so mode stays frozen through brief motion gaps."""
+    """Extend the mode-freeze latch after a pose update.
+
+    Keeps morph mode frozen through brief gaps in detected motion.
+
+    Args:
+        mode_state: Mutable mode state whose latch is updated in place.
+        left_pose_state: Left swarm pose state from the just-finished step.
+        latch_frames: Latch duration in frames when motion is detected.
+        blend_thresh: Rotation blend threshold.
+        rv_deg_min: Minimum rotation rate in deg/s.
+        trans_blend_thresh: Translation blend threshold.
+        trans_cmd_m_min: Translation command threshold (mm).
+        trans_arm_mm_min: Minimum palm delta for translation hold (mm).
+    """
     if left_swarm_motion_holds_mode(
         left_pose_state,
         rot_blend_thresh=float(blend_thresh),
@@ -217,13 +291,23 @@ def tick_mode_rotation_freeze_latch(
 
 
 def consume_mode_rotation_freeze_latch(mode_state: ModeState) -> None:
-    """Call once per frame when mode freeze was applied."""
+    """Decrement the mode-freeze latch by one frame.
+
+    Call once per frame when mode freeze was applied.
+
+    Args:
+        mode_state: Mutable mode state whose latch is decremented in place.
+    """
     if int(mode_state.mode_freeze_latch) > 0:
         mode_state.mode_freeze_latch = int(mode_state.mode_freeze_latch) - 1
 
 
 def clear_mode_rotation_freeze_latch(mode_state: ModeState) -> None:
-    """Drop morph-mode freeze latch (e.g. on left-swarm arm / disarm)."""
+    """Clear the morph-mode freeze latch (e.g. on left-swarm arm/disarm).
+
+    Args:
+        mode_state: Mutable mode state whose latch is zeroed in place.
+    """
     mode_state.mode_freeze_latch = 0
 
 
@@ -276,13 +360,28 @@ def update_mode_state(
     rotating: bool = False,
     orbbec_thumb_vis: float | None = None,
 ) -> Tuple[int, int]:
-    """Update left-hand morph mode from finger geometry.
+    """Update left-hand morph mode from finger geometry with debounce.
 
-    When ``mode_vis_min > 0`` and ``hand_visibility_min`` is below it, **hold** the current
-    ``morph_mode`` unless ``dual_mode_assist`` and ``pts_left_webcam`` allow USB-webcam classify.
+    When ``mode_vis_min > 0`` and hand visibility is below it, hold the current
+    ``morph_mode`` unless dual webcam assist provides alternate landmarks.
+    When ``hold_mode`` is true, skip classify so palm twist does not change M1–M5.
 
-    When ``hold_mode`` is true (e.g. L-swarm rotation or large translation active), skip classify entirely so
-    finger geometry changes during palm twist do not change M1..M5.
+    Args:
+        pts_left: Orbbec 3D hand landmarks for the left hand.
+        mode_state: Mutable ``ModeState`` updated in place.
+        classify_mode_fn: Callable returning ``(mode_raw, tier, debug)``.
+        debounce_frames: Stable frames required before ``morph_mode`` updates.
+        mode_smooth: Unused (kept for API compatibility).
+        mode_vis_min: Minimum Orbbec visibility to trust depth classify.
+        hand_visibility_min: Current minimum joint visibility on Orbbec.
+        hold_mode: If True, freeze mode unless dual webcam assist applies.
+        pts_left_webcam: Optional USB image-plane landmarks for dual fusion.
+        dual_mode_assist: Enable Orbbec+webcam mode fusion.
+        rotating: Whether left-hand rotation is active (M5 guard).
+        orbbec_thumb_vis: Thumb-tip visibility on Orbbec.
+
+    Returns:
+        Tuple ``(mode_raw, tier_count)``.
     """
     tier_count = -1
     if pts_left is None and pts_left_webcam is None:
@@ -375,6 +474,26 @@ def update_open_state(
     follow_k: float = 0.45,
     follow_max_step: float = 0.20,
 ) -> Optional[float]:
+    """Update right-hand open/close morph alpha with snap hysteresis.
+
+    Args:
+        pts_right: Right-hand landmark sequence (21 joints).
+        right_state: Mutable ``RightHandState`` updated in place.
+        analyze_topology_fn: Callable returning topology analysis dict.
+        open_smooth: EMA alpha for free (unsnapped) open value.
+        plane_snap_on: Enter plane snap when free alpha exceeds this.
+        plane_snap_off: Exit plane snap when free alpha falls below this.
+        sphere_snap_on: Enter sphere snap when free alpha falls below this.
+        sphere_snap_off: Exit sphere snap when free alpha exceeds this.
+        topology_analysis: Precomputed analysis dict (optional).
+        snap_soft_k: Soft snap approach rate toward 0 or 1.
+        snap_soft_max_step: Max per-frame step while snapped.
+        follow_k: Follow rate when not snapped.
+        follow_max_step: Max per-frame step when following free alpha.
+
+    Returns:
+        Smoothed open output in ``[0, 1]``, or last value when input is missing.
+    """
     if pts_right is None:
         return right_state.last_open_out
 
@@ -437,6 +556,14 @@ def update_snap_visual_state(
     snap_show_after_frames: int,
     snap_hold_after_release_frames: int,
 ):
+    """Update snap HUD visual state with show/hold timing.
+
+    Args:
+        snap_state: Current snap mode (``"plane"``, ``"sphere"``, or ``None``).
+        snap_visual_state: Mutable ``SnapVisualState`` updated in place.
+        snap_show_after_frames: Frames stable before showing snap indicator.
+        snap_hold_after_release_frames: Frames to hold indicator after release.
+    """
     if snap_state is None:
         snap_visual_state.snap_stable_frames = 0
         if snap_visual_state.snap_vis_state is not None:
@@ -481,6 +608,32 @@ def update_3d_plot_modes(
     clamp01_fn: Callable,
     topo_radius_override_mm: float | None = None,
 ):
+    """Refresh dual 3D matplotlib axes with hand skeleton and morph preview.
+
+    Args:
+        ax_hand: Hand skeleton axis (may be ``None``).
+        ax_topo: Morph topology preview axis.
+        hands_3d: List of per-hand 21×3 landmark arrays.
+        morph_mode: Active morph mode 1–5.
+        morph_alpha_smoothed: Optional smoothed open alpha override.
+        control_label: Extra title suffix for the hand axis.
+        shape_normalized: Whether axes use normalized coordinates.
+        hand_frame: Hand frame mode string (``"scaled"``, ``"palm_plane"``, etc.).
+        hand_3d_source: ``"mp"`` or fused depth source label.
+        hand_frame_palm_plane: Palm-plane frame identifier string.
+        hand_connections: Skeleton edge list for plotting.
+        norm_axis_halflim: Half-axis limit in normalized mode.
+        morph_axis_lim_mm: Axis limit in metric mm mode.
+        analyze_hand_topology_fn: Topology analysis callable.
+        draw_mode1_fn: Matplotlib draw callable for mode 1.
+        draw_mode2_fn: Matplotlib draw callable for mode 2.
+        draw_mode3_fn: Matplotlib draw callable for modes 3–5.
+        clamp01_fn: Clamp helper for fallback alpha values.
+        topo_radius_override_mm: Optional fixed morph preview radius.
+
+    Returns:
+        List of topology analysis dicts (one per valid hand).
+    """
     src = "MediaPipe" if hand_3d_source == "mp" else "depth+MP fused"
     title = f"Hand 3D ({src}) joints 0..20"
     if control_label:
@@ -600,6 +753,20 @@ def build_modes_hud_lines(
     planarity: float,
     isotropy: float,
 ):
+    """Build two-line HUD text for morph mode and topology metrics.
+
+    Args:
+        morph_mode: Active morph mode 1–5.
+        topo_label: Topology label string (``"plane"``, etc.).
+        open_disp: Display open value after remap.
+        free_disp: Unsnapped (free) open display value.
+        spread: Finger spread metric.
+        planarity: PCA planarity metric.
+        isotropy: PCA isotropy metric.
+
+    Returns:
+        List of two HUD text lines.
+    """
     return [
         f"M{morph_mode}  open:{open_disp:.2f}  free:{free_disp:.2f}  topo:{topo_label}",
         f"spread:{spread:.2f}  plan:{planarity:.2f}  iso:{isotropy:.2f}",
@@ -625,7 +792,25 @@ def process_left_mode(
     rotating: bool = False,
     orbbec_thumb_vis: float | None = None,
 ) -> Tuple[int, int]:
-    """Update left-hand mode state and return (mode_raw, tier_count)."""
+    """Update left-hand mode state and return raw mode plus tier count.
+
+    Args:
+        keypoints_3d: Per-hand 3D landmark lists from depth fusion.
+        idx_left: Left-hand index in ``keypoints_3d``, or ``None``.
+        mode_state: Mutable ``ModeState``.
+        mp_result: MediaPipe result for visibility scoring.
+        mode_vis_min: Minimum visibility to trust Orbbec classify.
+        hold_mode: Freeze mode during left-swarm motion.
+        debounce_frames: Override default debounce frame count.
+        webcam_mp_result: Cached USB MediaPipe result for dual assist.
+        webcam_idx_left: Left-hand index in the USB result.
+        dual_mode_assist: Enable Orbbec+webcam fusion.
+        rotating: Whether left-hand rotation is active.
+        orbbec_thumb_vis: Thumb-tip visibility override (optional).
+
+    Returns:
+        Tuple ``(mode_raw, tier_count)``.
+    """
     from functions.dual_cam.mp_hand_utils import extract_image_plane_points_mm_result
     from functions.swarm_motion.left_hand_swarm_pose import mp_hand_visibility_scores
 
@@ -665,7 +850,18 @@ def process_right_open(
     mp_result=None,
     open_vis_min: float = 0.0,
 ) -> Tuple[List, Optional[float]]:
-    """Update right-hand open state and return (hands_3d_for_plot, open_out)."""
+    """Update right-hand open state and prepare plot landmarks.
+
+    Args:
+        keypoints_3d: Per-hand 3D landmark lists from depth fusion.
+        idx_right: Right-hand index in ``keypoints_3d``, or ``None``.
+        right_state: Mutable ``RightHandState``.
+        mp_result: MediaPipe result for visibility gating.
+        open_vis_min: Minimum visibility to update open (hold last when low).
+
+    Returns:
+        Tuple ``(hands_3d_for_plot, open_out)``.
+    """
     from functions.swarm_motion.left_hand_swarm_pose import mp_hand_visibility_scores
 
     hands_3d: List = []
@@ -698,59 +894,13 @@ def process_right_open(
     return hands_3d, open_out
 
 
-def draw_bottom_status(
-    frame,
-    morph_mode: int,
-    mode_raw: int,
-    tier_count: int,
-    idx_left: Optional[int],
-    idx_right: Optional[int],
-    open_out: Optional[float],
-):
-    hint_parts = []
-    if idx_left is None:
-        hint_parts.append("no LEFT (mode)")
-    if idx_right is None:
-        hint_parts.append("no RIGHT (open frozen)")
-    hint = "  |  ".join(hint_parts) if hint_parts else "L=mode R=open"
-    otxt = f"{open_out:.2f}" if open_out is not None else "-"
-    cv2.putText(
-        frame,
-        f"M{morph_mode} raw:{mode_raw}  open:{otxt}  tier:{tier_count if tier_count >= 0 else '-'}  {hint}"[:95],
-        (16, frame.shape[0] - 22),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
-        (0, 255, 0),
-        2,
-        cv2.LINE_AA,
-    )
-
-
-def overlay_mode_open_wrist_labels(
-    *,
-    frame,
-    result,
-    idx_left: Optional[int],
-    idx_right: Optional[int],
-    morph_mode: int,
-    open_out: Optional[float],
-    overlay_wrist_labels_fn: Callable,
-) -> None:
-    """Overlay compact labels at detected wrist(s): left=M#, right=open value.
-
-    The actual drawing implementation is injected via ``overlay_wrist_labels_fn`` to keep this module
-    independent from the concrete runtime (Orbbec/webcam/dual).
-    """
-    wrist_lbl: Dict[int, str] = {}
-    if idx_left is not None:
-        wrist_lbl[int(idx_left)] = f"M{int(morph_mode)}"
-    if idx_right is not None:
-        wrist_lbl[int(idx_right)] = f"open {float(open_out):.2f}" if open_out is not None else "open —"
-    if wrist_lbl:
-        overlay_wrist_labels_fn(frame, result, wrist_lbl)
-
-
 def update_snap_visual_state_for_modes(snap_state: Optional[str], snap_vis_state: SnapVisualState):
+    """Update snap HUD visuals using runtime default timing constants.
+
+    Args:
+        snap_state: Current snap mode (``"plane"``, ``"sphere"``, or ``None``).
+        snap_vis_state: Mutable ``SnapVisualState`` updated in place.
+    """
     update_snap_visual_state(
         snap_state,
         snap_visual_state=snap_vis_state,
@@ -771,6 +921,20 @@ def update_hud_cache(
     open_remap: Optional[Tuple[float, float]],
     snap_vis_state: Optional[str],
 ):
+    """Refresh cached HUD metric text when values change enough or on interval.
+
+    Args:
+        runtime: Mutable ``RuntimeState`` whose ``hud_cache`` is updated.
+        frame_idx: Current frame index for periodic refresh.
+        analyses: Topology analysis dicts from the current frame.
+        hands_3d: Hand landmarks used for optional curl metrics.
+        hand_frame: Hand frame mode string.
+        morph_mode: Active morph mode 1–5.
+        open_out: Smoothed open output.
+        open_free_ema: Unsnapped open EMA from right-hand state.
+        open_remap: Optional ``(lo, hi)`` display remap bounds.
+        snap_vis_state: Unused (kept for API compatibility).
+    """
     a0 = analyses[0]
     topo_lbl = topology_label_from_morph_alpha(
         float(open_free_ema) if open_free_ema is not None else float(a0["morph_alpha"])

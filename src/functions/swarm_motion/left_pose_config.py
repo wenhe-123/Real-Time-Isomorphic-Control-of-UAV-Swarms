@@ -30,6 +30,17 @@ DEFAULT_LEFT_PALM_BASIS = "middle_thumb"
 
 
 def palm_basis_pair_indices(preset: str) -> tuple[int, int]:
+    """Look up MediaPipe landmark indices for a named palm basis preset.
+
+    Args:
+        preset: Preset key (e.g. ``middle_thumb``, ``index_middle``).
+
+    Returns:
+        ``(landmark_a, landmark_b)`` index pair defining the palm basis.
+
+    Raises:
+        ValueError: If ``preset`` is not in ``LEFT_PALM_BASIS_PRESETS``.
+    """
     key = str(preset).strip().lower()
     if key not in LEFT_PALM_BASIS_PRESETS:
         keys = ", ".join(sorted(LEFT_PALM_BASIS_PRESETS))
@@ -64,14 +75,32 @@ def build_sim_from_cam_matrices(
     *,
     image_y_to_world_z: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(M_rot, M_trans)`` embedding depth-camera mm into simulation coordinates."""
+    """Build camera→simulation embedding matrices for depth-camera deltas.
+
+    Args:
+        preset: Camera preset name (``camera`` | ``legacy`` | ``fwd_y`` | ``flip_depth``).
+        image_y_to_world_z: Scale on world-Z row of the translation matrix (``0``–``1``).
+
+    Returns:
+        ``(M_rot, M_trans)`` — rotation and translation maps from camera mm to sim coords.
+    """
     M_rot = left_cam_preset_rotation(preset)
     M_trans = make_cam_translation_matrix(M_rot, image_y_to_world_z=float(image_y_to_world_z))
     return M_rot, M_trans
 
 
 def left_cam_preset_rotation(preset: str) -> np.ndarray:
-    """Return a copy of the orthonormal rotation for ``preset`` (``camera`` | ``legacy`` | ``fwd_y`` | ``flip_depth``)."""
+    """Return the orthonormal camera→sim rotation for a named preset.
+
+    Args:
+        preset: Preset key (``camera`` | ``legacy`` | ``fwd_y`` | ``flip_depth``).
+
+    Returns:
+        Rotation matrix copy, shape ``(3, 3)``.
+
+    Raises:
+        ValueError: If ``preset`` is unknown.
+    """
     key = str(preset).strip().lower()
     if key not in LEFT_CAM_PRESET_ROT:
         keys = ", ".join(sorted(LEFT_CAM_PRESET_ROT))
@@ -80,10 +109,17 @@ def left_cam_preset_rotation(preset: str) -> np.ndarray:
 
 
 def make_cam_translation_matrix(M_rot: np.ndarray, *, image_y_to_world_z: float = 0.0) -> np.ndarray:
-    """World mm delta from camera mm delta: ``M_trans @ v`` with same XY rows as ``M_rot``.
+    """Build a translation map from camera mm deltas to world mm deltas.
 
-    World-Z row is ``M_rot[2,:] * image_y_to_world_z`` so ``0`` disables altitude from camera Y
-    (avoids near/far coupling into ``wz``). ``1`` restores full third row like rotation.
+    Uses the same XY rows as ``M_rot``. The world-Z row is scaled by
+    ``image_y_to_world_z`` so ``0`` disables altitude from camera Y.
+
+    Args:
+        M_rot: Camera→sim rotation matrix, shape ``(3, 3)``.
+        image_y_to_world_z: Scale on the third row in ``[0, 1]`` (``1`` restores full row).
+
+    Returns:
+        Translation matrix ``M_trans``, shape ``(3, 3)``.
     """
     M = np.asarray(M_rot, dtype=np.float64).reshape(3, 3).copy()
     s = float(np.clip(image_y_to_world_z, 0.0, 1.0))

@@ -25,6 +25,14 @@ class SimSwarmExecutor:
         ctrl_freq: float,
         max_sim_substeps: int,
     ):
+        """Wire a Crazyflow sim instance to the online prearm / axswarm interface.
+
+        Args:
+            sim: Connected Crazyflow simulation handle.
+            ground_layout: Ground rest positions in sim meters, shape ``(N, 3)``.
+            ctrl_freq: Control loop frequency (Hz) for HL maneuvers and setpoints.
+            max_sim_substeps: Maximum MuJoCo substeps per ``track_frame`` call.
+        """
         self.sim = sim
         self._ground_layout = np.asarray(ground_layout, dtype=np.float32)
         self.ctrl_freq = float(ctrl_freq)
@@ -35,16 +43,33 @@ class SimSwarmExecutor:
 
     @property
     def control_halted(self) -> bool:
+        """Return whether low-level axswarm setpoint streaming is paused.
+
+        Returns:
+            ``True`` during high-level maneuvers or before takeoff.
+        """
         return bool(self._control_halted)
 
     def get_sim_track_positions(
         self, morph_fallback: np.ndarray, n_morph: int
     ) -> np.ndarray | None:
+        """Return current sim drone positions for debug overlay.
+
+        Args:
+            morph_fallback: Unused; kept for API parity with real executor.
+            n_morph: Unused; kept for API parity with real executor.
+
+        Returns:
+            Positions in sim meters, shape ``(n_drones, 3)``.
+        """
         del morph_fallback, n_morph
         return np.asarray(self.sim.data.states.pos[0], dtype=np.float32)
 
     def pause_setpoints_for_hl(self) -> None:
-        """Stop axswarm setpoint stream before HL maneuver (matches real swarm)."""
+        """Stop axswarm setpoint stream before a high-level maneuver.
+
+        Matches :meth:`RealSwarmExecutor.pause_setpoints_for_hl` behavior.
+        """
         self._control_halted = True
 
     def _blocking_move(self, target: np.ndarray, *, duration_s: float) -> None:
@@ -63,7 +88,12 @@ class SimSwarmExecutor:
             )
 
     def high_level_takeoff(self, height_m: float, *, duration_s: float = 3.0) -> None:
-        """Block until vertical climb completes; then allow axswarm low-level setpoints."""
+        """Block until vertical climb completes; then allow axswarm setpoints.
+
+        Args:
+            height_m: Target altitude in sim meters.
+            duration_s: Interpolated climb duration in seconds.
+        """
         self._control_halted = True
         h = float(height_m)
         dur = float(duration_s)
@@ -84,7 +114,13 @@ class SimSwarmExecutor:
         duration_s: float = 3.0,
         settle_s: float | None = None,
     ) -> None:
-        """Block until in-place vertical descent completes (current XY, −Z)."""
+        """Block until in-place vertical descent completes (current XY, −Z).
+
+        Args:
+            distance_m: Descent distance in sim meters (positive down).
+            duration_s: Interpolated descent duration in seconds.
+            settle_s: Hover time at target before land; defaults to prearm constant.
+        """
         self._control_halted = True
         d = float(distance_m)
         dur = float(duration_s)
@@ -105,7 +141,12 @@ class SimSwarmExecutor:
             time.sleep(hover_s)
 
     def high_level_land(self, height_m: float = 0.0, *, duration_s: float = 3.0) -> None:
-        """Block until ground land completes; keep setpoint stream off afterward."""
+        """Block until ground land completes; keep setpoint stream off afterward.
+
+        Args:
+            height_m: Unused; landing uses ``ground_layout`` Z values.
+            duration_s: Interpolated land duration in seconds.
+        """
         del height_m
         self._control_halted = True
         dur = float(duration_s)
@@ -131,6 +172,17 @@ class SimSwarmExecutor:
         just_prearm_phase: bool = False,
         prearm_vertical_layout: np.ndarray | None = None,
     ) -> None:
+        """Advance the sim one control step when setpoints are not halted.
+
+        Args:
+            cmd_target: Axswarm position setpoints in sim meters, shape ``(N, 3)``.
+            control_hz: Outer control rate passed to ``step_sim_to_cmd``.
+            max_substeps: MuJoCo substeps cap per call.
+            prearm_phase: Current prearm phase label for one-shot log messages.
+            prearm_vertical_leg: ``"climb"`` or other vertical leg identifier.
+            just_prearm_phase: When ``True``, emit phase-transition log lines once.
+            prearm_vertical_layout: Vertical target layout for log messaging.
+        """
         if self._control_halted:
             return
         cmd = np.asarray(cmd_target, dtype=np.float32)

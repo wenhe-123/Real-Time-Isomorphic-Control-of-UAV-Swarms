@@ -12,7 +12,7 @@ from debug.online_control_debug import (
     print_center_trace,
     print_drone_position_debug,
 )
-from functions.display_sim.axswarm_safety_box import draw_axswarm_safety_box_from_settings
+from debug.axswarm_safety_box import draw_axswarm_safety_box_from_settings
 from functions.display_sim.crazyflow_render import render_sim, step_sim_to_cmd
 from functions.display_sim.morph_led_materials import apply_morph_led_theme
 from functions.display_sim.online_present_input import PresentFrameInput
@@ -70,7 +70,14 @@ def _maybe_print_center_trace(inp: PresentFrameInput) -> None:
 
 
 def present_online_frame(inp: PresentFrameInput) -> bool:
-    """Draw debug/LED/trail/sim/HUD. Returns updated render_enabled."""
+    """Draw debug overlays, LED theme, trail, sim step/render, and HUD for one frame.
+
+    Args:
+        inp: Bundled frame inputs (boot state, gesture result, filters, config, timing).
+
+    Returns:
+        Updated ``render_enabled`` flag; set to ``False`` when sim/trail rendering fails.
+    """
     boot = inp.boot
     cfg = inp.cfg
     gest = inp.gest
